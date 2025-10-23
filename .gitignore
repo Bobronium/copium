@@ -1,0 +1,36 @@
+# Python / build
+__pycache__/
+*.py[cod]
+*$py.class
+.build/
+dist/
+.eggs/
+*.egg-info/
+
+# venv
+.venv/
+.env
+venv/
+
+# tooling
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.pyre/
+.dmypy.json
+.hypothesis/
+
+# coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# editors
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+.idea/
+.DS_Store

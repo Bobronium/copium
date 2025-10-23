@@ -1,0 +1,220 @@
+[build-system]
+requires = ["setuptools>=68", "setuptools-scm", "wheel"]
+build-backend = "tools.build.backend"
+backend-path = ["."]
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "universal2", "arm64"]
+
+[tool.cibuildwheel.linux]
+archs = ["auto", "aarch64"]
+
+[tool.cibuildwheel]
+archs = ["auto64", "auto32"]
+build-frontend = "build[uv]"
+test-command = "pytest -q"
+test-extras = ["test"]
+test-sources = ["tests", "pyproject.toml"]
+
+
+[tool.setuptools_scm]
+version_file = "src/copyc/__about__.py"
+
+[project]
+name = "copyc"
+version = "0.1.0"
+description = "Fastest deepcopy implementation for CPython"
+readme = "README.md"
+authors = [{ name = "Arseny Boykov (Bobronium)", email = "hi@bobronium.me" }]
+requires-python = ">=3.10"
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+]
+
+
+[project.urls]
+Homepage = "https://github.com/Bobronium/copyc"
+Source = "https://github.com/Bobronium/copyc"
+Issues = "https://github.com/Bobronium/copyc/issues"
+
+[project.optional-dependencies]
+dev = [
+    "copyc[lint]",
+    "copyc[typecheck]",
+    "copyc[test]",
+    "copyc[docs]",
+]
+lint = [
+    "ruff>=0.5",
+]
+typecheck = [
+    "mypy>=1.10",
+    "pyright>=1.1.400",
+]
+test = [
+    "pytest>=8",
+    "pytest_assert_type>=0.1.2",
+    "indifference>=0.1.0",
+    "typing-extensions; python_version < '3.12'",
+    "datamodelzoo",
+]
+
+docs = [
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "mkdocs-autorefs",
+    "mkdocs-section-index",
+]
+benchmark = [
+    "tyro>=0.9.33",
+    "pyperf>=2.9.0",
+    "ipython>=8.37.0",
+    "datamodelzoo",
+    "jsonschema>=4.25.1",
+]
+exp = [
+    "vl-convert-python>=1.8.0",
+
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-k not thirdparty"]
+python_files = ["test_*.py"]
+
+[tool.coverage.run]
+source = ["src"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "@overload",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["ALL"]
+extend-safe-fixes = ["ALL"]
+unfixable = ["T201"]
+ignore = [
+    "ANN401", # | allow Any
+    "RUF001", # | allow cyrillic letters in comments
+    "COM812", # | trailing comas are handled by ruff format
+    "ISC001", # | recommended to be disabled when using ruff format
+    "B904", #   | raise from: modern pythons preserve previous exceptions
+    "EM101", #  | forbids using literal strings in exceptions
+    "EM102", #  |
+    "TRY003", # |
+    "A003", #   | Class attribute `id` is shadowing a Python builtin — it's ok in class body
+    "FIX001", # | Forbids using TODOs
+    "FIX002", # |
+    "TD001", #  |
+    "TD002", #  |
+    "TD003", #  |
+    "PLC0415", # | Top level imports
+    "SIM105",
+]
+
+extend-ignore = [
+    "D", # docstrings
+    "PLR", # allowing complexity (lazy to meaningfully refactor + reducing function calling overhead)
+    "C"
+]
+
+
+[tool.ruff.lint.per-file-ignores]
+"*.pyi" = ["ALL"]
+"tools/*" = ["TID252"]
+"__init__.py" = ["F401", "I001", "F811"]
+"__about__.py" = ["ALL"]
+"tests/*" = ["S101", "ANN", "ERA", "SLOT", "SLF", "PLW", "PT0", "N", "FIX", "TD", "B024", "PLE", "PYI", "PLC", "BLE", "S", "PERF"]
+
+[tool.ruff.lint.pep8-naming]
+extend-ignore-names = ["mcs"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.mypy]
+# report only code that we actually want to check
+follow_imports = "silent"
+
+# are these possible to comply with?
+# disallow_any_expr = true
+# disallow_any_explicit = true
+explicit_package_bases = true
+disallow_any_unimported = true
+disallow_any_decorated = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+
+# Untyped definitions and calls
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+
+# None and Optional handling
+no_implicit_optional = true
+strict_optional = true
+
+# Configuring warnings
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_return_any = true
+warn_unreachable = true
+warn_incomplete_stub = true
+warn_unused_configs = true
+
+# Suppressing errors
+ignore_errors = false
+enable_error_code = "ignore-without-code"
+
+# Miscellaneous strictness flags
+allow_untyped_globals = false
+allow_redefinition = false
+local_partial_types = false
+implicit_reexport = false
+strict_equality = true
+strict = true
+# enable once this is resolved: https://github.com/python/mypy/issues/14796
+# no_silence_site_packages = true
+
+# Configuring error messages
+show_error_context = false
+show_column_numbers = false
+show_error_codes = true
+color_output = true
+error_summary = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disable_error_code = ["no-untyped-def"]
+
+[tool.uv.sources]
+indifference = { path = "../indifference", editable = true }
+datamodelzoo = { path = "../datamodel", editable = true }
