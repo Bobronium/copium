@@ -34,3 +34,7 @@ htmlcov/
 !.vscode/*.code-snippets
 .idea/
 .DS_Store
+.build-cache
+.task
+.pgo
+*.so
