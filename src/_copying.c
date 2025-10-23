@@ -590,31 +590,72 @@ static PyObject* deepcopy_dict(PyObject* source_obj,
 static PyObject* deepcopy_list(PyObject* source_obj,
                                PyObject** memo_dict_ptr,
                                PyObject** keepalive_list_ptr,
-                               PyObject* object_id) {
-  Py_ssize_t list_length = PyList_GET_SIZE(source_obj);
-  PyObject* copied_list = PyList_New(list_length);
-  if (!copied_list)
-    return NULL;
-  if (memo_store(memo_dict_ptr, object_id, copied_list) < 0) {
-    Py_DECREF(copied_list);
-    return NULL;
-  }
-  for (Py_ssize_t i = 0; i < list_length; i++) {
-    PyObject* element = PyList_GET_ITEM(source_obj, i);
-    PyObject* copied_element =
-        deepcopy_recursive(element, memo_dict_ptr, keepalive_list_ptr);
-    if (!copied_element) {
-      Py_DECREF(copied_list);
-      return NULL;
+                               PyObject* object_id)
+{
+    /* 1) Allocate a fully-initialized list (no NULL slots visible to user code). */
+    Py_ssize_t initial_size = PyList_GET_SIZE(source_obj);
+    PyObject* copied_list = PyList_New(initial_size);
+    if (copied_list == NULL) {
+        return NULL;
     }
-    PyList_SET_ITEM(copied_list, i, copied_element);
-  }
-  if (keepalive_append_if_different(memo_dict_ptr, keepalive_list_ptr,
-                                    source_obj, copied_list) < 0) {
-    Py_DECREF(copied_list);
-    return NULL;
-  }
-  return copied_list;
+
+    /* Prefill with Py_None. */
+    /* assuming None is practically immortal; */
+    for (Py_ssize_t i = 0; i < initial_size; ++i) {
+        /* SET_ITEM steals; passing borrowed Py_None is fine with immortality. */
+        PyList_SET_ITEM(copied_list, i, Py_None);
+    }
+
+    /* 2) Publish to memo immediately. */
+    if (memo_store(memo_dict_ptr, object_id, copied_list) < 0) {
+        Py_DECREF(copied_list);
+        return NULL;
+    }
+
+    /* 3) Deep-copy elements, guarding against concurrent list mutations. */
+    for (Py_ssize_t i = 0; i < initial_size; ++i) {
+        /* If user code resized either list during recursion, stop safely. */
+        if (i >= PyList_GET_SIZE(copied_list) || i >= PyList_GET_SIZE(source_obj)) {
+            break;
+        }
+
+        /* Hold a ref to the source element while we call into Python. */
+        PyObject* item = PyList_GET_ITEM(source_obj, i);  /* borrowed */
+        Py_XINCREF(item);
+        if (item == NULL) {
+            Py_DECREF(copied_list);
+            return NULL;
+        }
+
+        PyObject* copied_item =
+            deepcopy_recursive(item, memo_dict_ptr, keepalive_list_ptr);
+
+        Py_DECREF(item);  /* release temporary hold */
+
+        if (copied_item == NULL) {
+            Py_DECREF(copied_list);
+            return NULL;
+        }
+
+        /* Destination might have changed size during recursion. */
+        if (i >= PyList_GET_SIZE(copied_list)) {
+            Py_DECREF(copied_item);  /* PyList_SetItem would not steal on failure */
+            break;
+        }
+
+        /* 4) Replace slot i with the new element. */
+        PyList_SET_ITEM(copied_list, i, copied_item);
+
+    }
+
+    /* 5) Keepalive to avoid premature deallocation in alias-y scenarios. */
+    if (keepalive_append_if_different(memo_dict_ptr, keepalive_list_ptr,
+                                      source_obj, copied_list) < 0) {
+        Py_DECREF(copied_list);
+        return NULL;
+    }
+
+    return copied_list;
 }
 
 static PyObject* deepcopy_tuple(PyObject* source_obj,
