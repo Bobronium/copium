@@ -90,6 +90,13 @@ extern PyObject* memo_lookup_obj(PyObject* memo, void* key);
 /* Store value for key (incref value) */
 extern int memo_store_obj(PyObject* memo, void* key, PyObject* value);
 
+/* Hash-aware fast-paths for C memo */
+extern PyObject* memo_lookup_obj_h(PyObject* memo, void* key, Py_ssize_t khash);
+extern int memo_store_obj_h(PyObject* memo, void* key, PyObject* value, Py_ssize_t khash);
+
+/* Exported pointer hasher (same as C memo table) */
+extern Py_ssize_t memo_hash_pointer(void* key);
+
 /* ------------------------------ Small helpers ------------------------------
  */
 
@@ -145,47 +152,45 @@ static inline int is_method_type_exact(PyObject* obj) {
   return Py_TYPE(obj) == module_state.MethodType;
 }
 
-static inline int is_atomic_immutable(PyObject* obj) {
-  if (obj == Py_None)
-    return 1;
-  PyTypeObject* obj_type = Py_TYPE(obj);
-  if (LIKELY(obj_type == &PyLong_Type))
-    return 1;
-  if (LIKELY(obj_type == &PyUnicode_Type))
-    return 1;
-  if (obj_type == &PyBool_Type)
-    return 1;
-  if (obj_type == &PyFloat_Type)
-    return 1;
-  if (obj_type == &PyType_Type)
-    return 1;
-  if (obj_type == &PyBytes_Type)
-    return 1;
-  if (obj_type == &PyFunction_Type)
-    return 1;
-  if (obj_type == &PyCFunction_Type)
-    return 1;
-  if (obj_type == &PyComplex_Type)
-    return 1;
-  if (obj_type == &PyModule_Type)
-    return 1;
-  if (obj_type == &PyRange_Type)
-    return 1;
-  if (obj_type == &PyCFunction_Type)
-    return 1;
-  if (obj_type == &PyProperty_Type)
-    return 1;
-  if (obj_type == &_PyWeakref_RefType)
-    return 1;
-  if (obj_type == &PyCode_Type)
-    return 1;
-  if (PyType_IsSubtype(obj_type, &PyType_Type))
-    return 1;
+// assumes C99+, CPython C API
+static inline int is_atomic_immutable(PyObject *obj) {
+    PyTypeObject *t = Py_TYPE(obj);
 
-  return (obj_type == module_state.re_Pattern_type) |
-         (obj_type == module_state.Decimal_type) |
-         (obj_type == module_state.Fraction_type) |
-         (obj_type == &_PyNotImplemented_Type) | (obj_type == &PyEllipsis_Type);
+    // Tier 1: very common, branchless
+    unsigned long r =
+        (obj == Py_None) |
+        (t == &PyLong_Type) |
+        (t == &PyUnicode_Type) |
+        (t == &PyBool_Type) |
+        (t == &PyFloat_Type) |
+        (t == &PyBytes_Type) |
+        (t == &PyComplex_Type);
+    if (r) return 1;
+
+    // Tier 2: still cheap, branchless; deduped PyCFunction_Type
+    r =
+        (t == &PyRange_Type) |
+        (t == &PyFunction_Type) |
+        (t == &PyCFunction_Type) |
+        (t == &PyProperty_Type) |
+        (t == &_PyWeakref_RefType) |
+        (t == &PyCode_Type) |
+        (t == &PyModule_Type) |
+        (t == &_PyNotImplemented_Type) |
+        (t == &PyEllipsis_Type) |
+        (t == module_state.re_Pattern_type) |
+        (t == module_state.Decimal_type) |
+        (t == module_state.Fraction_type);
+    if (r) return 1;
+
+    // Tier 3: "type objects" (rare). Fast exact + rare subtype check.
+    if (t == &PyType_Type) return 1;
+
+    // NOTE: This is intentionally last; it can be relatively expensive.
+    // If available in your target CPython, a flag check is even cheaper:
+    //   if (PyType_HasFeature(t, Py_TPFLAGS_TYPE_SUBCLASS)) return 1;
+    // Falling back to the conservative general check:
+    return PyType_IsSubtype(t, &PyType_Type);
 }
 
 /* ------------------------ Lazy memo/keepalive helpers -----------------------
@@ -211,6 +216,26 @@ static inline PyObject* memo_lookup(PyObject** memo_ptr, void* key) {
 static inline int memo_store(PyObject** memo_ptr, void* key, PyObject* value) {
   if (ensure_memo_exists(memo_ptr) < 0)
     return -1;
+  return memo_store_obj(*memo_ptr, key, value);
+}
+
+/* Hash-aware variants: use C memo fast path if available */
+static inline PyObject* memo_lookup_h(PyObject** memo_ptr, void* key, Py_ssize_t khash) {
+  PyObject* memo = *memo_ptr;
+  if (memo == NULL)
+    return NULL;
+  if (Py_TYPE(memo) == &Memo_Type) {
+    return memo_lookup_obj_h(memo, key, khash);
+  }
+  return memo_lookup_obj(memo, key);
+}
+
+static inline int memo_store_h(PyObject** memo_ptr, void* key, PyObject* value, Py_ssize_t khash) {
+  if (ensure_memo_exists(memo_ptr) < 0)
+    return -1;
+  if (Py_TYPE(*memo_ptr) == &Memo_Type) {
+    return memo_store_obj_h(*memo_ptr, key, value, khash);
+  }
   return memo_store_obj(*memo_ptr, key, value);
 }
 
@@ -305,7 +330,6 @@ static int dict_watch_callback(PyDict_WatchEvent event,
     case PyDict_EVENT_ADDED:
     case PyDict_EVENT_MODIFIED:
     case PyDict_EVENT_DELETED:
-    case PyDict_EVENT_CLEARED:
     case PyDict_EVENT_CLONED:
     case PyDict_EVENT_DEALLOCATED: {
       for (WatchContext* ctx = watch_stack_get_current(); ctx;
@@ -391,7 +415,58 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
 static PyObject* deepcopy_dict_with_watcher(PyObject* source_obj,
                                             PyObject** memo_ptr,
                                             PyObject** keepalive_list_ptr,
-                                            void* object_id) {
+                                            void* object_id,
+                                            Py_ssize_t object_id_hash);
+#endif
+
+static PyObject* deepcopy_dict_legacy(PyObject* source_obj,
+                                      PyObject** memo_ptr,
+                                      PyObject** keepalive_list_ptr,
+                                      void* object_id,
+                                      Py_ssize_t object_id_hash);
+
+static PyObject* deepcopy_dict(PyObject* source_obj,
+                               PyObject** memo_ptr,
+                               PyObject** keepalive_list_ptr,
+                               void* object_id,
+                               Py_ssize_t object_id_hash);
+
+static PyObject* deepcopy_list(PyObject* source_obj,
+                               PyObject** memo_ptr,
+                               PyObject** keepalive_list_ptr,
+                               void* object_id,
+                               Py_ssize_t object_id_hash);
+
+static PyObject* deepcopy_tuple(PyObject* source_obj,
+                                PyObject** memo_ptr,
+                                PyObject** keepalive_list_ptr,
+                                void* object_id,
+                                Py_ssize_t object_id_hash);
+
+static PyObject* deepcopy_set(PyObject* source_obj,
+                              PyObject** memo_ptr,
+                              PyObject** keepalive_list_ptr,
+                              void* object_id,
+                              Py_ssize_t object_id_hash);
+
+static PyObject* deepcopy_frozenset(PyObject* source_obj,
+                                    PyObject** memo_ptr,
+                                    PyObject** keepalive_list_ptr,
+                                    void* object_id,
+                                    Py_ssize_t object_id_hash);
+
+static PyObject* deepcopy_bytearray(PyObject* source_obj,
+                                    PyObject** memo_ptr,
+                                    PyObject** keepalive_list_ptr,
+                                    void* object_id,
+                                    Py_ssize_t object_id_hash);
+
+#if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
+static PyObject* deepcopy_dict_with_watcher(PyObject* source_obj,
+                                            PyObject** memo_ptr,
+                                            PyObject** keepalive_list_ptr,
+                                            void* object_id,
+                                            Py_ssize_t object_id_hash) {
   int dict_was_mutated = 0;
   WatchContext watch_ctx = {
       .dict = source_obj, .mutated_flag = &dict_was_mutated, .prev = NULL};
@@ -410,7 +485,7 @@ static PyObject* deepcopy_dict_with_watcher(PyObject* source_obj,
     watch_context_pop();
     return NULL;
   }
-  if (memo_store(memo_ptr, object_id, copied_dict) < 0) {
+  if (memo_store_h(memo_ptr, object_id, copied_dict, object_id_hash) < 0) {
     (void)PyDict_Unwatch(module_state.dict_watcher_id, source_obj);
     watch_context_pop();
     Py_DECREF(copied_dict);
@@ -504,12 +579,13 @@ static PyObject* deepcopy_dict_with_watcher(PyObject* source_obj,
 static PyObject* deepcopy_dict_legacy(PyObject* source_obj,
                                       PyObject** memo_ptr,
                                       PyObject** keepalive_list_ptr,
-                                      void* object_id) {
+                                      void* object_id,
+                                      Py_ssize_t object_id_hash) {
   Py_ssize_t expected_size = PyDict_Size(source_obj);
   PyObject* copied_dict = PyDict_New();
   if (!copied_dict)
     return NULL;
-  if (memo_store(memo_ptr, object_id, copied_dict) < 0) {
+  if (memo_store_h(memo_ptr, object_id, copied_dict, object_id_hash) < 0) {
     Py_DECREF(copied_dict);
     return NULL;
   }
@@ -583,19 +659,21 @@ static PyObject* deepcopy_dict_legacy(PyObject* source_obj,
 static PyObject* deepcopy_dict(PyObject* source_obj,
                                PyObject** memo_ptr,
                                PyObject** keepalive_list_ptr,
-                               void* object_id) {
+                               void* object_id,
+                               Py_ssize_t object_id_hash) {
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
   return deepcopy_dict_with_watcher(source_obj, memo_ptr,
-                                    keepalive_list_ptr, object_id);
+                                    keepalive_list_ptr, object_id, object_id_hash);
 #endif
   return deepcopy_dict_legacy(source_obj, memo_ptr, keepalive_list_ptr,
-                              object_id);
+                              object_id, object_id_hash);
 }
 
 static PyObject* deepcopy_list(PyObject* source_obj,
                                PyObject** memo_ptr,
                                PyObject** keepalive_list_ptr,
-                               void* object_id)
+                               void* object_id,
+                               Py_ssize_t object_id_hash)
 {
     /* 1) Allocate a fully-initialized list (no NULL slots visible to user code). */
     Py_ssize_t initial_size = PyList_GET_SIZE(source_obj);
@@ -612,7 +690,7 @@ static PyObject* deepcopy_list(PyObject* source_obj,
     }
 
     /* 2) Publish to memo immediately. */
-    if (memo_store(memo_ptr, object_id, copied_list) < 0) {
+    if (memo_store_h(memo_ptr, object_id, copied_list, object_id_hash) < 0) {
         Py_DECREF(copied_list);
         return NULL;
     }
@@ -666,7 +744,8 @@ static PyObject* deepcopy_list(PyObject* source_obj,
 static PyObject* deepcopy_tuple(PyObject* source_obj,
                                 PyObject** memo_ptr,
                                 PyObject** keepalive_list_ptr,
-                                void* object_id) {
+                                void* object_id,
+                                Py_ssize_t object_id_hash) {
   Py_ssize_t tuple_length = PyTuple_GET_SIZE(source_obj);
   int all_elements_identical = 1;
   PyObject* copied_tuple = PyTuple_New(tuple_length);
@@ -692,7 +771,7 @@ static PyObject* deepcopy_tuple(PyObject* source_obj,
     return source_obj;
   }
 
-  PyObject* existing_copy = memo_lookup(memo_ptr, object_id);
+  PyObject* existing_copy = memo_lookup_h(memo_ptr, object_id, object_id_hash);
   if (existing_copy) {
     Py_INCREF(existing_copy);
     Py_DECREF(copied_tuple);
@@ -703,7 +782,7 @@ static PyObject* deepcopy_tuple(PyObject* source_obj,
     return NULL;
   }
 
-  if (memo_store(memo_ptr, object_id, copied_tuple) < 0) {
+  if (memo_store_h(memo_ptr, object_id, copied_tuple, object_id_hash) < 0) {
     Py_DECREF(copied_tuple);
     return NULL;
   }
@@ -718,11 +797,12 @@ static PyObject* deepcopy_tuple(PyObject* source_obj,
 static PyObject* deepcopy_set(PyObject* source_obj,
                               PyObject** memo_ptr,
                               PyObject** keepalive_list_ptr,
-                              void* object_id) {
+                              void* object_id,
+                              Py_ssize_t object_id_hash) {
   PyObject* copied_set = PySet_New(NULL);
   if (!copied_set)
     return NULL;
-  if (memo_store(memo_ptr, object_id, copied_set) < 0) {
+  if (memo_store_h(memo_ptr, object_id, copied_set, object_id_hash) < 0) {
     Py_DECREF(copied_set);
     return NULL;
   }
@@ -765,7 +845,9 @@ static PyObject* deepcopy_set(PyObject* source_obj,
 static PyObject* deepcopy_frozenset(PyObject* source_obj,
                                     PyObject** memo_ptr,
                                     PyObject** keepalive_list_ptr,
-                                    void* object_id) {
+                                    void* object_id,
+                                    Py_ssize_t object_id_hash) {
+  (void)object_id_hash; /* no early store for frozenset (constructed at end) */
   PyObject* iterator = PyObject_GetIter(source_obj);
   if (!iterator)
     return NULL;
@@ -804,7 +886,7 @@ static PyObject* deepcopy_frozenset(PyObject* source_obj,
   Py_DECREF(temp_list);
   if (!copied_frozenset)
     return NULL;
-  if (memo_store(memo_ptr, object_id, copied_frozenset) < 0) {
+  if (memo_store_h(memo_ptr, object_id, copied_frozenset, object_id_hash) < 0) {
     Py_DECREF(copied_frozenset);
     return NULL;
   }
@@ -819,7 +901,8 @@ static PyObject* deepcopy_frozenset(PyObject* source_obj,
 static PyObject* deepcopy_bytearray(PyObject* source_obj,
                                     PyObject** memo_ptr,
                                     PyObject** keepalive_list_ptr,
-                                    void* object_id) {
+                                    void* object_id,
+                                    Py_ssize_t object_id_hash) {
   Py_ssize_t byte_length = PyByteArray_Size(source_obj);
   PyObject* copied_bytearray = PyByteArray_FromStringAndSize(NULL, byte_length);
   if (!copied_bytearray)
@@ -827,7 +910,7 @@ static PyObject* deepcopy_bytearray(PyObject* source_obj,
   if (byte_length)
     memcpy(PyByteArray_AS_STRING(copied_bytearray),
            PyByteArray_AS_STRING(source_obj), (size_t)byte_length);
-  if (memo_store(memo_ptr, object_id, copied_bytearray) < 0) {
+  if (memo_store_h(memo_ptr, object_id, copied_bytearray, object_id_hash) < 0) {
     Py_DECREF(copied_bytearray);
     return NULL;
   }
@@ -943,6 +1026,11 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
                                          PyObject** memo_ptr,
                                          PyObject** keepalive_list_ptr,
                                          int skip_atomic_check) {
+  if (!skip_atomic_check) {
+    if (is_atomic_immutable(source_obj))
+      return Py_NewRef(source_obj);
+  }
+
   /* Consult pins via integration hook */
   {
     PinObject* pin = _duper_lookup_pin_for_object(source_obj);
@@ -954,14 +1042,10 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     }
   }
 
-  if (!skip_atomic_check) {
-    if (is_atomic_immutable(source_obj))
-      return Py_NewRef(source_obj);
-  }
-
   void* object_id = (void*)source_obj;
+  Py_ssize_t object_id_hash = memo_hash_pointer(object_id);
 
-  PyObject* memo_hit = memo_lookup(memo_ptr, object_id);
+  PyObject* memo_hit = memo_lookup_h(memo_ptr, object_id, object_id_hash);
   if (memo_hit) {
     Py_INCREF(memo_hit);
     return memo_hit;
@@ -972,32 +1056,32 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
 
   if (PyList_CheckExact(source_obj)) {
     PyObject* result =
-        deepcopy_list(source_obj, memo_ptr, keepalive_list_ptr, object_id);
+        deepcopy_list(source_obj, memo_ptr, keepalive_list_ptr, object_id, object_id_hash);
     return result;
   }
   if (PyTuple_CheckExact(source_obj)) {
     PyObject* result = deepcopy_tuple(source_obj, memo_ptr,
-                                      keepalive_list_ptr, object_id);
+                                      keepalive_list_ptr, object_id, object_id_hash);
     return result;
   }
   if (PyDict_CheckExact(source_obj)) {
     PyObject* result =
-        deepcopy_dict(source_obj, memo_ptr, keepalive_list_ptr, object_id);
+        deepcopy_dict(source_obj, memo_ptr, keepalive_list_ptr, object_id, object_id_hash);
     return result;
   }
   if (PySet_CheckExact(source_obj)) {
     PyObject* result =
-        deepcopy_set(source_obj, memo_ptr, keepalive_list_ptr, object_id);
+        deepcopy_set(source_obj, memo_ptr, keepalive_list_ptr, object_id, object_id_hash);
     return result;
   }
   if (PyFrozenSet_CheckExact(source_obj)) {
     PyObject* result = deepcopy_frozenset(source_obj, memo_ptr,
-                                          keepalive_list_ptr, object_id);
+                                          keepalive_list_ptr, object_id, object_id_hash);
     return result;
   }
   if (PyByteArray_CheckExact(source_obj)) {
     PyObject* result = deepcopy_bytearray(source_obj, memo_ptr,
-                                          keepalive_list_ptr, object_id);
+                                          keepalive_list_ptr, object_id, object_id_hash);
     return result;
   }
 
@@ -1027,7 +1111,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     if (!bound_method) {
       return NULL;
     }
-    if (memo_store(memo_ptr, object_id, bound_method) < 0) {
+    if (memo_store_h(memo_ptr, object_id, bound_method, object_id_hash) < 0) {
       Py_DECREF(bound_method);
       return NULL;
     }
@@ -1044,7 +1128,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     if (!new_baseobject) {
       return NULL;
     }
-    if (memo_store(memo_ptr, object_id, new_baseobject) < 0) {
+    if (memo_store_h(memo_ptr, object_id, new_baseobject, object_id_hash) < 0) {
       Py_DECREF(new_baseobject);
       return NULL;
     }
@@ -1076,7 +1160,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
         return NULL;
       }
       if (result != source_obj) {
-        if (memo_store(memo_ptr, object_id, result) < 0) {
+        if (memo_store_h(memo_ptr, object_id, result, object_id_hash) < 0) {
           Py_DECREF(result);
           return NULL;
         }
@@ -1145,7 +1229,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     return NULL;
   }
 
-  if (memo_store(memo_ptr, object_id, reconstructed_obj) < 0) {
+  if (memo_store_h(memo_ptr, object_id, reconstructed_obj, object_id_hash) < 0) {
     Py_DECREF(reconstructed_obj);
     Py_DECREF(reduce_result);
     return NULL;

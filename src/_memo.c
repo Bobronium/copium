@@ -48,6 +48,11 @@ static inline Py_ssize_t hash_pointer(void* ptr) {
   return (Py_ssize_t)h;
 }
 
+/* Exported so _copying.c can compute the exact same hash once per object */
+Py_ssize_t memo_hash_pointer(void* ptr) {
+  return hash_pointer(ptr);
+}
+
 void memo_table_free(MemoTable* table) {
   if (!table)
     return;
@@ -113,6 +118,7 @@ static inline int memo_table_ensure(MemoTable** table_ptr) {
   return memo_table_resize(table_ptr, 1);
 }
 
+/* Existing non-hash-parameterized APIs (kept for compatibility) */
 PyObject* memo_table_lookup(MemoTable* table, void* key) {
   if (!table)
     return NULL;
@@ -142,6 +148,63 @@ int memo_table_insert(MemoTable** table_ptr, void* key, PyObject* value) {
 
   Py_ssize_t mask = table->size - 1;
   Py_ssize_t idx = hash_pointer(key) & mask;
+  Py_ssize_t first_tomb = -1;
+
+  for (;;) {
+    void* slot_key = table->slots[idx].key;
+    if (!slot_key) {
+      Py_ssize_t insert_at = (first_tomb >= 0) ? first_tomb : idx;
+      table->slots[insert_at].key = key;
+      Py_INCREF(value);
+      table->slots[insert_at].value = value;
+      table->used++;
+      table->filled++;
+      return 0;
+    }
+    if (slot_key == MEMO_TOMBSTONE) {
+      if (first_tomb < 0)
+        first_tomb = idx;
+    } else if (slot_key == key) {
+      PyObject* old_value = table->slots[idx].value;
+      Py_INCREF(value);
+      table->slots[idx].value = value;
+      Py_XDECREF(old_value);
+      return 0;
+    }
+    idx = (idx + 1) & mask;
+  }
+}
+
+/* New hash-parameterized hot-path APIs (avoid recomputing hash) */
+PyObject* memo_table_lookup_h(MemoTable* table, void* key, Py_ssize_t hash) {
+  if (!table)
+    return NULL;
+  Py_ssize_t mask = table->size - 1;
+  Py_ssize_t idx = hash & mask;
+  for (;;) {
+    void* slot_key = table->slots[idx].key;
+    if (!slot_key)
+      return NULL;
+    if (slot_key != MEMO_TOMBSTONE && slot_key == key) {
+      return table->slots[idx].value; /* borrowed */
+    }
+    idx = (idx + 1) & mask;
+  }
+}
+
+int memo_table_insert_h(MemoTable** table_ptr, void* key, PyObject* value, Py_ssize_t hash) {
+  if (memo_table_ensure(table_ptr) < 0)
+    return -1;
+  MemoTable* table = *table_ptr;
+
+  if ((table->filled * 10) >= (table->size * 7)) {
+    if (memo_table_resize(table_ptr, table->used + 1) < 0)
+      return -1;
+    table = *table_ptr;
+  }
+
+  Py_ssize_t mask = table->size - 1;
+  Py_ssize_t idx = hash & mask;
   Py_ssize_t first_tomb = -1;
 
   for (;;) {
@@ -347,6 +410,7 @@ PyTypeObject Memo_Type = {
 
 /* --------------------------- C hooks for _copying.c ------------------------ */
 
+/* Old generic APIs (no precomputed hash) */
 PyObject* memo_lookup_obj(PyObject* memo, void* key) {
   if (Py_TYPE(memo) == &Memo_Type) {
     MemoObject* mo = (MemoObject*)memo;
@@ -370,5 +434,25 @@ int memo_store_obj(PyObject* memo, void* key, PyObject* value) {
     int res = PyDict_SetItem(memo, pykey, value);
     Py_DECREF(pykey);
     return res;
+  }
+}
+
+/* New hash-aware hot-path APIs (use only for C _Memo; fall back for PyDict) */
+PyObject* memo_lookup_obj_h(PyObject* memo, void* key, Py_ssize_t khash) {
+  if (Py_TYPE(memo) == &Memo_Type) {
+    MemoObject* mo = (MemoObject*)memo;
+    return memo_table_lookup_h(mo->table, key, khash);
+  } else {
+    /* For Python dicts, we can't rely on internal _KnownHash APIs portably. */
+    return memo_lookup_obj(memo, key);
+  }
+}
+
+int memo_store_obj_h(PyObject* memo, void* key, PyObject* value, Py_ssize_t khash) {
+  if (Py_TYPE(memo) == &Memo_Type) {
+    MemoObject* mo = (MemoObject*)memo;
+    return memo_table_insert_h(&mo->table, key, value, khash);
+  } else {
+    return memo_store_obj(memo, key, value);
   }
 }
