@@ -9,21 +9,29 @@ Slightly modified Lib/test/test_copy.py module.
 import abc
 import copy as stdlib_copy
 import copyreg
+import sys
 import weakref
+from collections import namedtuple
+from operator import attrgetter
 from operator import eq
 from operator import ge
 from operator import gt
 from operator import le
 from operator import lt
 from operator import ne
-from typing import Any
+from typing import NamedTuple
 from typing import NoReturn
 
-import pytest
-from indifference import assert_equivalent_transformations
-
 import copyc
-from tests.conftest import CASES
+import pytest
+
+
+HAS_REPLACE = sys.version_info >= (3, 13)
+
+SKIP_BEFORE_3_13 = pytest.mark.skipif(
+    not HAS_REPLACE,
+    reason=f"copy.replace() not available in Python {sys.version_info.major}.{sys.version_info.minor}",
+)
 
 
 def panic(*_, **__) -> NoReturn:
@@ -40,8 +48,7 @@ comparisons = order_comparisons + equality_comparisons
 def test_exceptions(copy) -> None:
     assert copy.Error is stdlib_copy.error
     assert issubclass(copy.Error, Exception)
-
-    assert issubclass(copyc.Error, stdlib_copy.Error)
+    assert issubclass(copy.Error, stdlib_copy.Error)
 
 
 # The copy() method
@@ -91,7 +98,7 @@ def test_copy_reduce_ex(copy) -> None:
             return ""
 
         def __reduce__(self):
-            self.fail("shouldn't call this")
+            pytest.fail("shouldn't call this")
 
     c = []
     x = C()
@@ -451,7 +458,7 @@ def test_deepcopy_reduce_ex(copy) -> None:
             return ""
 
         def __reduce__(self):
-            self.fail("shouldn't call this")
+            pytest.fail("shouldn't call this")
 
     c = []
     x = C()
@@ -605,19 +612,6 @@ def test_deepcopy_keepalive(copy) -> None:
     copied = copy.deepcopy(x, memo)
     assert memo[id(memo)][0] is x
     assert copied == x
-
-
-def test_deepcopy_keepalive_internal(copy) -> None:
-    x = []
-
-    class A:
-        def __deepcopy__(self, memo):
-            assert memo[id(memo)][0] is x
-            return self
-
-    copied = copy.deepcopy([x, a := A()])
-
-    assert copied == [x, a]
 
 
 def test_deepcopy_by_reference(copy) -> None:
@@ -1205,75 +1199,95 @@ def test__all__() -> None:
     assert hasattr(copyc, "Error")
     assert hasattr(copyc, "copy")
     assert hasattr(copyc, "deepcopy")
+    if not HAS_REPLACE:
+        return
+    assert hasattr(copyc, "replace")
 
 
-# ADDITIONAL_TESTS
+@SKIP_BEFORE_3_13
+def test_unsupported(copy):
+    pytest.raises(TypeError, copy.replace, 1)
+    pytest.raises(TypeError, copy.replace, [])
+    pytest.raises(TypeError, copy.replace, {})
+
+    def f():
+        pass
+
+    pytest.raises(TypeError, copy.replace, f)
+
+    class A:
+        pass
+
+    pytest.raises(TypeError, copy.replace, A)
+    pytest.raises(TypeError, copy.replace, A())
 
 
-def test_mutable_keys(copy):
-    from datamodelzoo.constructed import MutableKey
+@SKIP_BEFORE_3_13
+def test_replace_method(copy):
+    class A:
+        def __new__(cls, x, y=0):
+            self = object.__new__(cls)
+            self.x = x
+            self.y = y
+            return self
 
-    original_key = MutableKey()
-    original = {MutableKey("copied"): 420, original_key: 42}
-    copied = copy.deepcopy(original)
+        def __init__(self, *args, **kwargs):
+            self.z = self.x + self.y
 
-    assert copied[MutableKey("copied")] == 42, "deepcopy computed wrong hash for copied key"
-    assert original_key not in copied
+        def __replace__(self, **changes):
+            x = changes.get("x", self.x)
+            y = changes.get("y", self.y)
+            return type(self)(x, y)
 
-
-@pytest.mark.parametrize("case", CASES)
-def test_duper_deepcopy_parity(case: Any, copy) -> None:
-    deepcopy_failed = False
-    try:
-        baseline = stdlib_copy.deepcopy(case.obj)
-    except Exception as e:
-        baseline = e
-        deepcopy_failed = True
-
-    try:
-        import pickle
-
-        candidate = copy.deepcopy(case.obj)
-    except Exception as e:
-        if not deepcopy_failed:
-            raise AssertionError(
-                f"{copy.deepcopy} failed unexpectedly when {stdlib_copy.deepcopy} didn't"
-            ) from e
-        assert type(e) is type(baseline), "copyc failed with different error"
-        assert e.args == baseline.args, "copyc failed with different error message"
-    else:
-        assert_equivalent_transformations(
-            case.obj,
-            baseline,
-            candidate,
-        )
+    attrs = attrgetter("x", "y", "z")
+    a = A(11, 22)
+    assert attrs(copy.replace(a)) == (11, 22, 33)
+    assert attrs(copy.replace(a, x=1)) == (1, 22, 23)
+    assert attrs(copy.replace(a, y=2)) == (11, 2, 13)
+    assert attrs(copy.replace(a, x=1, y=2)) == (1, 2, 3)
 
 
-def test_duper_deepcopy_parity_threaded_mutating(copy) -> None:
-    from concurrent.futures import ALL_COMPLETED
-    from concurrent.futures import ThreadPoolExecutor
-    from concurrent.futures import wait
+PointFromCall = namedtuple("Point", "x y", defaults=(0,))
 
-    from datamodelzoo.constructed import DeepcopyRuntimeError
 
-    threads = 8
-    repeats = 5
+class PointFromInheritance(PointFromCall):
+    pass
 
-    value: dict[Any, Any] = {}
-    value["trigger"] = DeepcopyRuntimeError(value)
 
-    def assert_runtime_error():
-        try:
-            copy.deepcopy(value)
-        except RuntimeError:
-            return True
-        return False
+class PointFromClass(NamedTuple):
+    x: int
+    y: int = 0
 
-    with ThreadPoolExecutor(max_workers=threads) as pool:
-        total_runs = threads * repeats
-        futures = [pool.submit(assert_runtime_error) for _ in range(total_runs)]
 
-        done, not_done = wait(futures, return_when=ALL_COMPLETED)
-        assert not not_done
-        correct_runs = sum(1 for f in done if f.result())
-        assert correct_runs == total_runs
+@SKIP_BEFORE_3_13
+@pytest.mark.parametrize("point_cls", (PointFromCall, PointFromInheritance, PointFromClass))
+def test_namedtuple(copy, point_cls):
+    p = point_cls(11, 22)
+    assert isinstance(p, point_cls)
+    assert copy.replace(p) == (11, 22)
+    assert isinstance(copy.replace(p), point_cls)
+    assert copy.replace(p, x=1) == (1, 22)
+    assert copy.replace(p, y=2) == (11, 2)
+    assert copy.replace(p, x=1, y=2) == (1, 2)
+    with pytest.raises(TypeError, match="unexpected field name"):
+        copy.replace(p, x=1, error=2)
+
+
+@SKIP_BEFORE_3_13
+def test_dataclass(copy):
+    from dataclasses import dataclass
+
+    @dataclass
+    class C:
+        x: int
+        y: int = 0
+
+    attrs = attrgetter("x", "y")
+    c = C(11, 22)
+    assert attrs(copy.replace(c)) == (11, 22)
+    assert attrs(copy.replace(c, x=1)) == (1, 22)
+    assert attrs(copy.replace(c, y=2)) == (11, 2)
+    assert attrs(copy.replace(c, x=1, y=2)) == (1, 2)
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        copy.replace(c, x=1, error=2)

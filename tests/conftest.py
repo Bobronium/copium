@@ -21,16 +21,18 @@ CASES = [pytest.param(case, id=case.name) for case in CASES]
 
 
 class CopyModule:  # just for typing
-    error = Error = stdlib_copy.Error
-    copy = staticmethod(stdlib_copy.copy)
+    error = Error = copyc.Error
+    copy = staticmethod(copyc.copy)
     deepcopy = staticmethod(copyc.deepcopy)
+    if sys.version_info >= (3, 13):
+        replace = staticmethod(copyc.replace)
 
 
 @pytest.fixture(
     params=[
+        pytest.param(stdlib_copy, id="stdlib"),
         pytest.param(copyc, id="copyc"),
         # sanity check
-        pytest.param(stdlib_copy, id="stdlib"),
     ]
 )
 def copy(request) -> "CopyModule":
