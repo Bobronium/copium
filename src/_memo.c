@@ -328,19 +328,8 @@ static PyTypeObject KeepList_Type;
 /* Forward decls */
 static PyObject* KeepList_New(MemoObject* owner);
 
-/* GC traverse/clear for _KeepList */
-static int KeepList_tp_traverse(KeepListObject* self, visitproc visit, void* arg) {
-  Py_VISIT(self->owner);
-  return 0;
-}
-static int KeepList_tp_clear(KeepListObject* self) {
-  Py_CLEAR(self->owner);
-  return 0;
-}
-
 static void KeepList_dealloc(KeepListObject* self) {
-  PyObject_GC_UnTrack(self);
-  KeepList_tp_clear(self);
+  Py_XDECREF(self->owner);
   Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
@@ -391,7 +380,7 @@ static PyObject* KeepList_append(KeepListObject* self, PyObject* arg) {
   Py_RETURN_NONE;
 }
 
-static PyObject* KeepList_clear_method(KeepListObject* self, PyObject* noargs) {
+static PyObject* KeepList_clear(KeepListObject* self, PyObject* noargs) {
   (void)noargs;
   if (!self->owner) {
     PyErr_SetString(PyExc_SystemError, "_KeepList has no owner");
@@ -416,16 +405,15 @@ static PySequenceMethods KeepList_as_sequence = {
 
 static PyMethodDef KeepList_methods[] = {
   {"append", (PyCFunction)KeepList_append, METH_O, NULL},
-  {"clear",  (PyCFunction)KeepList_clear_method,  METH_NOARGS, NULL},
+  {"clear",  (PyCFunction)KeepList_clear,  METH_NOARGS, NULL},
   {NULL, NULL, 0, NULL}
 };
 
 static PyObject* KeepList_New(MemoObject* owner) {
-  KeepListObject* self = PyObject_GC_New(KeepListObject, &KeepList_Type);
+  KeepListObject* self = PyObject_New(KeepListObject, &KeepList_Type);
   if (!self) return NULL;
   Py_INCREF(owner);
   self->owner = owner;
-  PyObject_GC_Track(self);
   return (PyObject*)self;
 }
 
@@ -434,69 +422,25 @@ static PyTypeObject KeepList_Type = {
   .tp_name      = "copyc._copying._KeepList",
   .tp_basicsize = sizeof(KeepListObject),
   .tp_dealloc   = (destructor)KeepList_dealloc,
-  .tp_flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+  .tp_flags     = Py_TPFLAGS_DEFAULT,
   .tp_as_sequence = &KeepList_as_sequence,
   .tp_iter      = (getiterfunc)KeepList_iter,
   .tp_methods   = KeepList_methods,
-  .tp_traverse  = (traverseproc)KeepList_tp_traverse,
-  .tp_clear     = (inquiry)KeepList_tp_clear,
 };
 
 /* --------------------------- Memo object impl ------------------------------ */
 
-/* GC traverse/clear for Memo:
- * - Visit all PyObject* stored in the memo table
- * - Visit keep vector items
- * - In tp_clear, break all references so cycles can be collected
- */
-static int Memo_tp_traverse(MemoObject* self, visitproc visit, void* arg) {
-  if (self->table) {
-    for (Py_ssize_t i = 0; i < self->table->size; i++) {
-      if (self->table->slots[i].key && self->table->slots[i].key != MEMO_TOMBSTONE) {
-        Py_VISIT(self->table->slots[i].value);
-      }
-    }
-  }
-  for (Py_ssize_t i = 0; i < self->keep.size; i++) {
-    Py_VISIT(self->keep.items[i]);
-  }
-  return 0;
-}
-
-static int Memo_tp_clear(MemoObject* self) {
-  /* Clear table values and mark slots tombstoned; do not free table storage here */
-  if (self->table) {
-    for (Py_ssize_t i = 0; i < self->table->size; i++) {
-      if (self->table->slots[i].key && self->table->slots[i].key != MEMO_TOMBSTONE) {
-        Py_XDECREF(self->table->slots[i].value);
-        self->table->slots[i].value = NULL;
-        self->table->slots[i].key = MEMO_TOMBSTONE;
-      }
-    }
-    self->table->used = 0;
-    self->table->filled = 0;
-  }
-  keepvector_clear(&self->keep);
-  return 0;
-}
-
 static void Memo_dealloc(MemoObject* self) {
-  PyObject_GC_UnTrack(self);
-  /* Break cycles and release references */
-  Memo_tp_clear(self);
-  /* Free underlying storage */
   memo_table_free(self->table);
-  self->table = NULL;
   keepvector_free(&self->keep);
   Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
 PyObject* Memo_New(void) {
-  MemoObject* self = PyObject_GC_New(MemoObject, &Memo_Type);
+  MemoObject* self = PyObject_New(MemoObject, &Memo_Type);
   if (!self) return NULL;
   self->table = NULL;
   keepvector_init(&self->keep);
-  PyObject_GC_Track(self);
   return (PyObject*)self;
 }
 
@@ -562,7 +506,7 @@ static PyObject* Memo_iter(MemoObject* self) {
   return it;
 }
 
-static PyObject* Memo_clear_method(MemoObject* self, PyObject* noargs) {
+static PyObject* Memo_clear(MemoObject* self, PyObject* noargs) {
   (void)noargs;
   if (self->table) {
     memo_table_free(self->table);
@@ -596,7 +540,7 @@ static PyMappingMethods Memo_as_mapping = {
 };
 
 static PyMethodDef Memo_methods[] = {
-    {"clear", (PyCFunction)Memo_clear_method, METH_NOARGS, NULL},
+    {"clear", (PyCFunction)Memo_clear, METH_NOARGS, NULL},
     {"get",   (PyCFunction)NULL,       METH_FASTCALL, NULL}, /* populated below for ABI stability */
     {"__contains__", (PyCFunction)Memo_contains, METH_O, NULL},
     {"keep", (PyCFunction)Memo_keep, METH_NOARGS, NULL}, /* expose keepalive proxy */
@@ -636,12 +580,10 @@ PyTypeObject Memo_Type = {
     .tp_name      = "copyc._copying._Memo",
     .tp_basicsize = sizeof(MemoObject),
     .tp_dealloc   = (destructor)Memo_dealloc,
-    .tp_flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
     .tp_as_mapping= &Memo_as_mapping,
     .tp_iter      = (getiterfunc)Memo_iter,
     .tp_methods   = Memo_methods,
-    .tp_traverse  = (traverseproc)Memo_tp_traverse,
-    .tp_clear     = (inquiry)Memo_tp_clear,
 };
 
 /* --------------------------- C hooks for _copying.c ------------------------ */
@@ -711,28 +653,9 @@ int memo_keepalive_ensure(PyObject** memo_ptr, PyObject** keep_proxy_ptr) {
 
   PyObject* memo = *memo_ptr;
   if (Py_TYPE(memo) == &Memo_Type) {
-    /* C Memo: compute hash once, ensure memo[id(memo)] is a _KeepList and reuse it */
     MemoObject* mo = (MemoObject*)memo;
-    void* key = (void*)memo;
-    Py_ssize_t khash = memo_hash_pointer(key);
-
-    PyObject* existing = memo_lookup_obj_h(memo, key, khash); /* borrowed */
-    if (existing) {
-      Py_INCREF(existing);
-      *keep_proxy_ptr = existing;
-      return 0;
-    }
-    if (PyErr_Occurred())
-      return -1;
-
     PyObject* proxy = KeepList_New(mo);
-    if (!proxy)
-      return -1;
-
-    if (memo_store_obj_h(memo, key, proxy, khash) < 0) {
-      Py_DECREF(proxy);
-      return -1;
-    }
+    if (!proxy) return -1;
     *keep_proxy_ptr = proxy; /* owned */
     return 0;
   } else {
