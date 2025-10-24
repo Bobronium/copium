@@ -653,9 +653,28 @@ int memo_keepalive_ensure(PyObject** memo_ptr, PyObject** keep_proxy_ptr) {
 
   PyObject* memo = *memo_ptr;
   if (Py_TYPE(memo) == &Memo_Type) {
+    /* C Memo: compute hash once, ensure memo[id(memo)] is a _KeepList and reuse it */
     MemoObject* mo = (MemoObject*)memo;
+    void* key = (void*)memo;
+    Py_ssize_t khash = memo_hash_pointer(key);
+
+    PyObject* existing = memo_lookup_obj_h(memo, key, khash); /* borrowed */
+    if (existing) {
+      Py_INCREF(existing);
+      *keep_proxy_ptr = existing;
+      return 0;
+    }
+    if (PyErr_Occurred())
+      return -1;
+
     PyObject* proxy = KeepList_New(mo);
-    if (!proxy) return -1;
+    if (!proxy)
+      return -1;
+
+    if (memo_store_obj_h(memo, key, proxy, khash) < 0) {
+      Py_DECREF(proxy);
+      return -1;
+    }
     *keep_proxy_ptr = proxy; /* owned */
     return 0;
   } else {
