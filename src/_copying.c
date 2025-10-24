@@ -75,7 +75,7 @@ extern PyObject* py_get_pins(PyObject* self, PyObject* noargs);
 /* ---------------- Memo integration surface (provided by _memo.c) -----------
  */
 
-/* Forward declaration for MemoObject */
+/* Forward declaration for MemoObject (opaque) */
 typedef struct _MemoObject MemoObject;
 
 /* Memo type (internal) */
@@ -84,18 +84,23 @@ extern PyTypeObject Memo_Type;
 /* Create a new Memo object */
 extern PyObject* Memo_New(void);
 
-/* Lookup value for key (borrowed reference or NULL) */
+/* Lookup/store value for key (borrowed lookup or NULL) */
 extern PyObject* memo_lookup_obj(PyObject* memo, void* key);
-
-/* Store value for key (incref value) */
-extern int memo_store_obj(PyObject* memo, void* key, PyObject* value);
+extern int       memo_store_obj(PyObject* memo, void* key, PyObject* value);
 
 /* Hash-aware fast-paths for C memo */
 extern PyObject* memo_lookup_obj_h(PyObject* memo, void* key, Py_ssize_t khash);
-extern int memo_store_obj_h(PyObject* memo, void* key, PyObject* value, Py_ssize_t khash);
+extern int       memo_store_obj_h(PyObject* memo, void* key, PyObject* value, Py_ssize_t khash);
 
 /* Exported pointer hasher (same as C memo table) */
 extern Py_ssize_t memo_hash_pointer(void* key);
+
+/* Keepalive unification helpers (new) */
+extern int memo_keepalive_ensure(PyObject** memo_ptr, PyObject** keep_proxy_ptr);
+extern int memo_keepalive_append(PyObject** memo_ptr, PyObject** keep_proxy_ptr, PyObject* obj);
+
+/* Ready both Memo and _KeepList types */
+extern int memo_ready_types(void);
 
 /* ------------------------------ Small helpers ------------------------------
  */
@@ -134,8 +139,7 @@ typedef struct {
   PyObject* copyreg_dispatch; /* dict */
   PyObject* copy_Error;       /* exception class */
   PyObject*
-      create_precompiler_reconstructor; /* duper.snapshots.create_precompiler_reconstructor
-                                         */
+      create_precompiler_reconstructor; /* duper.snapshots.create_precompiler_reconstructor */
 
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
   int dict_watcher_id;
@@ -206,14 +210,14 @@ static inline int ensure_memo_exists(PyObject** memo_ptr) {
   return 0;
 }
 
-static inline PyObject* memo_lookup(PyObject** memo_ptr, void* key) {
+static inline __attribute__((unused)) PyObject* memo_lookup(PyObject** memo_ptr, void* key) {
   PyObject* memo = *memo_ptr;
   if (memo == NULL)
     return NULL;
   return memo_lookup_obj(memo, key);
 }
 
-static inline int memo_store(PyObject** memo_ptr, void* key, PyObject* value) {
+static inline __attribute__((unused)) int memo_store(PyObject** memo_ptr, void* key, PyObject* value) {
   if (ensure_memo_exists(memo_ptr) < 0)
     return -1;
   return memo_store_obj(*memo_ptr, key, value);
@@ -239,59 +243,20 @@ static inline int memo_store_h(PyObject** memo_ptr, void* key, PyObject* value, 
   return memo_store_obj(*memo_ptr, key, value);
 }
 
-static inline int ensure_keepalive_list_exists(PyObject** memo_ptr,
-                                               PyObject** keepalive_list_ptr) {
-  if (*keepalive_list_ptr)
-    return 0;
-  if (ensure_memo_exists(memo_ptr) < 0)
-    return -1;
-
-  PyObject* memo = *memo_ptr;
-  void* memo_id = (void*)memo;
-
-  PyObject* existing_list = memo_lookup_obj(memo, memo_id);
-  if (existing_list) {
-    if (!PyList_Check(existing_list)) {
-      PyErr_SetString(PyExc_TypeError, "memo[id(memo)] must be a list");
-      return -1;
-    }
-    Py_INCREF(existing_list);
-    *keepalive_list_ptr = existing_list;
-    return 0;
-  }
-  if (PyErr_Occurred()) {
-    return -1;
-  }
-
-  PyObject* new_list = PyList_New(0);
-  if (!new_list) {
-    return -1;
-  }
-  if (memo_store_obj(memo, memo_id, new_list) < 0) {
-    Py_DECREF(new_list);
-    return -1;
-  }
-  *keepalive_list_ptr = new_list;
-  return 0;
-}
-
+/* Unified keepalive: delegate to _memo.c helpers */
 static inline int keepalive_append_if_different(PyObject** memo_ptr,
                                                 PyObject** keepalive_list_ptr,
                                                 PyObject* original_obj,
                                                 PyObject* copied_obj) {
   if (copied_obj == original_obj)
     return 0;
-  if (ensure_keepalive_list_exists(memo_ptr, keepalive_list_ptr) < 0)
-    return -1;
-  return PyList_Append(*keepalive_list_ptr, original_obj);
+  return memo_keepalive_append(memo_ptr, keepalive_list_ptr, original_obj);
 }
 
 static inline int keepalive_append_original(PyObject** memo_ptr,
                                             PyObject** keepalive_list_ptr,
                                             PyObject* original_obj) {
-  if (ensure_keepalive_list_exists(memo_ptr, keepalive_list_ptr) < 0)
-    return -1;
-  return PyList_Append(*keepalive_list_ptr, original_obj);
+  return memo_keepalive_append(memo_ptr, keepalive_list_ptr, original_obj);
 }
 
 /* ------------------------- Dict watcher (3.12+) ----------------------------
@@ -351,7 +316,6 @@ static int dict_watch_callback(PyDict_WatchEvent event,
 // On < 3.13, _PyDict_Next exists and never errors.
 // On >= 3.13, we synthesize the hash via PyObject_Hash and can error (-1).
 
-// Prototype for the private symbol, only used when it actually exists.
 #if PY_VERSION_HEX < PY_VERSION_3_13_HEX /* 3.13.0 */
 PyAPI_FUNC(int) _PyDict_Next(PyObject* mp,
                              Py_ssize_t* ppos,
@@ -360,9 +324,6 @@ PyAPI_FUNC(int) _PyDict_Next(PyObject* mp,
                              Py_hash_t* phash);
 #endif
 
-// Returns: 1 -> yielded (key,value,hash)
-//          0 -> end of iteration
-//         -1 -> error (only possible on >=3.13 when hashing key)
 static inline int dict_iterate_with_hash(PyObject* dict_obj,
                                          Py_ssize_t* position_ptr,
                                          PyObject** key_ptr,
@@ -682,10 +643,7 @@ static PyObject* deepcopy_list(PyObject* source_obj,
         return NULL;
     }
 
-    /* Prefill with Py_None. */
-    /* assuming None is practically immortal; */
     for (Py_ssize_t i = 0; i < initial_size; ++i) {
-        /* SET_ITEM steals; passing borrowed Py_None is fine with immortality. */
         PyList_SET_ITEM(copied_list, i, Py_None);
     }
 
@@ -697,12 +655,10 @@ static PyObject* deepcopy_list(PyObject* source_obj,
 
     /* 3) Deep-copy elements, guarding against concurrent list mutations. */
     for (Py_ssize_t i = 0; i < initial_size; ++i) {
-        /* If user code resized either list during recursion, stop safely. */
         if (i >= PyList_GET_SIZE(copied_list) || i >= PyList_GET_SIZE(source_obj)) {
             break;
         }
 
-        /* Hold a ref to the source element while we call into Python. */
         PyObject* item = PyList_GET_ITEM(source_obj, i);  /* borrowed */
         Py_XINCREF(item);
         if (item == NULL) {
@@ -713,25 +669,21 @@ static PyObject* deepcopy_list(PyObject* source_obj,
         PyObject* copied_item =
             deepcopy_recursive(item, memo_ptr, keepalive_list_ptr);
 
-        Py_DECREF(item);  /* release temporary hold */
+        Py_DECREF(item);
 
         if (copied_item == NULL) {
             Py_DECREF(copied_list);
             return NULL;
         }
 
-        /* Destination might have changed size during recursion. */
         if (i >= PyList_GET_SIZE(copied_list)) {
-            Py_DECREF(copied_item);  /* PyList_SetItem would not steal on failure */
+            Py_DECREF(copied_item);
             break;
         }
 
-        /* 4) Replace slot i with the new element. */
         PyList_SET_ITEM(copied_list, i, copied_item);
-
     }
 
-    /* 5) Keepalive to avoid premature deallocation in alias-y scenarios. */
     if (keepalive_append_if_different(memo_ptr, keepalive_list_ptr,
                                       source_obj, copied_list) < 0) {
         Py_DECREF(copied_list);
@@ -1018,9 +970,7 @@ static int unpack_reduce_result_tuple(PyObject* reduce_result,
   return 0;
 }
 
-/* ------------------------ dispatcher core (skip_atomic_check)
- * ---------------------
- */
+/* ------------------------ dispatcher core (skip_atomic_check) -------------- */
 
 static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
                                          PyObject** memo_ptr,
@@ -1148,8 +1098,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
       return NULL;
     }
     if (has_deepcopy) {
-      /* Ensure memo is a dict per copy protocol; many __deepcopy__ expect a
-       * dict */
+      /* Ensure memo is a dict per copy protocol; many __deepcopy__ expect a dict */
       if (ensure_memo_exists(memo_ptr) < 0) {
         Py_DECREF(deepcopy_method);
         return NULL;
@@ -1640,14 +1589,6 @@ PyObject* py_replicate(PyObject* self,
                        PyObject* const* args,
                        Py_ssize_t nargs,
                        PyObject* kwnames) {
-  /* Signature: replicate(obj, /, n: int, compile_after: int = 20)
-   *
-   * Behavior notes:
-   * - If duper.snapshots was NOT available at module import (i.e., the cached
-   *   create_precompiler_reconstructor is NULL), the 'compile_after' keyword
-   *   is forbidden and the function always performs n×deepcopy (no precompiler).
-   * - We do NOT attempt any lazy import here; availability is decided once at init.
-   */
   (void)self;
 
   if (UNLIKELY(nargs != 2)) {
@@ -1667,10 +1608,8 @@ PyObject* py_replicate(PyObject* self,
   }
   Py_ssize_t n = (Py_ssize_t)n_long;
 
-  /* Determine duper availability once, based on module_state cache set at init */
   int duper_available = (module_state.create_precompiler_reconstructor != NULL);
 
-  /* parse optional keyword: compile_after (only allowed if duper is available) */
   int compile_after = 20;
   if (kwnames) {
     Py_ssize_t kwcount = PyTuple_GET_SIZE(kwnames);
@@ -1694,7 +1633,6 @@ PyObject* py_replicate(PyObject* self,
                         "replicate(): 'compile_after' requires duper.snapshots; it is not available");
         return NULL;
       }
-      /* value is args[nargs + index] */
       PyObject* kwval = args[nargs + 0];
       long ca = PyLong_AsLong(kwval);
       if (ca == -1 && PyErr_Occurred())
@@ -1707,7 +1645,6 @@ PyObject* py_replicate(PyObject* self,
     }
   }
 
-  /* Trivial n==0 fast path */
   if (n == 0) {
     return PyList_New(0);
   }
@@ -1716,14 +1653,12 @@ PyObject* py_replicate(PyObject* self,
       if (!out)
         return NULL;
 
-      /* Fast path: atomic, so just copy references quickly */
       for (Py_ssize_t i = 0; i < n; i++) {
-          PyObject *copy_i = Py_NewRef(obj);  /* same immutable object */
-          PyList_SET_ITEM(out, i, copy_i);     /* steals ref */
+          PyObject *copy_i = Py_NewRef(obj);
+          PyList_SET_ITEM(out, i, copy_i);
       }
       return out;
   }
-  /* 1) Pin fast-path: use the pinned factory (reconstructor) */
   {
     PinObject* pin = _duper_lookup_pin_for_object(obj);
     if (pin) {
@@ -1735,14 +1670,12 @@ PyObject* py_replicate(PyObject* self,
       }
       PyObject* out = build_list_by_calling_noargs(factory, n);
       if (out) {
-        /* count all hits */
         pin->hits += (uint64_t)n;
       }
       return out;
     }
   }
 
-  /* If duper is unavailable OR n <= compile_after -> small-batch n×deepcopy */
   if (!duper_available || n <= (Py_ssize_t)compile_after) {
     PyObject* out = PyList_New(n);
     if (!out)
@@ -1752,14 +1685,12 @@ PyObject* py_replicate(PyObject* self,
       PyObject* memo_local = NULL;
       PyObject* keepalive_local = NULL;
 
-      /* Use the internal engine directly to avoid Python-call overhead */
       PyObject* copy_i = deepcopy_recursive_impl(obj, &memo_local, &keepalive_local, /*skip_atomic_check=*/1);
 
       Py_XDECREF(keepalive_local);
       Py_XDECREF(memo_local);
 
       if (!copy_i) {
-        /* cleanup already-filled slots */
         for (Py_ssize_t j = 0; j < i; j++) {
           PyObject* prev = PyList_GET_ITEM(out, j);
           PyList_SET_ITEM(out, j, NULL);
@@ -1768,12 +1699,11 @@ PyObject* py_replicate(PyObject* self,
         Py_DECREF(out);
         return NULL;
       }
-      PyList_SET_ITEM(out, i, copy_i); /* steals ref */
+      PyList_SET_ITEM(out, i, copy_i);
     }
     return out;
   }
 
-  /* 2) Large-batch with precompiled reconstructor (duper present and n > compile_after) */
   {
     PyObject* cpr = module_state.create_precompiler_reconstructor;
     if (UNLIKELY(!cpr || !PyCallable_Check(cpr))) {
@@ -1796,13 +1726,11 @@ PyObject* py_replicate(PyObject* self,
 
     PyObject* out = build_list_by_calling_noargs(reconstructor, n);
     Py_DECREF(reconstructor);
-    return out; /* may be NULL on error */
+    return out;
   }
 }
 
-/* New public API: repeatcall(function, size, /) -> list[T]
- * Exposes build_list_by_calling_noargs to Python.
- */
+/* New public API: repeatcall(function, size, /) -> list[T] */
 PyObject* py_repeatcall(PyObject* self,
                         PyObject* const* args,
                         Py_ssize_t nargs,
@@ -1837,7 +1765,6 @@ PyObject* py_repeatcall(PyObject* self,
 
 /* ----------------------------- Shallow reconstruct helper ------------------ */
 
-/* C-only helper (no Python export): apply reduce-state pieces onto new_obj. */
 static PyObject* reconstruct_state(PyObject* new_obj,
                                    PyObject* state,
                                    PyObject* listiter,
@@ -1850,7 +1777,6 @@ static PyObject* reconstruct_state(PyObject* new_obj,
   if (!listiter) listiter = Py_None;
   if (!dictiter) dictiter = Py_None;
 
-  /* Handle state */
   if (state != Py_None) {
     PyObject* setstate = PyObject_GetAttr(new_obj, module_state.str_setstate);
     if (setstate) {
@@ -1908,7 +1834,6 @@ static PyObject* reconstruct_state(PyObject* new_obj,
     }
   }
 
-  /* listiter -> append */
   if (listiter != Py_None) {
     PyObject* append = PyObject_GetAttr(new_obj, module_state.str_append);
     if (!append) return NULL;
@@ -1933,7 +1858,6 @@ static PyObject* reconstruct_state(PyObject* new_obj,
     if (PyErr_Occurred()) return NULL;
   }
 
-  /* dictiter -> __setitem__ */
   if (dictiter != Py_None) {
     PyObject* it = PyObject_GetIter(dictiter);
     if (!it) return NULL;
@@ -2016,7 +1940,6 @@ static PyObject* make_empty_same_type(PyObject* obj) {
 }
 
 static PyObject* try_stdlib_mutable_copy(PyObject* obj) {
-  /* Fast paths for well-known stdlib mutables */
   PyTypeObject* tp = Py_TYPE(obj);
   if (tp == &PyDict_Type || tp == &PySet_Type || tp == &PyList_Type
       || tp == &PyByteArray_Type) {
@@ -2027,7 +1950,6 @@ static PyObject* try_stdlib_mutable_copy(PyObject* obj) {
       PyObject* out = PyObject_CallNoArgs(method);
       Py_DECREF(method);
       if (out) return out;
-      /* if copy() exists but failed, propagate */
       return NULL;
     }
   }
@@ -2037,12 +1959,10 @@ static PyObject* try_stdlib_mutable_copy(PyObject* obj) {
 PyObject* py_copy(PyObject* self, PyObject* obj) {
   (void)self;
 
-  /* 1) Atomic immutables and 'type' subclasses: return as-is */
   if (is_atomic_immutable(obj)) {
     return Py_NewRef(obj);
   }
 
-  /* Additionally treat slice and frozenset as immutable for shallow copy */
   if (PySlice_Check(obj)) {
     return Py_NewRef(obj);
   }
@@ -2050,31 +1970,26 @@ PyObject* py_copy(PyObject* self, PyObject* obj) {
     return Py_NewRef(obj);
   }
 
-  /* types themselves (classes) are treated as immutable */
   if (PyType_IsSubtype(Py_TYPE(obj), &PyType_Type)) {
     return Py_NewRef(obj);
   }
 
-  /* 2) Empty, initializable stdlib collections: return a fresh empty */
   if (is_empty_initializable(obj)) {
     PyObject* fresh = make_empty_same_type(obj);
     if (fresh == Py_None) {
       Py_DECREF(fresh);
-      /* fall through; shouldn't reach */
     } else {
       return fresh;
     }
   }
 
-  /* 3) Stdlib mutable fast-paths using .copy() */
   {
     PyObject* maybe = try_stdlib_mutable_copy(obj);
-    if (!maybe) return NULL; /* error */
-    if (maybe != Py_None) return maybe; /* got a copy */
+    if (!maybe) return NULL;
+    if (maybe != Py_None) return maybe;
     Py_DECREF(maybe);
   }
 
-  /* 4) __copy__ if present */
   {
     PyObject* cp = PyObject_GetAttrString(obj, "__copy__");
     if (cp) {
@@ -2085,7 +2000,6 @@ PyObject* py_copy(PyObject* self, PyObject* obj) {
     PyErr_Clear();
   }
 
-  /* 5) Fallback: reduce protocol (no deep-copy of components) */
   PyTypeObject* obj_type = Py_TYPE(obj);
   PyObject* reduce_result = try_reduce_via_registry(obj, obj_type);
   if (!reduce_result) {
@@ -2112,7 +2026,7 @@ PyObject* py_copy(PyObject* self, PyObject* obj) {
   if (PyTuple_GET_SIZE(args) == 0) {
     out = PyObject_CallNoArgs(constructor);
   } else {
-    out = PyObject_CallObject(constructor, args); /* use args as-is */
+    out = PyObject_CallObject(constructor, args);
   }
   if (!out) {
     Py_DECREF(reduce_result);
@@ -2127,7 +2041,7 @@ PyObject* py_copy(PyObject* self, PyObject* obj) {
         listiter ? listiter : Py_None,
         dictiter ? dictiter : Py_None);
     if (!applied) { Py_DECREF(out); Py_DECREF(reduce_result); return NULL; }
-    Py_DECREF(applied); /* returns a new ref to out */
+    Py_DECREF(applied);
   }
 
   Py_DECREF(reduce_result);
@@ -2142,7 +2056,6 @@ PyObject* py_replace(PyObject* self,
                      Py_ssize_t nargs,
                      PyObject* kwnames) {
   (void)self;
-  /* Signature: replace(obj, /, **changes) */
   if (UNLIKELY(nargs == 0)) {
     PyErr_SetString(PyExc_TypeError,
                     "replace() missing 1 required positional argument: 'obj'");
@@ -2171,13 +2084,11 @@ PyObject* py_replace(PyObject* self,
     return NULL;
   }
 
-  /* Build positional tuple (obj) */
   PyObject* posargs = PyTuple_New(1);
   if (!posargs) { Py_DECREF(func); return NULL; }
   Py_INCREF(obj);
   PyTuple_SET_ITEM(posargs, 0, obj);
 
-  /* Build kwargs dict from our kwnames */
   PyObject* kwargs = NULL;
   if (kwnames && PyTuple_GET_SIZE(kwnames) > 0) {
     kwargs = PyDict_New();
@@ -2201,12 +2112,9 @@ PyObject* py_replace(PyObject* self,
 }
 #endif
 
-/* ----------------------------- Module boilerplate --------------------------
- */
+/* ----------------------------- Module boilerplate -------------------------- */
 
-/* Forward declarations for newly added public APIs */
 extern PyObject* py_copy(PyObject* self, PyObject* obj);
-/* internal-only: reconstruct_state is a static C helper (no Python export) */
 #if PY_VERSION_HEX >= PY_VERSION_3_13_HEX
 extern PyObject* py_replace(PyObject* self,
                             PyObject* const* args,
@@ -2255,7 +2163,7 @@ static void cleanup_on_init_failure(void) {
     if (!_loaded_type || !PyType_Check(_loaded_type)) {           \
       Py_XDECREF(_loaded_type);                                   \
       PyErr_Format(PyExc_ImportError,                             \
-                   "copyc: %s.%s missing or not a type", \
+                   "copyc: %s.%s missing or not a type",          \
                    #source_module, (type_name));                  \
       cleanup_on_init_failure();                                  \
       return -1;                                                  \
@@ -2266,12 +2174,12 @@ static void cleanup_on_init_failure(void) {
 int _copyc_copying_init(PyObject* module) {
   /* Intern strings */
   module_state.str_reduce_ex = PyUnicode_InternFromString("__reduce_ex__");
-  module_state.str_reduce = PyUnicode_InternFromString("__reduce__");
-  module_state.str_deepcopy = PyUnicode_InternFromString("__deepcopy__");
-  module_state.str_setstate = PyUnicode_InternFromString("__setstate__");
-  module_state.str_dict = PyUnicode_InternFromString("__dict__");
-  module_state.str_append = PyUnicode_InternFromString("append");
-  module_state.str_update = PyUnicode_InternFromString("update");
+  module_state.str_reduce    = PyUnicode_InternFromString("__reduce__");
+  module_state.str_deepcopy  = PyUnicode_InternFromString("__deepcopy__");
+  module_state.str_setstate  = PyUnicode_InternFromString("__setstate__");
+  module_state.str_dict      = PyUnicode_InternFromString("__dict__");
+  module_state.str_append    = PyUnicode_InternFromString("append");
+  module_state.str_update    = PyUnicode_InternFromString("update");
 
   if (!module_state.str_reduce_ex || !module_state.str_reduce ||
       !module_state.str_deepcopy || !module_state.str_setstate ||
@@ -2284,12 +2192,12 @@ int _copyc_copying_init(PyObject* module) {
   }
 
   /* Load stdlib modules */
-  PyObject* mod_types = PyImport_ImportModule("types");
-  PyObject* mod_builtins = PyImport_ImportModule("builtins");
-  PyObject* mod_weakref = PyImport_ImportModule("weakref");
-  PyObject* mod_copyreg = PyImport_ImportModule("copyreg");
-  PyObject* mod_re = PyImport_ImportModule("re");
-  PyObject* mod_decimal = PyImport_ImportModule("decimal");
+  PyObject* mod_types     = PyImport_ImportModule("types");
+  PyObject* mod_builtins  = PyImport_ImportModule("builtins");
+  PyObject* mod_weakref   = PyImport_ImportModule("weakref");
+  PyObject* mod_copyreg   = PyImport_ImportModule("copyreg");
+  PyObject* mod_re        = PyImport_ImportModule("re");
+  PyObject* mod_decimal   = PyImport_ImportModule("decimal");
   PyObject* mod_fractions = PyImport_ImportModule("fractions");
 
   if (!mod_types || !mod_builtins || !mod_weakref || !mod_copyreg || !mod_re ||
@@ -2309,14 +2217,14 @@ int _copyc_copying_init(PyObject* module) {
 
   /* Cache types */
   LOAD_TYPE(mod_types, "BuiltinFunctionType", BuiltinFunctionType);
-  LOAD_TYPE(mod_types, "CodeType", CodeType);
-  LOAD_TYPE(mod_types, "MethodType", MethodType);
-  LOAD_TYPE(mod_builtins, "property", property_type);
-  LOAD_TYPE(mod_builtins, "range", range_type);
-  LOAD_TYPE(mod_weakref, "ref", weakref_ref_type);
-  LOAD_TYPE(mod_re, "Pattern", re_Pattern_type);
-  LOAD_TYPE(mod_decimal, "Decimal", Decimal_type);
-  LOAD_TYPE(mod_fractions, "Fraction", Fraction_type);
+  LOAD_TYPE(mod_types, "CodeType",             CodeType);
+  LOAD_TYPE(mod_types, "MethodType",           MethodType);
+  LOAD_TYPE(mod_builtins, "property",          property_type);
+  LOAD_TYPE(mod_builtins, "range",             range_type);
+  LOAD_TYPE(mod_weakref, "ref",                weakref_ref_type);
+  LOAD_TYPE(mod_re, "Pattern",                 re_Pattern_type);
+  LOAD_TYPE(mod_decimal, "Decimal",            Decimal_type);
+  LOAD_TYPE(mod_fractions, "Fraction",         Fraction_type);
 
   /* copyreg dispatch and copy.Error */
   module_state.copyreg_dispatch =
@@ -2398,7 +2306,6 @@ int _copyc_copying_init(PyObject* module) {
   }
 #endif
 
-  /* Drop temporary module refs; cached types/objects remain */
   Py_DECREF(mod_types);
   Py_DECREF(mod_builtins);
   Py_DECREF(mod_weakref);
@@ -2407,8 +2314,8 @@ int _copyc_copying_init(PyObject* module) {
   Py_DECREF(mod_decimal);
   Py_DECREF(mod_fractions);
 
-  /* Ensure Memo_Type is ready before any Memo instances are created */
-  if (PyType_Ready(&Memo_Type) < 0) {
+  /* Ready memo + keep proxy types */
+  if (memo_ready_types() < 0) {
     cleanup_on_init_failure();
     return -1;
   }
@@ -2417,31 +2324,26 @@ int _copyc_copying_init(PyObject* module) {
   {
     PyObject* mod_snapshots = PyImport_ImportModule("duper.snapshots");
     if (!mod_snapshots) {
-      /* duper not installed: proceed without pin features */
       PyErr_Clear();
       module_state.create_precompiler_reconstructor = NULL;
     } else {
-      /* Cache optional reconstructor factory for replicate() fast-paths */
       module_state.create_precompiler_reconstructor =
           PyObject_GetAttrString(mod_snapshots, "create_precompiler_reconstructor");
       if (!module_state.create_precompiler_reconstructor) {
-        /* tolerate absence; clear error */
         PyErr_Clear();
       }
 
-      /* Since duper.snapshots is importable, export Pin/PinsProxy types and pin APIs. */
       if (_duper_pinning_add_types(module) < 0) {
         Py_DECREF(mod_snapshots);
         cleanup_on_init_failure();
         return -1;
       }
-
       Py_DECREF(mod_snapshots);
     }
   }
   if (PyObject_SetAttrString(module, "Error", module_state.copy_Error) < 0) {
-        cleanup_on_init_failure();
-      return -1;
+    cleanup_on_init_failure();
+    return -1;
   }
   return 0;
 }
