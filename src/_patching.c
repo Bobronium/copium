@@ -4,7 +4,7 @@
  *
  * Patching internals (no standalone module init).
  * Public API is registered onto the "copium" module via:
- *   int _duper_patching_add_api(PyObject* module)
+ *   int _copium_patching_add_api(PyObject* module)
  */
 
 #define PY_SSIZE_T_CLEAN
@@ -17,12 +17,12 @@
  * ========================= */
 #include "cpython/funcobject.h"   // PyFunctionObject, PyVectorcall_Function
 
-static PyObject *KEY_TARGET  = NULL;  // "_duper_target"
-static PyObject *KEY_SAVED   = NULL;  // "_duper_saved_vec"
+static PyObject *KEY_TARGET  = NULL;  // "_copium_target"
+static PyObject *KEY_SAVED   = NULL;  // "_copium_saved_vec"
 static PyObject *KEY_WRAPPED = NULL;  // "__wrapped__"
 static int g_patching_initialized = 0;
 
-#define SAVED_VEC_CAPSULE_NAME "duper.vectorcall"
+#define SAVED_VEC_CAPSULE_NAME "copium.vectorcall"
 
 static PyObject *fwd_vec(PyObject *callable,
                          PyObject *const *args,
@@ -47,19 +47,19 @@ fwd_vec(PyObject *callable,
         PyObject *kwnames)
 {
     if (!PyFunction_Check(callable)) {
-        PyErr_SetString(PyExc_RuntimeError, "duper._patch: callable not a PyFunction");
+        PyErr_SetString(PyExc_RuntimeError, "copium._patch: callable not a PyFunction");
         return NULL;
     }
     PyFunctionObject *fn = (PyFunctionObject *)callable;
     PyObject *f_dict = fn->func_dict;  // borrowed
     if (f_dict == NULL) {
-        PyErr_SetString(PyExc_RuntimeError, "duper._patch: func_dict missing");
+        PyErr_SetString(PyExc_RuntimeError, "copium._patch: func_dict missing");
         return NULL;
     }
     PyObject *target = PyDict_GetItemWithError(f_dict, KEY_TARGET);  // borrowed
     if (target == NULL) {
         if (PyErr_Occurred()) return NULL;
-        PyErr_SetString(PyExc_RuntimeError, "duper._patch: not applied");
+        PyErr_SetString(PyExc_RuntimeError, "copium._patch: not applied");
         return NULL;
     }
     return _PyObject_Vectorcall(target, args, nargsf, kwnames);
@@ -97,7 +97,7 @@ m_apply(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
         if (PyErr_Occurred()) return NULL;
         vectorcallfunc orig = PyVectorcall_Function(func);
         if (orig == NULL) {
-            PyErr_SetString(PyExc_RuntimeError, "duper._patch: function has no vectorcall");
+            PyErr_SetString(PyExc_RuntimeError, "copium._patch: function has no vectorcall");
             return NULL;
         }
         PyObject *cap = make_vec_capsule(orig);
@@ -132,14 +132,14 @@ m_unapply(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
 
     PyFunctionObject *fn = (PyFunctionObject *)func;
     if (fn->func_dict == NULL) {
-        PyErr_SetString(PyExc_RuntimeError, "duper._patch: not applied (no func_dict)");
+        PyErr_SetString(PyExc_RuntimeError, "copium._patch: not applied (no func_dict)");
         return NULL;
     }
 
     PyObject *cap = PyDict_GetItemWithError(fn->func_dict, KEY_SAVED);  // borrowed
     if (cap == NULL) {
         if (PyErr_Occurred()) return NULL;
-        PyErr_SetString(PyExc_RuntimeError, "duper._patch: not applied (no saved vec)");
+        PyErr_SetString(PyExc_RuntimeError, "copium._patch: not applied (no saved vec)");
         return NULL;
     }
     vectorcallfunc orig = vec_from_capsule(cap);
@@ -199,8 +199,8 @@ static PyMethodDef patching_methods[] = {
 
 static int _ensure_inited(void) {
     if (g_patching_initialized) return 0;
-    KEY_TARGET  = PyUnicode_InternFromString("_duper_target");
-    KEY_SAVED   = PyUnicode_InternFromString("_duper_saved_vec");
+    KEY_TARGET  = PyUnicode_InternFromString("_copium_target");
+    KEY_SAVED   = PyUnicode_InternFromString("_copium_saved_vec");
     KEY_WRAPPED = PyUnicode_InternFromString("__wrapped__");
     if (!KEY_TARGET || !KEY_SAVED || !KEY_WRAPPED) {
         Py_XDECREF(KEY_TARGET); Py_XDECREF(KEY_SAVED); Py_XDECREF(KEY_WRAPPED);
@@ -211,7 +211,7 @@ static int _ensure_inited(void) {
     return 0;
 }
 
-int _duper_patching_add_api(PyObject* module) {
+int _copium_patching_add_api(PyObject* module) {
     if (_ensure_inited() < 0) return -1;
 #if PY_VERSION_HEX >= 0x03080000
     if (PyModule_AddFunctions(module, patching_methods) < 0) return -1;
@@ -532,7 +532,7 @@ static int _ensure_inited(void) {
     return 0;
 }
 
-int _duper_patching_add_api(PyObject* module) {
+int _copium_patching_add_api(PyObject* module) {
     if (_ensure_inited() < 0) return -1;
 #if PY_VERSION_HEX >= 0x03080000
     if (PyModule_AddFunctions(module, patching_methods) < 0) return -1;

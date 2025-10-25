@@ -274,31 +274,31 @@ static inline int keepalive_append_original(PyObject** memo_ptr,
 
    Overhead per guarded frame:
      - Always: ++depth (TLS) + one bit-test.
-     - Every COPYC_STACKCHECK_STRIDE frames: 1 pointer compare against cached low-water mark.
+     - Every COPIUM_STACKCHECK_STRIDE frames: 1 pointer compare against cached low-water mark.
 */
 
-#ifndef COPYC_STACKCHECK_STRIDE
-#define COPYC_STACKCHECK_STRIDE 32u
+#ifndef COPIUM_STACKCHECK_STRIDE
+#define COPIUM_STACKCHECK_STRIDE 32u
 #endif
 
 /* Safety margin above the OS guard page to allow a few more frames even if
    the stride delays the check. Keep generous but small enough not to bite into
    useful stack. */
-#ifndef COPYC_STACK_SAFETY_MARGIN
-#define COPYC_STACK_SAFETY_MARGIN (256u * 1024u)  /* 256 KiB */
+#ifndef COPIUM_STACK_SAFETY_MARGIN
+#define COPIUM_STACK_SAFETY_MARGIN (256u * 1024u)  /* 256 KiB */
 #endif
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-static _Thread_local unsigned int _copyc_tls_depth = 0;
-static _Thread_local int          _copyc_tls_stack_inited = 0;
-static _Thread_local char*        _copyc_tls_stack_low = NULL;   /* lowest usable addr + safety */
-static _Thread_local char*        _copyc_tls_stack_high = NULL;  /* highest addr (mostly informational) */
+static _Thread_local unsigned int _copium_tls_depth = 0;
+static _Thread_local int          _copium_tls_stack_inited = 0;
+static _Thread_local char*        _copium_tls_stack_low = NULL;   /* lowest usable addr + safety */
+static _Thread_local char*        _copium_tls_stack_high = NULL;  /* highest addr (mostly informational) */
 #endif
 
-static inline void _copyc_stack_init_if_needed(void) {
+static inline void _copium_stack_init_if_needed(void) {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-  if (_copyc_tls_stack_inited) return;
-  _copyc_tls_stack_inited = 1;
+  if (_copium_tls_stack_inited) return;
+  _copium_tls_stack_inited = 1;
 
 #if defined(__APPLE__)
   /* macOS: base is the *high* address; stack grows downward. */
@@ -310,12 +310,12 @@ static inline void _copyc_stack_init_if_needed(void) {
   char* low  = high - (ptrdiff_t)sz;
 
   /* Apply a safety margin above the OS guard page */
-  if ((size_t)sz > COPYC_STACK_SAFETY_MARGIN) {
-    low += COPYC_STACK_SAFETY_MARGIN;
+  if ((size_t)sz > COPIUM_STACK_SAFETY_MARGIN) {
+    low += COPIUM_STACK_SAFETY_MARGIN;
   }
 
-  _copyc_tls_stack_low  = low;
-  _copyc_tls_stack_high = high;
+  _copium_tls_stack_low  = low;
+  _copium_tls_stack_high = high;
 #elif defined(__linux__)
   /* Linux: attr stackaddr is the *low* address of the reserved stack region. */
   pthread_attr_t attr;
@@ -327,19 +327,19 @@ static inline void _copyc_stack_init_if_needed(void) {
       char* high = low + (ptrdiff_t)sz;
 
       /* Apply safety margin above guard page (at the low end) */
-      if (sz > COPYC_STACK_SAFETY_MARGIN) {
-        low += COPYC_STACK_SAFETY_MARGIN;
+      if (sz > COPIUM_STACK_SAFETY_MARGIN) {
+        low += COPIUM_STACK_SAFETY_MARGIN;
       }
 
-      _copyc_tls_stack_low  = low;
-      _copyc_tls_stack_high = high;
+      _copium_tls_stack_low  = low;
+      _copium_tls_stack_high = high;
     }
     pthread_attr_destroy(&attr);
   }
 #else
   /* Other platforms: leave pointers NULL -> fall back path in enter(). */
-  _copyc_tls_stack_low = NULL;
-  _copyc_tls_stack_high = NULL;
+  _copium_tls_stack_low = NULL;
+  _copium_tls_stack_high = NULL;
 #endif
 
   /* Nothing else to do; if we failed to obtain bounds, low remains NULL. */
@@ -348,24 +348,24 @@ static inline void _copyc_stack_init_if_needed(void) {
 #endif
 }
 
-static inline int _copyc_recdepth_enter(void) {
+static inline int _copium_recdepth_enter(void) {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-  unsigned int d = ++_copyc_tls_depth;
+  unsigned int d = ++_copium_tls_depth;
 
   /* Sample only every N frames to keep cost negligible. */
-  if (UNLIKELY((d & (COPYC_STACKCHECK_STRIDE - 1u)) == 0u)) {
-    _copyc_stack_init_if_needed();
+  if (UNLIKELY((d & (COPIUM_STACKCHECK_STRIDE - 1u)) == 0u)) {
+    _copium_stack_init_if_needed();
 
-    if (_copyc_tls_stack_low) {
+    if (_copium_tls_stack_low) {
       /* Compare current stack pointer to low-water mark. */
       char sp_probe;
       char* sp = (char*)&sp_probe;
 
       /* Most platforms grow downward; if sp <= low, we're in the danger zone. */
-      if (UNLIKELY(sp <= _copyc_tls_stack_low)) {
-        _copyc_tls_depth--;
+      if (UNLIKELY(sp <= _copium_tls_stack_low)) {
+        _copium_tls_depth--;
         PyErr_SetString(PyExc_RecursionError,
-                        "maximum recursion depth exceeded in copyc.deepcopy (stack safety cap)");
+                        "maximum recursion depth exceeded in copium.deepcopy (stack safety cap)");
         return -1;
       }
     } else {
@@ -377,9 +377,9 @@ static inline int _copyc_recdepth_enter(void) {
       if (limit > 10000) { limit = 10000; }
 
       if (UNLIKELY((int)next > limit)) {
-        _copyc_tls_depth--;
+        _copium_tls_depth--;
         PyErr_SetString(PyExc_RecursionError,
-                        "maximum recursion depth exceeded in copyc.deepcopy");
+                        "maximum recursion depth exceeded in copium.deepcopy");
         return -1;
       }
       (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)next);
@@ -396,7 +396,7 @@ static inline int _copyc_recdepth_enter(void) {
 
   if (UNLIKELY((int)next > limit)) {
     PyErr_SetString(PyExc_RecursionError,
-                    "maximum recursion depth exceeded in copyc.deepcopy");
+                    "maximum recursion depth exceeded in copium.deepcopy");
     return -1;
   }
 
@@ -405,10 +405,10 @@ static inline int _copyc_recdepth_enter(void) {
 #endif
 }
 
-static inline void _copyc_recdepth_leave(void) {
+static inline void _copium_recdepth_leave(void) {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-  if (_copyc_tls_depth > 0) {
-    _copyc_tls_depth--;
+  if (_copium_tls_depth > 0) {
+    _copium_tls_depth--;
   }
 #else
   uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
@@ -1638,7 +1638,7 @@ static PyObject* deepcopy_recursive(PyObject* source_obj,
   }
 
   /* Enter our cheap thread-local recursion guard only for non-atomics */
-  if (UNLIKELY(_copyc_recdepth_enter() < 0)) {
+  if (UNLIKELY(_copium_recdepth_enter() < 0)) {
     return NULL;
   }
 
@@ -1646,7 +1646,7 @@ static PyObject* deepcopy_recursive(PyObject* source_obj,
       deepcopy_recursive_impl(source_obj, memo_ptr, keepalive_list_ptr,
                               /*skip_atomic_check=*/1);
 
-  _copyc_recdepth_leave();
+  _copium_recdepth_leave();
   return result;
 }
 
@@ -1655,13 +1655,13 @@ static PyObject* deepcopy_recursive(PyObject* source_obj,
 static PyObject* deepcopy_recursive_skip_atomic(PyObject* source_obj,
                                                 PyObject** memo_ptr,
                                                 PyObject** keepalive_list_ptr) {
-  if (UNLIKELY(_copyc_recdepth_enter() < 0)) {
+  if (UNLIKELY(_copium_recdepth_enter() < 0)) {
     return NULL;
   }
   PyObject* result =
       deepcopy_recursive_impl(source_obj, memo_ptr, keepalive_list_ptr,
                               /*skip_atomic_check=*/1);
-  _copyc_recdepth_leave();
+  _copium_recdepth_leave();
   return result;
 }
 
@@ -2622,7 +2622,7 @@ int _copium_copying_init(PyObject* module) {
 
   /* Create thread-local recursion depth guard */
   if (PyThread_tss_create(&module_state.recdepth_tss) != 0) {
-    PyErr_SetString(PyExc_ImportError, "copyc: failed to create recursion TSS");
+    PyErr_SetString(PyExc_ImportError, "copium: failed to create recursion TSS");
     Py_XDECREF(mod_types);
     Py_XDECREF(mod_builtins);
     Py_XDECREF(mod_weakref);

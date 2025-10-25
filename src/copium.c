@@ -68,7 +68,7 @@ extern PyObject* py_clear_pins(PyObject* self, PyObject* noargs);
 extern PyObject* py_get_pins(PyObject* self, PyObject* noargs);
 
 /* ======== Extern from _patching.c: adds patch/unpatch/patched/... ========== */
-int _duper_patching_add_api(PyObject* module);
+int _copium_patching_add_api(PyObject* module);
 
 /* ===================== Utilities shared locally =========================== */
 
@@ -434,7 +434,7 @@ PyMODINIT_FUNC PyInit_copium(void) {
     }
 
     /* Add low-level patching API (apply/unapply/applied/get_vectorcall_ptr) to patch module */
-    if (_duper_patching_add_api(patch_module) < 0) {
+    if (_copium_patching_add_api(patch_module) < 0) {
         Py_DECREF(module);
         return NULL;
     }
