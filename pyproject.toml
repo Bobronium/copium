@@ -81,7 +81,6 @@ benchmark = [
     "pyperf>=2.9.0",
     "ipython>=8.37.0",
     "datamodelzoo",
-    "jsonschema>=4.25.1",
 ]
 exp = [
     "vl-convert-python>=1.8.0",
@@ -211,7 +210,3 @@ error_summary = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disable_error_code = ["no-untyped-def"]
-
-[tool.uv.sources]
-indifference = { path = "../indifference", editable = true }
-datamodelzoo = { path = "../datamodel", editable = true }
