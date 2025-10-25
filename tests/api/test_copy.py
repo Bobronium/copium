@@ -2,14 +2,16 @@
 #
 # SPDX-License-Identifier: MIT
 import sys
-from typing import NamedTuple
 from typing import TYPE_CHECKING
+from typing import NamedTuple
+
 import pytest
-from typing_extensions import assert_type, assert_never
+from typing_extensions import assert_never
+from typing_extensions import assert_type
 
 import copium
-from tests.typehints.conftest import XT
-from tests.typehints.conftest import X
+from tests.api import XT
+from tests.api import X
 
 
 @pytest.mark.typecheck

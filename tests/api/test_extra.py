@@ -6,8 +6,8 @@ import pytest
 from typing_extensions import assert_type
 
 import copium.extra  # type: ignore[reportMissingModuleSource,unused-ignore]
-from tests.typehints.conftest import XT
-from tests.typehints.conftest import X
+from tests.api import XT
+from tests.api import X
 
 
 @pytest.mark.typecheck
