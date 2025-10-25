@@ -7,8 +7,8 @@ from typing import Any
 
 import copium
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-STUB_PATH = PROJECT_ROOT / "src" / "copium" / "__init__.pyi"
+PACKAGE_ROOT = Path(copium.__file__).parent / "copium"
+PACKAGE_STUB = PACKAGE_ROOT / "__init__.pyi"
 
 
 def _exec_stub_module(path: Path) -> types.ModuleType:
@@ -86,8 +86,8 @@ def _collect_stub_functions(stub_module: types.ModuleType) -> dict[str, Any]:
 
 
 def test_stub_signatures_bind_to_runtime_signatures(subtests):
-    assert STUB_PATH.exists(), f"Stub file not found at {STUB_PATH}"
-    stub_module = _exec_stub_module(STUB_PATH)
+    assert PACKAGE_STUB.exists(), f"Stub file not found at {PACKAGE_STUB}"
+    stub_module = _exec_stub_module(PACKAGE_STUB)
     stub_functions = _collect_stub_functions(stub_module)
 
     for name, stub_function in sorted(stub_functions.items()):
