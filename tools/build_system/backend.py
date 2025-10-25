@@ -527,6 +527,33 @@ def get_requires_for_build_editable(config_settings: dict[str, Any] | None = Non
     return result
 
 
+def get_requires_for_build_sdist(config_settings: dict[str, Any] | None = None) -> list[str]:
+    """Get build requirements for sdist."""
+    cache_key = f"sdist-{_project_fingerprint()}"
+    cache_file = REQUIRES_CACHE / f"{cache_key}.json"
+
+    if cache_file.exists():
+        try:
+            cached = json.loads(cache_file.read_text())
+            echo("Using cached build requirements (sdist)")
+            return cached["requires"]
+        except NoExceptionError as e:
+            echo(f"Requires cache load failed (sdist): {e}")
+            cache_file.unlink(missing_ok=True)
+
+    echo("Getting build requirements (sdist)...")
+    result = setuptools_build_meta.get_requires_for_build_sdist(config_settings)
+
+    # Cache
+    try:
+        cache_file.write_text(json.dumps({"requires": result, "timestamp": time.time()}, indent=2))
+        echo("Cached build requirements (sdist)")
+    except NoExceptionError as e:
+        echo(f"Requires cache save failed (sdist): {e}")
+
+    return result
+
+
 def prepare_metadata_for_build_wheel(
     metadata_directory: str, config_settings: dict[str, Any] | None = None
 ) -> str:
@@ -702,13 +729,28 @@ def build_wheel(
     return result
 
 
+def build_sdist(sdist_directory: str, config_settings: dict[str, Any] | None = None) -> str:
+    """Build a source distribution with version injection.
+
+    We monkey-patch setuptools.setup() so the version computed by setuptools-scm
+    (via _get_version_info) is injected, avoiding the need for a [tool.setuptools_scm]
+    section in pyproject.toml during sdist.
+    """
+    echo("Building sdist...")
+    original = _inject_extensions()
+    try:
+        return setuptools_build_meta.build_sdist(sdist_directory, config_settings)
+    finally:
+        _restore_setup(original)
+
+
 def build_editable(
     wheel_directory: str,
     config_settings: dict[str, Any] | None = None,
     metadata_directory: str | None = None,
 ) -> str:
     """Build an editable wheel."""
-    if os.environ.get("DUPER_DISABLE_WHEEL_CACHE") == "1":
+    if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
         original = _inject_extensions()
         try:
