@@ -59,7 +59,7 @@ class TestDeepcopyArgumentErrors:
 
         # This might fail first on "unexpected keyword" but checking the logic
         # In practice, Python would catch the first unexpected keyword
-        assert str(exc_info.value).lower() == "deepcopy() takes at most 1 keyword argument"
+        assert str(exc_info.value).lower() == "deepcopy() got an unexpected keyword argument 'foo'"
 
     def test_unexpected_keyword_argument(self):
         """deepcopy(x, foo={}) should raise 'unexpected keyword argument' error."""

@@ -1447,48 +1447,130 @@ PyObject* py_deepcopy(PyObject* self,
                       PyObject* const* args,
                       Py_ssize_t nargs,
                       PyObject* kwnames) {
-  if (UNLIKELY(nargs < 1)) {
-    PyErr_Format(PyExc_TypeError,
-                 "deepcopy() missing 1 required positional argument: 'x'");
-    return NULL;
-  }
-  if (UNLIKELY(nargs > 2)) {
-    PyErr_Format(PyExc_TypeError,
-                 "deepcopy() takes from 1 to 2 positional arguments but %zd were given",
-                 nargs);
-    return NULL;
-  }
+  PyObject* source_obj = NULL;
+  PyObject* memo_arg = Py_None;
 
-  PyObject* source_obj = args[0];
-  PyObject* memo_arg = (nargs == 2) ? args[1] : Py_None;
-
-  if (kwnames) {
-    const Py_ssize_t keyword_count = PyTuple_GET_SIZE(kwnames);
-    if (UNLIKELY(nargs == 2 && keyword_count > 0)) {
-      PyErr_SetString(PyExc_TypeError,
-                      "deepcopy() got multiple values for argument 'memo'");
+  // ---------- FAST PATH A: no keywords ----------
+  if (!kwnames || PyTuple_GET_SIZE(kwnames) == 0) {
+    if (UNLIKELY(nargs < 1)) {
+      PyErr_Format(PyExc_TypeError,
+                   "deepcopy() missing 1 required positional argument: 'x'");
       return NULL;
     }
-    if (UNLIKELY(keyword_count > 1)) {
-      PyErr_SetString(PyExc_TypeError,
-                      "deepcopy() takes at most 1 keyword argument");
+    if (UNLIKELY(nargs > 2)) {
+      PyErr_Format(PyExc_TypeError,
+                   "deepcopy() takes from 1 to 2 positional arguments but %zd were given",
+                   nargs);
       return NULL;
     }
-    if (keyword_count == 1) {
-      PyObject* kwname = PyTuple_GET_ITEM(kwnames, 0);
-      int is_memo_keyword =
-          PyUnicode_Check(kwname) &&
-          PyUnicode_CompareWithASCIIString(kwname, "memo") == 0;
-      if (UNLIKELY(!is_memo_keyword)) {
+    source_obj = args[0];
+    memo_arg = (nargs == 2) ? args[1] : Py_None;
+    goto have_args;
+  }
+
+  // ---------- FAST PATH B: one keyword, and it is "memo" ----------
+  {
+    const Py_ssize_t kwcount = PyTuple_GET_SIZE(kwnames);
+    if (kwcount == 1) {
+      PyObject* kw0 = PyTuple_GET_ITEM(kwnames, 0);
+      const int is_memo =
+          PyUnicode_Check(kw0) &&
+          PyUnicode_CompareWithASCIIString(kw0, "memo") == 0;
+
+      if (is_memo) {
+        if (UNLIKELY(nargs < 1)) {
+          PyErr_Format(PyExc_TypeError,
+                       "deepcopy() missing 1 required positional argument: 'x'");
+          return NULL;
+        }
+        if (UNLIKELY(nargs > 2)) {
+          PyErr_Format(PyExc_TypeError,
+                       "deepcopy() takes from 1 to 2 positional arguments but %zd were given",
+                       nargs);
+          return NULL;
+        }
+        // Positional provides x; keyword provides memo (not both!).
+        if (UNLIKELY(nargs == 2)) {
+          PyErr_SetString(PyExc_TypeError,
+                          "deepcopy() got multiple values for argument 'memo'");
+          return NULL;
+        }
+        source_obj = args[0];
+        memo_arg = args[nargs + 0];
+        goto have_args;
+      }
+    }
+
+    // ---------- SLOW PATH: anything else with keywords ----------
+    // Accept only "x" and "memo". Allow x=..., memo=..., either/both.
+    {
+      Py_ssize_t i;
+      int seen_memo_kw = 0;
+
+      if (UNLIKELY(nargs > 2)) {
         PyErr_Format(PyExc_TypeError,
-                     "deepcopy() got an unexpected keyword argument '%U'",
-                     kwname);
+                     "deepcopy() takes from 1 to 2 positional arguments but %zd were given",
+                     nargs);
         return NULL;
       }
-      memo_arg = args[nargs + 0];
+
+      // Seed from positionals first.
+      if (nargs >= 1) {
+        source_obj = args[0];
+      }
+      if (nargs == 2) {
+        memo_arg = args[1];
+      }
+
+      const Py_ssize_t kwc = PyTuple_GET_SIZE(kwnames);
+      for (i = 0; i < kwc; i++) {
+        PyObject* name = PyTuple_GET_ITEM(kwnames, i);
+        PyObject* val  = args[nargs + i];
+
+        if (!(PyUnicode_Check(name))) {
+          PyErr_SetString(PyExc_TypeError, "deepcopy() keywords must be strings");
+          return NULL;
+        }
+
+        // name == "x" ?
+        if (PyUnicode_CompareWithASCIIString(name, "x") == 0) {
+          if (UNLIKELY(source_obj != NULL)) {
+            PyErr_SetString(PyExc_TypeError,
+                            "deepcopy() got multiple values for argument 'x'");
+            return NULL;
+          }
+          source_obj = val;
+          continue;
+        }
+
+        if (PyUnicode_CompareWithASCIIString(name, "memo") == 0) {
+          if (UNLIKELY(seen_memo_kw || nargs == 2)) {
+            PyErr_SetString(PyExc_TypeError,
+                            "deepcopy() got multiple values for argument 'memo'");
+            return NULL;
+          }
+          memo_arg = val;
+          seen_memo_kw = 1;
+          continue;
+        }
+
+        // Unknown keyword.
+        PyErr_Format(PyExc_TypeError,
+                     "deepcopy() got an unexpected keyword argument '%U'",
+                     name);
+        return NULL;
+      }
+
+      if (UNLIKELY(source_obj == NULL)) {
+        PyErr_Format(PyExc_TypeError,
+                     "deepcopy() missing 1 required positional argument: 'x'");
+        return NULL;
+      }
     }
   }
 
+have_args:
+  // --------- the rest of your original hot logic, unchanged ----------
   if (LIKELY(memo_arg == Py_None)) {
     PyTypeObject* source_type = Py_TYPE(source_obj);
     if (source_type == &PyList_Type) {

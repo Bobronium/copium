@@ -19,7 +19,10 @@ def test_copy() -> None:
     with pytest.raises(AssertionError):
         assert_type(copium.deepcopy(1), XT)  # type: ignore[misc,type-assertion-failure,assert-type,unused-ignore]
 
+    assert_type(copium.deepcopy(X), XT)
     assert_type(copium.deepcopy(X, {}), XT)
+    assert_type(copium.deepcopy(X, memo={}), XT)
+    assert_type(copium.deepcopy(x=X, memo={}), XT)
 
     if sys.version_info >= (3, 13):
 
