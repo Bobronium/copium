@@ -41,7 +41,6 @@
 #include "pycore_dict.h"
 #endif
 
-extern PyTypeObject Pattern_Type;
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
