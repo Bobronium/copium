@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  *
  * Patching internals (no standalone module init).
- * Public API is registered onto the "copyc" module via:
+ * Public API is registered onto the "copium" module via:
  *   int _duper_patching_add_api(PyObject* module)
  */
 
@@ -250,11 +250,11 @@ _make_kwargs_for_replace(PyObject *consts_tuple) {
     return kwargs;
 }
 
-/* Build a new CodeType from LEGACY_TEMPLATE_CODE with "copyc.deepcopy" constant replaced by target callable */
+/* Build a new CodeType from LEGACY_TEMPLATE_CODE with "copium.deepcopy" constant replaced by target callable */
 static PyObject *
 _build_code_with_target(PyObject *target_callable) {
     if (!LEGACY_TEMPLATE_CODE) {
-        PyErr_SetString(PyExc_RuntimeError, "copyc: template code is not initialized");
+        PyErr_SetString(PyExc_RuntimeError, "copium: template code is not initialized");
         return NULL;
     }
     if (!PyCallable_Check(target_callable)) {
@@ -269,7 +269,7 @@ _build_code_with_target(PyObject *target_callable) {
     Py_DECREF(co_consts);
     if (!list_obj) return NULL;
 
-    PyObject *sentinel = PyUnicode_FromString("copyc.deepcopy");
+    PyObject *sentinel = PyUnicode_FromString("copium.deepcopy");
     if (!sentinel) {
         Py_DECREF(list_obj);
         return NULL;
@@ -473,7 +473,7 @@ static int
 _init_legacy_template_code(void) {
     static const char *src =
         "def deepcopy(x, memo=None, _nil=[]):\n"
-        "    return \"copyc.deepcopy\"(x, memo)\n";
+        "    return \"copium.deepcopy\"(x, memo)\n";
 
     PyObject *globals = PyDict_New();
     PyObject *locals  = globals;

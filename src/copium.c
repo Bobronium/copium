@@ -1,21 +1,21 @@
 /*
- * Public module definition & API glue for the copyc extension.
+ * Public module definition & API glue for the copium extension.
  *
  * Module structure:
- *   copyc (main):
+ *   copium (main):
  *     - copy(obj)
  *     - deepcopy(x, memo=None)
  *     - replace(obj, /, **changes)  [Python >= 3.13]
  *
- *   copyc.extra:
+ *   copium.extra:
  *     - replicate(obj, n, /, *, compile_after=20)
  *     - repeatcall(function, size, /)
  *
- *   copyc.patch:
+ *   copium.patch:
  *     - enable() / disable() / enabled()
  *     - apply() / unapply() / applied() / get_vectorcall_ptr()
  *
- *   copyc._experimental (only when duper.snapshots available):
+ *   copium._experimental (only when duper.snapshots available):
  *     - pin(obj)
  *     - unpin(obj, *, strict=False)
  *     - pinned(obj)
@@ -48,8 +48,8 @@ PyObject* py_replace(PyObject* self,
 #endif
 
 /* Initializer + availability accessor from _copying.c */
-int _copyc_copying_init(PyObject* module);
-int _copyc_copying_duper_available(void);
+int _copium_copying_init(PyObject* module);
+int _copium_copying_duper_available(void);
 
 /* ======== Externs from _pinning.c (optional API) ========================== */
 typedef struct {
@@ -99,7 +99,7 @@ static PyObject* py_enable(PyObject* self, PyObject* noargs) {
         return NULL;
     }
 
-    /* Get applied() from this module (copyc.patch) */
+    /* Get applied() from this module (copium.patch) */
     PyObject* function_applied = _get_attr_str(self, "applied");
     if (!function_applied) {
         Py_DECREF(py_deepcopy_object);
@@ -123,14 +123,14 @@ static PyObject* py_enable(PyObject* self, PyObject* noargs) {
         Py_RETURN_FALSE;
     }
 
-    /* Get native deepcopy from main copyc module */
-    PyObject* copyc_main = PyImport_ImportModule("copyc");
-    if (!copyc_main) {
+    /* Get native deepcopy from main copium module */
+    PyObject* copium_main = PyImport_ImportModule("copium");
+    if (!copium_main) {
         Py_DECREF(py_deepcopy_object);
         return NULL;
     }
-    PyObject* native_deepcopy = _get_attr_str(copyc_main, "deepcopy");
-    Py_DECREF(copyc_main);
+    PyObject* native_deepcopy = _get_attr_str(copium_main, "deepcopy");
+    Py_DECREF(copium_main);
     if (!native_deepcopy) {
         Py_DECREF(py_deepcopy_object);
         return NULL;
@@ -282,16 +282,16 @@ static PyMethodDef extra_methods[] = {
 static PyMethodDef patch_methods[] = {
     {"enable", (PyCFunction)py_enable, METH_NOARGS,
      PyDoc_STR("enable()\n--\n\n"
-               "Patch copy.deepcopy to forward to copyc.deepcopy.\n\n"
-               ":return: True if copyc was enabled, False if it was already enabled.")},
+               "Patch copy.deepcopy to forward to copium.deepcopy.\n\n"
+               ":return: True if copium was enabled, False if it was already enabled.")},
     {"disable", (PyCFunction)py_disable, METH_NOARGS,
      PyDoc_STR("disable()\n--\n\n"
                "Undo enable(): restore original copy.deepcopy if applied.\n\n"
-               ":return: True if copyc was disabled, False if it was already disabled.")},
+               ":return: True if copium was disabled, False if it was already disabled.")},
     {"enabled", (PyCFunction)py_enabled, METH_NOARGS,
      PyDoc_STR("enabled()\n--\n\n"
-               "Return True if copy.deepcopy is currently applied to copyc.\n\n"
-               ":return: Whether copyc is currently enabled.")},
+               "Return True if copy.deepcopy is currently applied to copium.\n\n"
+               ":return: Whether copium is currently enabled.")},
     {NULL, NULL, 0, NULL}
 };
 
@@ -315,7 +315,7 @@ static PyMethodDef experimental_methods[] = {
 
 static struct PyModuleDef main_module_def = {
     PyModuleDef_HEAD_INIT,
-    "copyc",
+    "copium",
     "Fast, full-native deepcopy with reduce protocol and keepalive memo.",
     -1,
     main_methods,
@@ -324,7 +324,7 @@ static struct PyModuleDef main_module_def = {
 
 static struct PyModuleDef extra_module_def = {
     PyModuleDef_HEAD_INIT,
-    "copyc.extra",
+    "copium.extra",
     "Convenience utilities for batch copying operations.",
     -1,
     extra_methods,
@@ -333,7 +333,7 @@ static struct PyModuleDef extra_module_def = {
 
 static struct PyModuleDef patch_module_def = {
     PyModuleDef_HEAD_INIT,
-    "copyc.patch",
+    "copium.patch",
     "Monkey-patching utilities for stdlib copy module.",
     -1,
     patch_methods,
@@ -342,7 +342,7 @@ static struct PyModuleDef patch_module_def = {
 
 static struct PyModuleDef experimental_module_def = {
     PyModuleDef_HEAD_INIT,
-    "copyc._experimental",
+    "copium._experimental",
     "Experimental Pin API (requires duper.snapshots).",
     -1,
     experimental_methods,
@@ -357,7 +357,7 @@ static int _add_submodule(PyObject* parent, const char* name, PyObject* submodul
         return -1;
     }
 
-    /* Build full module name (e.g., "copyc.patch") */
+    /* Build full module name (e.g., "copium.patch") */
     PyObject* parent_name = PyModule_GetNameObject(parent);
     if (!parent_name) {
         Py_DECREF(submodule);
@@ -411,12 +411,12 @@ static int _add_submodule(PyObject* parent, const char* name, PyObject* submodul
 
 /* ===================== Module initialization =============================== */
 
-PyMODINIT_FUNC PyInit_copyc(void) {
+PyMODINIT_FUNC PyInit_copium(void) {
     PyObject* module = PyModule_Create(&main_module_def);
     if (!module) return NULL;
 
     /* Initialize internal state */
-    if (_copyc_copying_init(module) < 0) {
+    if (_copium_copying_init(module) < 0) {
         Py_DECREF(module);
         return NULL;
     }
@@ -440,7 +440,7 @@ PyMODINIT_FUNC PyInit_copyc(void) {
     }
 
     /* Conditionally create and attach experimental submodule */
-    if (_copyc_copying_duper_available()) {
+    if (_copium_copying_duper_available()) {
         PyObject* experimental_module = PyModule_Create(&experimental_module_def);
         if (_add_submodule(module, "_experimental", experimental_module) < 0) {
             return NULL;

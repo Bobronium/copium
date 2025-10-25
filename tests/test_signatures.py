@@ -5,10 +5,10 @@ import types
 from pathlib import Path
 from typing import Any
 
-import copyc
+import copium
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-STUB_PATH = PROJECT_ROOT / "src" / "copyc" / "__init__.pyi"
+STUB_PATH = PROJECT_ROOT / "src" / "copium" / "__init__.pyi"
 
 
 def _exec_stub_module(path: Path) -> types.ModuleType:
@@ -17,7 +17,7 @@ def _exec_stub_module(path: Path) -> types.ModuleType:
     with inspectable signatures. This works because function bodies contain docstrings/ellipsis.
     """
     code = path.read_text(encoding="utf-8")
-    module = types.ModuleType("copyc_stub_exec")
+    module = types.ModuleType("copium_stub_exec")
     module.__file__ = str(path)
     # Give stubs a minimal environment; they import typing/sys already.
     namespace: dict[str, Any] = module.__dict__
@@ -92,7 +92,7 @@ def test_stub_signatures_bind_to_runtime_signatures(subtests):
 
     for name, stub_function in sorted(stub_functions.items()):
         with subtests.test(name):
-            runtime_object = getattr(copyc, name)
+            runtime_object = getattr(copium, name)
             # Get signatures
             stub_signature = inspect.signature(stub_function)
             runtime_signature_raw = inspect.signature(runtime_object)

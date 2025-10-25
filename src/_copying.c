@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: 2023-present Arseny Boykov
  * SPDX-License-Identifier: MIT
  *
- * copyc
+ * copium
  * - Fast, native deepcopy with reduce protocol + keepalive memo
  * - Dict watcher acceleration (3.12+)
  * - Pin integration via _pinning.c (Pin/PinsProxy + APIs)
@@ -2163,7 +2163,7 @@ static void cleanup_on_init_failure(void) {
     if (!_loaded_type || !PyType_Check(_loaded_type)) {           \
       Py_XDECREF(_loaded_type);                                   \
       PyErr_Format(PyExc_ImportError,                             \
-                   "copyc: %s.%s missing or not a type",          \
+                   "copium: %s.%s missing or not a type",          \
                    #source_module, (type_name));                  \
       cleanup_on_init_failure();                                  \
       return -1;                                                  \
@@ -2171,7 +2171,7 @@ static void cleanup_on_init_failure(void) {
     module_state.target_field = (PyTypeObject*)_loaded_type;      \
   } while (0)
 
-int _copyc_copying_init(PyObject* module) {
+int _copium_copying_init(PyObject* module) {
   /* Intern strings */
   module_state.str_reduce_ex = PyUnicode_InternFromString("__reduce_ex__");
   module_state.str_reduce    = PyUnicode_InternFromString("__reduce__");
@@ -2186,7 +2186,7 @@ int _copyc_copying_init(PyObject* module) {
       !module_state.str_dict || !module_state.str_append ||
       !module_state.str_update) {
     PyErr_SetString(PyExc_ImportError,
-                    "copyc: failed to intern required names");
+                    "copium: failed to intern required names");
     cleanup_on_init_failure();
     return -1;
   }
@@ -2203,7 +2203,7 @@ int _copyc_copying_init(PyObject* module) {
   if (!mod_types || !mod_builtins || !mod_weakref || !mod_copyreg || !mod_re ||
       !mod_decimal || !mod_fractions) {
     PyErr_SetString(PyExc_ImportError,
-                    "copyc: failed to import required stdlib modules");
+                    "copium: failed to import required stdlib modules");
     Py_XDECREF(mod_types);
     Py_XDECREF(mod_builtins);
     Py_XDECREF(mod_weakref);
@@ -2233,7 +2233,7 @@ int _copyc_copying_init(PyObject* module) {
       !PyDict_Check(module_state.copyreg_dispatch)) {
     PyErr_SetString(
         PyExc_ImportError,
-        "copyc: copyreg.dispatch_table missing or not a dict");
+        "copium: copyreg.dispatch_table missing or not a dict");
     Py_XDECREF(mod_types);
     Py_XDECREF(mod_builtins);
     Py_XDECREF(mod_weakref);
@@ -2248,7 +2248,7 @@ int _copyc_copying_init(PyObject* module) {
   PyObject* mod_copy = PyImport_ImportModule("copy");
   if (!mod_copy) {
     PyErr_SetString(PyExc_ImportError,
-                    "copyc: failed to import copy module");
+                    "copium: failed to import copy module");
     Py_XDECREF(mod_types);
     Py_XDECREF(mod_builtins);
     Py_XDECREF(mod_weakref);
@@ -2263,7 +2263,7 @@ int _copyc_copying_init(PyObject* module) {
   if (!module_state.copy_Error ||
       !PyExceptionClass_Check(module_state.copy_Error)) {
     PyErr_SetString(PyExc_ImportError,
-                    "copyc: copy.Error missing or not an exception");
+                    "copium: copy.Error missing or not an exception");
     Py_XDECREF(mod_copy);
     Py_XDECREF(mod_types);
     Py_XDECREF(mod_builtins);
@@ -2279,7 +2279,7 @@ int _copyc_copying_init(PyObject* module) {
 
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
   if (PyThread_tss_create(&module_state.watch_tss) != 0) {
-    PyErr_SetString(PyExc_ImportError, "copyc: failed to create TSS");
+    PyErr_SetString(PyExc_ImportError, "copium: failed to create TSS");
     Py_XDECREF(mod_types);
     Py_XDECREF(mod_builtins);
     Py_XDECREF(mod_weakref);
@@ -2293,7 +2293,7 @@ int _copyc_copying_init(PyObject* module) {
   module_state.dict_watcher_id = PyDict_AddWatcher(dict_watch_callback);
   if (module_state.dict_watcher_id < 0) {
     PyErr_SetString(PyExc_ImportError,
-                    "copyc: failed to allocate dict watcher id");
+                    "copium: failed to allocate dict watcher id");
     Py_XDECREF(mod_types);
     Py_XDECREF(mod_builtins);
     Py_XDECREF(mod_weakref);
@@ -2348,6 +2348,6 @@ int _copyc_copying_init(PyObject* module) {
   return 0;
 }
 
-int _copyc_copying_duper_available(void) {
+int _copium_copying_duper_available(void) {
   return module_state.create_precompiler_reconstructor != NULL;
 }

@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: 2023-present Arseny Boykov
  * SPDX-License-Identifier: MIT
  *
- * duper._pinning (compiled into copyc._copying extension)
+ * duper._pinning (compiled into copium._copying extension)
  * - Pin/PinsProxy types
  * - Open-addressed pin table
  * - Python APIs: pin / unpin / pinned / clear_pins / get_pins
@@ -66,7 +66,7 @@ static PyGetSetDef Pin_getset[] = {
     {"hits", (getter)Pin_get_hits, NULL, "Reproduction hits (int)", NULL},
     {NULL, NULL, NULL, NULL, NULL}};
 static PyTypeObject Pin_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copyc._copying.Pin",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium._copying.Pin",
     .tp_basicsize = sizeof(PinObject),
     .tp_dealloc = (destructor)Pin_dealloc,
     .tp_repr = (reprfunc)Pin_repr,
@@ -397,7 +397,7 @@ static PyMethodDef PinsProxy_methods[] = {
      "get(key[, default]) -> Pin | default | None"},
     {NULL, NULL, 0, NULL}};
 static PyTypeObject PinsProxy_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copyc._copying.PinsProxy",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium._copying.PinsProxy",
     .tp_basicsize = sizeof(PinsProxy),
     .tp_flags = Py_TPFLAGS_DEFAULT,
     .tp_doc = "Read-only live Mapping[int, Pin] over pin table",
@@ -408,7 +408,7 @@ static PyTypeObject PinsProxy_Type = {
 
 static PyTypeObject PinsViewIter_Type = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name =
-        "copyc._copying._pinsview_iterator",
+        "copium._copying._pinsview_iterator",
     .tp_basicsize = sizeof(PinsViewIter),
     .tp_flags = Py_TPFLAGS_DEFAULT,
     .tp_doc = "iterator over pin table",

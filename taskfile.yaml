@@ -94,7 +94,7 @@ tasks:
         bash -euo pipefail -c '
           if [ "{{.MATRIX}}" != "1" ] && [ -z "{{.VERSIONS}}" ]; then
             echo "▶ Tests on current environment"
-            uv sync --inexact --quiet --extra test --reinstall-package copyc
+            uv sync --inexact --quiet --extra test --reinstall-package copium
             uv run pytest
             exit 0
           fi
@@ -104,7 +104,7 @@ tasks:
             if [ ! -d "$VENV" ]; then uv venv --clear --no-project --python "$V" "$VENV"; fi
             ACT="$VENV/bin/activate"; [ -f "$VENV/Scripts/activate" ] && ACT="$VENV/Scripts/activate"
             . "$ACT"
-            uv sync --active --inexact --quiet --extra test --reinstall-package copyc
+            uv sync --active --inexact --quiet --extra test --reinstall-package copium
             uv run --active pytest --cov-append
             deactivate
           done

@@ -9,7 +9,7 @@ import _pytest._code.source
 import pytest
 from datamodelzoo import CASES
 
-import copyc
+import copium
 
 
 def pytest_configure(config):
@@ -21,17 +21,17 @@ CASES = [pytest.param(case, id=case.name) for case in CASES]
 
 
 class CopyModule:  # just for typing
-    error = Error = copyc.Error
-    copy = staticmethod(copyc.copy)
-    deepcopy = staticmethod(copyc.deepcopy)
+    error = Error = copium.Error
+    copy = staticmethod(copium.copy)
+    deepcopy = staticmethod(copium.deepcopy)
     if sys.version_info >= (3, 13):
-        replace = staticmethod(copyc.replace)
+        replace = staticmethod(copium.replace)
 
 
 @pytest.fixture(
     params=[
         pytest.param(stdlib_copy, id="stdlib"),
-        pytest.param(copyc, id="copyc"),
+        pytest.param(copium, id="copium"),
         # sanity check
     ]
 )

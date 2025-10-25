@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import copy as stdlib_deepcopy
 
-import copyc.patch
+import copium.patch
 
 
 def test_patch_copy_deepcopy() -> None:
@@ -19,25 +19,25 @@ def test_patch_copy_deepcopy() -> None:
     def probe_deepcopy(x, memo=None):
         calls.append((x, memo))
         # Return a distinct marker so we know this path executed
-        return "__copyc_probe__", x
+        return "__copium_probe__", x
 
     # Sanity: original deepcopy should not return our marker
     assert stdlib_deepcopy.deepcopy(1) == 1
 
     try:
-        copyc.patch.apply(stdlib_deepcopy.deepcopy, probe_deepcopy)
-        assert copyc.patch.applied(stdlib_deepcopy.deepcopy)
+        copium.patch.apply(stdlib_deepcopy.deepcopy, probe_deepcopy)
+        assert copium.patch.applied(stdlib_deepcopy.deepcopy)
 
         res = stdlib_deepcopy.deepcopy({"k": 7})
-        assert res == ("__copyc_probe__", {"k": 7})
+        assert res == ("__copium_probe__", {"k": 7})
         assert calls and isinstance(calls[-1], tuple)
         assert calls[-1][0] == {"k": 7}
 
         assert getattr(stdlib_deepcopy.deepcopy, "__wrapped__", None) is probe_deepcopy
     finally:
-        copyc.patch.unapply(stdlib_deepcopy.deepcopy)
+        copium.patch.unapply(stdlib_deepcopy.deepcopy)
 
-    assert not copyc.patch.applied(stdlib_deepcopy.deepcopy)
+    assert not copium.patch.applied(stdlib_deepcopy.deepcopy)
     assert not hasattr(stdlib_deepcopy.deepcopy, "__wrapped__")
     assert stdlib_deepcopy.deepcopy(1) == 1
 
@@ -45,31 +45,31 @@ def test_patch_copy_deepcopy() -> None:
 def test_public_patch_api() -> None:
     """Test the public enable/disable/enabled API for patching copy.deepcopy."""
     # Ensure we start in a clean state
-    if copyc.patch.enabled():
-        copyc.patch.disable()
+    if copium.patch.enabled():
+        copium.patch.disable()
 
-    assert not copyc.patch.enabled(), "Should start unpatched"
+    assert not copium.patch.enabled(), "Should start unpatched"
 
     # Test enable()
-    result = copyc.patch.enable()
+    result = copium.patch.enable()
     assert result is True, "First enable() should return True"
-    assert copyc.patch.enabled(), "enabled() should return True after enable()"
+    assert copium.patch.enabled(), "enabled() should return True after enable()"
 
-    # Test that copy.deepcopy now uses copyc
+    # Test that copy.deepcopy now uses copium
     test_obj = {"nested": [1, 2, 3], "key": "value"}
     copied = stdlib_deepcopy.deepcopy(test_obj)
     assert copied == test_obj
     assert copied is not test_obj
 
     # Test idempotent enable()
-    result = copyc.patch.enable()
+    result = copium.patch.enable()
     assert result is False, "Second enable() should return False (already patched)"
-    assert copyc.patch.enabled()
+    assert copium.patch.enabled()
 
     # Test disable()
-    result = copyc.patch.disable()
+    result = copium.patch.disable()
     assert result is True, "First disable() should return True"
-    assert not copyc.patch.enabled(), "enabled() should return False after disable()"
+    assert not copium.patch.enabled(), "enabled() should return False after disable()"
 
     # Verify copy.deepcopy works normally after disable
     copied_after = stdlib_deepcopy.deepcopy(test_obj)
@@ -77,20 +77,20 @@ def test_public_patch_api() -> None:
     assert copied_after is not test_obj
 
     # Test idempotent disable()
-    result = copyc.patch.disable()
+    result = copium.patch.disable()
     assert result is False, "Second disable() should return False (already unpatched)"
-    assert not copyc.patch.enabled()
+    assert not copium.patch.enabled()
 
 
 def test_public_patch_forwarding() -> None:
-    """Verify that enabled patch actually forwards to copyc.patch.deepcopy."""
-    if copyc.patch.enabled():
-        copyc.patch.disable()
+    """Verify that enabled patch actually forwards to copium.patch.deepcopy."""
+    if copium.patch.enabled():
+        copium.patch.disable()
 
     try:
-        copyc.patch.enable()
+        copium.patch.enable()
 
-        # Create a custom class to verify copyc's behavior
+        # Create a custom class to verify copium's behavior
         class CustomClass:
             def __init__(self, value):
                 self.value = value
@@ -106,4 +106,4 @@ def test_public_patch_forwarding() -> None:
         assert isinstance(copied, CustomClass)
 
     finally:
-        copyc.patch.disable()
+        copium.patch.disable()

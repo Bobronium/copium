@@ -8,7 +8,7 @@ from tests.conftest import CASES
 
 
 @pytest.mark.xfail(
-    reason="copyc will not expose keepalive list, unless memo was supplied by the user",
+    reason="copium will not expose keepalive list, unless memo was supplied by the user",
     raises=KeyError,
 )
 def test_deepcopy_keepalive_internal(copy) -> None:
@@ -70,8 +70,8 @@ def test_duper_deepcopy_parity(case: Any, copy) -> None:
             raise AssertionError(
                 f"{copy.deepcopy} failed unexpectedly when {stdlib_copy.deepcopy} didn't"
             ) from e
-        assert type(e) is type(baseline), "copyc failed with different error"
-        assert e.args == baseline.args, "copyc failed with different error message"
+        assert type(e) is type(baseline), "copium failed with different error"
+        assert e.args == baseline.args, "copium failed with different error message"
     else:
         assert_equivalent_transformations(
             case.obj,

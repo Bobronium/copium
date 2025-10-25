@@ -22,7 +22,7 @@ from operator import ne
 from typing import NamedTuple
 from typing import NoReturn
 
-import copyc
+import copium
 import pytest
 
 
@@ -1196,12 +1196,12 @@ def test_reduce_6tuple_none(copy) -> None:
 
 def test__all__() -> None:
     # Verify that duper.Error is exposed
-    assert hasattr(copyc, "Error")
-    assert hasattr(copyc, "copy")
-    assert hasattr(copyc, "deepcopy")
+    assert hasattr(copium, "Error")
+    assert hasattr(copium, "copy")
+    assert hasattr(copium, "deepcopy")
     if not HAS_REPLACE:
         return
-    assert hasattr(copyc, "replace")
+    assert hasattr(copium, "replace")
 
 
 @SKIP_BEFORE_3_13

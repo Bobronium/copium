@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: 2023-present Arseny Boykov
  * SPDX-License-Identifier: MIT
  *
- * copyc._memo (compiled into copyc._copying extension)
+ * copium._memo (compiled into copium._copying extension)
  * - Memo type (internal hash table for deepcopy memo)
  * - Implements MutableMapping protocol with views
  * - Keepalive vector with a Python-facing proxy implementing a MutableSequence
@@ -419,7 +419,7 @@ static PyObject* KeepList_New(MemoObject* owner) {
 
 static PyTypeObject KeepList_Type = {
   PyVarObject_HEAD_INIT(NULL, 0)
-  .tp_name      = "copyc._copying._KeepList",
+  .tp_name      = "copium._copying._KeepList",
   .tp_basicsize = sizeof(KeepListObject),
   .tp_dealloc   = (destructor)KeepList_dealloc,
   .tp_flags     = Py_TPFLAGS_DEFAULT,
@@ -577,7 +577,7 @@ static PyObject* Memo_get(MemoObject* self, PyObject* const* args, Py_ssize_t na
 
 PyTypeObject Memo_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name      = "copyc._copying._Memo",
+    .tp_name      = "copium._copying._Memo",
     .tp_basicsize = sizeof(MemoObject),
     .tp_dealloc   = (destructor)Memo_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,

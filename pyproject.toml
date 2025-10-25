@@ -18,10 +18,10 @@ test-sources = ["tests", "pyproject.toml"]
 
 
 [tool.setuptools_scm]
-version_file = "src/copyc/__about__.py"
+version_file = "src/copium/__about__.py"
 
 [project]
-name = "copyc"
+name = "copium"
 version = "0.1.0"
 description = "Fastest deepcopy implementation for CPython"
 readme = "README.md"
@@ -47,16 +47,16 @@ dependencies = [
 
 
 [project.urls]
-Homepage = "https://github.com/Bobronium/copyc"
-Source = "https://github.com/Bobronium/copyc"
-Issues = "https://github.com/Bobronium/copyc/issues"
+Homepage = "https://github.com/Bobronium/copium"
+Source = "https://github.com/Bobronium/copium"
+Issues = "https://github.com/Bobronium/copium/issues"
 
 [project.optional-dependencies]
 dev = [
-    "copyc[lint]",
-    "copyc[typecheck]",
-    "copyc[test]",
-    "copyc[docs]",
+    "copium[lint]",
+    "copium[typecheck]",
+    "copium[test]",
+    "copium[docs]",
 ]
 lint = [
     "ruff>=0.5",

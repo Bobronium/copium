@@ -1,4 +1,6 @@
-# copyc
+# copium
+
+An extremely fast Python copy implementation, written in C.
 
 An extremely fast Python deepcopy implementation, written in C.
 

@@ -215,8 +215,14 @@ def _get_c_extensions() -> list[Extension]:
     python_include = Path(sysconfig.get_paths()["include"])
     return [
         Extension(
-            "copyc",
-            sources=["src/copy.c", "src/_copying.c", "src/_pinning.c", "src/_patching.c"],
+            "copium",
+            sources=[
+                "src/copium.c",
+                "src/_copying.c",
+                "src/_memo.c",
+                "src/_pinning.c",
+                "src/_patching.c",
+            ],
             include_dirs=[str(python_include), str(python_include / "internal")],
         )
     ]
