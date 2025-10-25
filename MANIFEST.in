@@ -1,1 +1,2 @@
 include src/copium_autopatch.pth
+include copium_autopatch.pth
