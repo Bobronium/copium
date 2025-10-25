@@ -434,6 +434,9 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
                                          PyObject** memo_ptr,
                                          PyObject** keepalive_list_ptr,
                                          int skip_atomic_check);
+static PyObject* deepcopy_recursive_skip_atomic(PyObject* source_obj,
+                                                PyObject** memo_ptr,
+                                                PyObject** keepalive_list_ptr);
 
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
 static PyObject* deepcopy_dict_with_watcher(PyObject* source_obj,
@@ -525,12 +528,21 @@ static PyObject* deepcopy_dict_with_watcher(PyObject* source_obj,
     Py_INCREF(dict_key);
     Py_INCREF(dict_value);
 
-    PyObject* copied_key =
-        deepcopy_recursive(dict_key, memo_ptr, keepalive_list_ptr);
-    PyObject* copied_value =
-        copied_key
-            ? deepcopy_recursive(dict_value, memo_ptr, keepalive_list_ptr)
-            : NULL;
+    PyObject* copied_key;
+    if (LIKELY(is_atomic_immutable(dict_key))) {
+      copied_key = Py_NewRef(dict_key);
+    } else {
+      copied_key = deepcopy_recursive_skip_atomic(dict_key, memo_ptr, keepalive_list_ptr);
+    }
+
+    PyObject* copied_value = NULL;
+    if (copied_key) {
+      if (LIKELY(is_atomic_immutable(dict_value))) {
+        copied_value = Py_NewRef(dict_value);
+      } else {
+        copied_value = deepcopy_recursive_skip_atomic(dict_value, memo_ptr, keepalive_list_ptr);
+      }
+    }
 
     Py_DECREF(dict_key);
     Py_DECREF(dict_value);
@@ -619,14 +631,20 @@ static PyObject* deepcopy_dict_legacy(PyObject* source_obj,
   while (PyDict_Next(source_obj, &iteration_pos, &dict_key, &dict_value)) {
     Py_INCREF(dict_key);
     Py_INCREF(dict_value);
-    PyObject* copied_key =
-        deepcopy_recursive(dict_key, memo_ptr, keepalive_list_ptr);
-    if (!copied_key) {
-      Py_DECREF(dict_key);
-      Py_DECREF(dict_value);
-      Py_DECREF(copied_dict);
-      return NULL;
+
+    PyObject* copied_key;
+    if (LIKELY(is_atomic_immutable(dict_key))) {
+      copied_key = Py_NewRef(dict_key);
+    } else {
+      copied_key = deepcopy_recursive_skip_atomic(dict_key, memo_ptr, keepalive_list_ptr);
+      if (!copied_key) {
+        Py_DECREF(dict_key);
+        Py_DECREF(dict_value);
+        Py_DECREF(copied_dict);
+        return NULL;
+      }
     }
+
     if (UNLIKELY(PyDict_Size(source_obj) != expected_size)) {
       Py_DECREF(copied_key);
       Py_DECREF(dict_key);
@@ -636,15 +654,21 @@ static PyObject* deepcopy_dict_legacy(PyObject* source_obj,
                       "dictionary changed size during iteration");
       return NULL;
     }
-    PyObject* copied_value =
-        deepcopy_recursive(dict_value, memo_ptr, keepalive_list_ptr);
-    if (!copied_value) {
-      Py_DECREF(copied_key);
-      Py_DECREF(dict_key);
-      Py_DECREF(dict_value);
-      Py_DECREF(copied_dict);
-      return NULL;
+
+    PyObject* copied_value;
+    if (LIKELY(is_atomic_immutable(dict_value))) {
+      copied_value = Py_NewRef(dict_value);
+    } else {
+      copied_value = deepcopy_recursive(dict_value, memo_ptr, keepalive_list_ptr);
+      if (!copied_value) {
+        Py_DECREF(copied_key);
+        Py_DECREF(dict_key);
+        Py_DECREF(dict_value);
+        Py_DECREF(copied_dict);
+        return NULL;
+      }
     }
+
     if (UNLIKELY(PyDict_Size(source_obj) != expected_size)) {
       Py_DECREF(copied_key);
       Py_DECREF(copied_value);
@@ -655,6 +679,7 @@ static PyObject* deepcopy_dict_legacy(PyObject* source_obj,
                       "dictionary changed size during iteration");
       return NULL;
     }
+
     Py_DECREF(dict_key);
     Py_DECREF(dict_value);
     if (PyDict_SetItem(copied_dict, copied_key, copied_value) < 0) {
@@ -723,20 +748,24 @@ static PyObject* deepcopy_list(PyObject* source_obj,
         }
 
         PyObject* item = PyList_GET_ITEM(source_obj, i);  /* borrowed */
-        Py_XINCREF(item);
         if (item == NULL) {
             Py_DECREF(copied_list);
             return NULL;
         }
 
-        PyObject* copied_item =
-            deepcopy_recursive(item, memo_ptr, keepalive_list_ptr);
-
-        Py_DECREF(item);
-
-        if (copied_item == NULL) {
-            Py_DECREF(copied_list);
-            return NULL;
+        PyObject* copied_item;
+        if (LIKELY(is_atomic_immutable(item))) {
+            /* Fast path: avoid function call for atomics */
+            copied_item = Py_NewRef(item);
+        } else {
+            /* Hold a ref while we potentially call back into Python */
+            Py_XINCREF(item);
+            copied_item = deepcopy_recursive_skip_atomic(item, memo_ptr, keepalive_list_ptr);
+            Py_DECREF(item);
+            if (copied_item == NULL) {
+                Py_DECREF(copied_list);
+                return NULL;
+            }
         }
 
         if (i >= PyList_GET_SIZE(copied_list)) {
@@ -769,11 +798,16 @@ static PyObject* deepcopy_tuple(PyObject* source_obj,
 
   for (Py_ssize_t i = 0; i < tuple_length; i++) {
     PyObject* element = PyTuple_GET_ITEM(source_obj, i);
-    PyObject* copied_element =
-        deepcopy_recursive(element, memo_ptr, keepalive_list_ptr);
-    if (!copied_element) {
-      Py_DECREF(copied_tuple);
-      return NULL;
+    PyObject* copied_element;
+    if (LIKELY(is_atomic_immutable(element))) {
+      copied_element = Py_NewRef(element);
+    } else {
+      copied_element =
+          deepcopy_recursive_skip_atomic(element, memo_ptr, keepalive_list_ptr);
+      if (!copied_element) {
+        Py_DECREF(copied_tuple);
+        return NULL;
+      }
     }
     if (copied_element != element)
       all_elements_identical = 0;
@@ -828,14 +862,20 @@ static PyObject* deepcopy_set(PyObject* source_obj,
   }
   PyObject* item;
   while ((item = PyIter_Next(iterator)) != NULL) {
-    PyObject* copied_item =
-        deepcopy_recursive(item, memo_ptr, keepalive_list_ptr);
-    Py_DECREF(item);
-    if (!copied_item) {
-      Py_DECREF(iterator);
-      Py_DECREF(copied_set);
-      return NULL;
+    PyObject* copied_item;
+    if (LIKELY(is_atomic_immutable(item))) {
+      copied_item = Py_NewRef(item);
+    } else {
+      copied_item =
+          deepcopy_recursive_skip_atomic(item, memo_ptr, keepalive_list_ptr);
+      if (!copied_item) {
+        Py_DECREF(item);
+        Py_DECREF(iterator);
+        Py_DECREF(copied_set);
+        return NULL;
+      }
     }
+    Py_DECREF(item);
     if (PySet_Add(copied_set, copied_item) < 0) {
       Py_DECREF(copied_item);
       Py_DECREF(iterator);
@@ -873,13 +913,18 @@ static PyObject* deepcopy_frozenset(PyObject* source_obj,
   }
   PyObject* item;
   while ((item = PyIter_Next(iterator)) != NULL) {
-    PyObject* copied_item =
-        deepcopy_recursive(item, memo_ptr, keepalive_list_ptr);
-    if (!copied_item) {
-      Py_DECREF(item);
-      Py_DECREF(iterator);
-      Py_DECREF(temp_list);
-      return NULL;
+    PyObject* copied_item;
+    if (LIKELY(is_atomic_immutable(item))) {
+      copied_item = Py_NewRef(item);
+    } else {
+      copied_item =
+          deepcopy_recursive_skip_atomic(item, memo_ptr, keepalive_list_ptr);
+      if (!copied_item) {
+        Py_DECREF(item);
+        Py_DECREF(iterator);
+        Py_DECREF(temp_list);
+        return NULL;
+      }
     }
     if (PyList_Append(temp_list, copied_item) < 0) {
       Py_DECREF(copied_item);
@@ -1221,12 +1266,16 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     }
     for (Py_ssize_t i = 0; i < args_count; i++) {
       PyObject* arg = PyTuple_GET_ITEM(args, i);
-      PyObject* copied_arg =
-          deepcopy_recursive(arg, memo_ptr, keepalive_list_ptr);
-      if (!copied_arg) {
-        Py_DECREF(deepcopied_args);
-        Py_DECREF(reduce_result);
-        return NULL;
+      PyObject* copied_arg;
+      if (LIKELY(is_atomic_immutable(arg))) {
+        copied_arg = Py_NewRef(arg);
+      } else {
+        copied_arg = deepcopy_recursive_skip_atomic(arg, memo_ptr, keepalive_list_ptr);
+        if (!copied_arg) {
+          Py_DECREF(deepcopied_args);
+          Py_DECREF(reduce_result);
+          return NULL;
+        }
       }
       PyTuple_SET_ITEM(deepcopied_args, i, copied_arg);
     }
@@ -1402,8 +1451,8 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     }
     PyObject* item;
     while ((item = PyIter_Next(iterator)) != NULL) {
-      PyObject* copied_item =
-          deepcopy_recursive(item, memo_ptr, keepalive_list_ptr);
+    PyObject* copied_item =
+        deepcopy_recursive_skip_atomic(item, memo_ptr, keepalive_list_ptr);
       Py_DECREF(item);
       if (!copied_item) {
         Py_DECREF(iterator);
@@ -1445,14 +1494,26 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
       PyObject* pair_value = PyTuple_GET_ITEM(pair, 1);
       Py_INCREF(pair_key);
       Py_INCREF(pair_value);
-      PyObject* copied_key =
-          deepcopy_recursive(pair_key, memo_ptr, keepalive_list_ptr);
-      PyObject* copied_value =
-          copied_key ? deepcopy_recursive(pair_value, memo_ptr,
-                                          keepalive_list_ptr)
-                     : NULL;
+
+      PyObject* copied_key;
+      if (LIKELY(is_atomic_immutable(pair_key))) {
+        copied_key = Py_NewRef(pair_key);
+      } else {
+        copied_key = deepcopy_recursive_skip_atomic(pair_key, memo_ptr, keepalive_list_ptr);
+      }
+
+      PyObject* copied_value = NULL;
+      if (copied_key) {
+        if (LIKELY(is_atomic_immutable(pair_value))) {
+          copied_value = Py_NewRef(pair_value);
+        } else {
+          copied_value = deepcopy_recursive_skip_atomic(pair_value, memo_ptr, keepalive_list_ptr);
+        }
+      }
+
       Py_DECREF(pair_key);
       Py_DECREF(pair_value);
+
       if (!copied_key || !copied_value) {
         Py_XDECREF(copied_key);
         Py_XDECREF(copied_value);
@@ -1510,6 +1571,21 @@ static PyObject* deepcopy_recursive(PyObject* source_obj,
       deepcopy_recursive_impl(source_obj, memo_ptr, keepalive_list_ptr,
                               /*skip_atomic_check=*/1);
 
+  _copyc_recdepth_leave();
+  return result;
+}
+
+/* Variant used when the caller has already excluded atomic immutables.
+   Still enforces recursion guard, but skips atomic predicate entirely. */
+static PyObject* deepcopy_recursive_skip_atomic(PyObject* source_obj,
+                                                PyObject** memo_ptr,
+                                                PyObject** keepalive_list_ptr) {
+  if (UNLIKELY(_copyc_recdepth_enter() < 0)) {
+    return NULL;
+  }
+  PyObject* result =
+      deepcopy_recursive_impl(source_obj, memo_ptr, keepalive_list_ptr,
+                              /*skip_atomic_check=*/1);
   _copyc_recdepth_leave();
   return result;
 }
@@ -1841,7 +1917,7 @@ PyObject* py_replicate(PyObject* self,
       PyObject* memo_local = NULL;
       PyObject* keepalive_local = NULL;
 
-      PyObject* copy_i = deepcopy_recursive(obj, &memo_local, &keepalive_local);
+      PyObject* copy_i = deepcopy_recursive_skip_atomic(obj, &memo_local, &keepalive_local);
 
       Py_XDECREF(keepalive_local);
       Py_XDECREF(memo_local);
