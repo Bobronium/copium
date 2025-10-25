@@ -16,6 +16,7 @@ archs = ["x86_64", "universal2", "arm64"]
 archs = ["auto", "aarch64"]
 
 [tool.cibuildwheel]
+skip = "*t-*"
 archs = ["auto64", "auto32"]
 build-frontend = "build[uv]"
 test-command = "pytest -q"
