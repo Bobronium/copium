@@ -34,6 +34,7 @@ def test_copy() -> None:
 
         assert_type(copium.replace(A(1), a=2), A)
 
+
 @pytest.mark.typecheck
 def test_copy_errors() -> None:
     # deepcopy: missing required argument

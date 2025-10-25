@@ -3,9 +3,7 @@
 # SPDX-License-Identifier: MIT
 import copy as stdlib_copy
 import sys
-from functools import lru_cache
 
-import _pytest._code.source
 import pytest
 from datamodelzoo import CASES
 

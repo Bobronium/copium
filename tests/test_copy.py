@@ -22,15 +22,16 @@ from operator import ne
 from typing import NamedTuple
 from typing import NoReturn
 
-import copium
 import pytest
 
+import copium
 
 HAS_REPLACE = sys.version_info >= (3, 13)
 
 SKIP_BEFORE_3_13 = pytest.mark.skipif(
     not HAS_REPLACE,
-    reason=f"copy.replace() not available in Python {sys.version_info.major}.{sys.version_info.minor}",
+    reason=f"copy.replace() not available in Python "
+    f"{sys.version_info.major}.{sys.version_info.minor}",
 )
 
 
@@ -1231,7 +1232,7 @@ def test_replace_method(copy):
             self.y = y
             return self
 
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs):  # noqa: ARG002
             self.z = self.x + self.y
 
         def __replace__(self, **changes):
