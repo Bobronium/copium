@@ -80,8 +80,8 @@ tasks:
             local PYV="$1"
             echo "▶ Typechecking Python $PYV"
             uv sync --inexact --quiet --extra typecheck
-            uv run --no-sync mypy tests/typehints --python-version "$PYV"
-            uv run --no-sync pyright tests/typehints --pythonversion "$PYV"
+            uv run --no-sync mypy tests/api --python-version "$PYV"
+            uv run --no-sync pyright tests/api --pythonversion "$PYV"
           }
           if [ "{{.MATRIX}}" != "1" ] && [ -z "{{.VERSIONS}}" ]; then
             run_typecheck "{{ .PY_CURRENT }}"; exit 0; fi
@@ -105,7 +105,25 @@ tasks:
             ACT="$VENV/bin/activate"; [ -f "$VENV/Scripts/activate" ] && ACT="$VENV/Scripts/activate"
             . "$ACT"
             uv sync --active --inexact --quiet --extra test --reinstall-package copium
-            uv run --active pytest --cov-append
+            uv run --active pytest tests
             deactivate
           done
         '
+
+  build:wheel:
+    desc: Regular optimized wheel (LTO + -O3 by default)
+    cmds:
+    - python -m pip install -U build
+    - COPIUM_LTO=${COPIUM_LTO:-1} COPIUM_O3=${COPIUM_O3:-1} python -m build --wheel
+
+  pgo:train:
+    desc: Two-stage PGO training pass (instrument + pytest + merge)
+    cmds:
+    - chmod +x tools/pgo_train.sh
+    - COPIUM_PGO_PROFILE_DIR={{.PROFILE_DIR}} bash tools/pgo_train.sh
+
+  pgo:build:
+    desc: Final wheel compiled with PGO profile data
+    cmds:
+    - python -m pip install -U build
+    - COPIUM_PGO=use COPIUM_PGO_PROFILE_DIR={{.PROFILE_DIR}} python -m build --wheel
