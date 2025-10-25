@@ -9,4 +9,4 @@ XT = NewType("XT", tuple[int, str, dict[str, str]])  # ty doesn't understand Typ
 X: Final[XT] = XT((1, "2", {"3": "4"}))
 
 
-__all__ = ["X", "XT"]
+__all__ = ["XT", "X"]

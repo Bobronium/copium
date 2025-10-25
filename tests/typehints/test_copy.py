@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MIT
 import sys
 from typing import NamedTuple
-
+from typing import TYPE_CHECKING
 import pytest
-from typing_extensions import assert_type
+from typing_extensions import assert_type, assert_never
 
 import copium
 from tests.typehints.conftest import XT
@@ -22,6 +22,7 @@ def test_copy() -> None:
     assert_type(copium.deepcopy(X), XT)
     assert_type(copium.deepcopy(X, {}), XT)
     assert_type(copium.deepcopy(X, memo={}), XT)
+    assert_type(copium.deepcopy(X, memo=None), XT)
     assert_type(copium.deepcopy(x=X, memo={}), XT)
 
     if sys.version_info >= (3, 13):
@@ -30,3 +31,61 @@ def test_copy() -> None:
             a: int
 
         assert_type(copium.replace(A(1), a=2), A)
+
+@pytest.mark.typecheck
+def test_copy_errors() -> None:
+    # deepcopy: missing required argument
+    if not TYPE_CHECKING:
+        with pytest.raises(TypeError, match=r"missing 1 required positional argument: 'x'"):
+            copium.deepcopy()
+
+        with pytest.raises(
+            TypeError, match=r"takes from 1 to 2 positional arguments but 3 were given"
+        ):
+            copium.deepcopy([1, 2, 3], {}, "extra")
+        with pytest.raises(
+            TypeError, match=r"takes from 1 to 2 positional arguments but 4 were given"
+        ):
+            copium.deepcopy([1, 2, 3], {}, "extra1", "extra2")
+
+        # deepcopy: keyword errors
+        with pytest.raises(TypeError, match=r"got multiple values for argument 'memo'"):
+            assert_never(copium.deepcopy([1, 2, 3], {}, memo={}))
+        with pytest.raises(TypeError, match=r"got an unexpected keyword argument 'foo'"):
+            assert_never(copium.deepcopy([1, 2, 3], foo={}))
+        with pytest.raises(TypeError, match=r"got an unexpected keyword argument 'bar'"):
+            assert_never(copium.deepcopy([1, 2, 3], bar={}))
+
+        # deepcopy: memo type must be dict
+        with pytest.raises(TypeError, match=r"argument 'memo' must be dict, not list"):
+            assert_never(copium.deepcopy([1, 2, 3], memo=[]))
+        with pytest.raises(TypeError, match=r"argument 'memo' must be dict, not str"):
+            assert_never(copium.deepcopy([1, 2, 3], memo="string"))
+        with pytest.raises(TypeError, match=r"argument 'memo' must be dict, not int"):
+            assert_never(copium.deepcopy([1, 2, 3], memo=42))
+
+        class CustomClass:
+            pass
+
+        with pytest.raises(TypeError, match=r"argument 'memo' must be dict, not CustomClass"):
+            assert_never(copium.deepcopy([1, 2, 3], memo=CustomClass()))
+
+        # copy: missing/too many arguments
+        with pytest.raises(
+            TypeError,
+            match=r"(takes exactly one argument.*0 given|missing.*required positional argument)",
+        ):
+            assert_never(copium.copy())
+        with pytest.raises(TypeError, match=r"takes exactly one argument.*2 given"):
+            assert_never(copium.copy([1, 2, 3], "extra"))
+
+        if sys.version_info >= (3, 13):
+            # replace: missing/too many positional arguments
+            with pytest.raises(TypeError, match=r"missing 1 required positional argument: 'obj'"):
+                assert_never(copium.replace())
+            from types import SimpleNamespace
+
+            with pytest.raises(TypeError, match=r"takes 1 positional argument but 2 were given"):
+                assert_never(copium.replace(SimpleNamespace(x=1), "extra"))
+            with pytest.raises(TypeError, match=r"takes 1 positional argument but 3 were given"):
+                assert_never(copium.replace(SimpleNamespace(x=1), "a", "b"))
