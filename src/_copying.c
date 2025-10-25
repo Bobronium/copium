@@ -203,35 +203,6 @@ static inline int is_atomic_immutable(PyObject *obj) {
     return PyType_IsSubtype(t, &PyType_Type);
 }
 
-/* -------- Atomic fast-path assignment helpers (avoid recursion for atomics) --- */
-/* Use when caller has not pre-classified atomicity but atomics are common */
-#define LIKELY_GET_ATOMIC(dst, src, NONATOMIC_EXPR) \
-  do {                                              \
-    if (LIKELY(is_atomic_immutable((src)))) {       \
-      (dst) = Py_NewRef((src));                     \
-    } else {                                        \
-      (dst) = (NONATOMIC_EXPR);                     \
-    }                                               \
-  } while (0)
-
-/* Use when atomicity distribution is unknown (no LIKELY hint) */
-#define MAYBE_GET_ATOMIC(dst, src, NONATOMIC_EXPR) \
-  do {                                             \
-    if (is_atomic_immutable((src))) {              \
-      (dst) = Py_NewRef((src));                    \
-    } else {                                       \
-      (dst) = (NONATOMIC_EXPR);                    \
-    }                                              \
-  } while (0)
-
-/* Use when the value is guaranteed non-atomic by construction/logic. */
-#define ALWAYS_SKIP_ATOMIC(dst, src, MEMO_PTR, KEEPALIVE_PTR) \
-  do {                                                        \
-    (dst) = deepcopy_recursive_skip_atomic((src),             \
-                                           (MEMO_PTR),        \
-                                           (KEEPALIVE_PTR));  \
-  } while (0)
-
 /* ------------------------ Lazy memo/keepalive helpers -----------------------
  */
 
@@ -613,6 +584,31 @@ static PyObject* deepcopy_bytearray(PyObject* source_obj,
                                     void* object_id,
                                     Py_ssize_t object_id_hash);
 
+/* ------------------------ Ergonomic atomic-aware copy helpers --------------- */
+/* Expression-form helpers: return a PyObject* so callers can write
+     PyObject* dst = deepcopy_likely_atomic(src, memo_ptr, keepalive_ptr);
+   They encapsulate the atomic fast-path and recursive slow-path, avoiding
+   awkward assignment macros and nested invocations. */
+
+static inline PyObject*
+deepcopy_likely_atomic(PyObject* src, PyObject** memo_ptr, PyObject** keepalive_ptr) {
+  if (LIKELY(is_atomic_immutable(src))) {
+    return Py_NewRef(src);
+  }
+  return deepcopy_recursive_skip_atomic(src, memo_ptr, keepalive_ptr);
+}
+
+static inline PyObject*
+deepcopy(PyObject* src, PyObject** memo_ptr, PyObject** keepalive_ptr) {
+  if (is_atomic_immutable(src)) {
+    return Py_NewRef(src);
+  }
+  return deepcopy_recursive_skip_atomic(src, memo_ptr, keepalive_ptr);
+}
+
+
+/* --------------------------------------------------------------------------- */
+
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
 static PyObject* deepcopy_dict_with_watcher(PyObject* source_obj,
                                             PyObject** memo_ptr,
@@ -653,20 +649,13 @@ static PyObject* deepcopy_dict_with_watcher(PyObject* source_obj,
     Py_INCREF(dict_key);
     Py_INCREF(dict_value);
 
-    PyObject* copied_key;
-    LIKELY_GET_ATOMIC(
-        copied_key,
-        dict_key,
-        deepcopy_recursive_skip_atomic(dict_key, memo_ptr, keepalive_list_ptr)
-    );
+    PyObject* copied_key =
+        deepcopy_likely_atomic(dict_key, memo_ptr, keepalive_list_ptr);
 
     PyObject* copied_value = NULL;
     if (copied_key) {
-      LIKELY_GET_ATOMIC(
-          copied_value,
-          dict_value,
-          deepcopy_recursive_skip_atomic(dict_value, memo_ptr, keepalive_list_ptr)
-      );
+      copied_value =
+          deepcopy(dict_value, memo_ptr, keepalive_list_ptr);
     }
 
     Py_DECREF(dict_key);
@@ -757,12 +746,8 @@ static PyObject* deepcopy_dict_legacy(PyObject* source_obj,
     Py_INCREF(dict_key);
     Py_INCREF(dict_value);
 
-    PyObject* copied_key;
-    LIKELY_GET_ATOMIC(
-        copied_key,
-        dict_key,
-        deepcopy_recursive_skip_atomic(dict_key, memo_ptr, keepalive_list_ptr)
-    );
+    PyObject* copied_key =
+        deepcopy_likely_atomic(dict_key, memo_ptr, keepalive_list_ptr);
     if (!copied_key) {
       Py_DECREF(dict_key);
       Py_DECREF(dict_value);
@@ -780,12 +765,7 @@ static PyObject* deepcopy_dict_legacy(PyObject* source_obj,
       return NULL;
     }
 
-    PyObject* copied_value;
-    LIKELY_GET_ATOMIC(
-        copied_value,
-        dict_value,
-        deepcopy_recursive_skip_atomic(dict_value, memo_ptr, keepalive_list_ptr)
-    );
+    PyObject* copied_value = deepcopy(dict_value, memo_ptr, keepalive_list_ptr);
     if (!copied_value) {
       Py_DECREF(copied_key);
       Py_DECREF(dict_key);
@@ -886,7 +866,7 @@ static PyObject* deepcopy_list(PyObject* source_obj,
             /* Hold a ref while we potentially call back into Python */
             Py_XINCREF(item);
             /* already proven non-atomic above */
-            ALWAYS_SKIP_ATOMIC(copied_item, item, memo_ptr, keepalive_list_ptr);
+            copied_item = deepcopy_recursive_skip_atomic(item, memo_ptr, keepalive_list_ptr);
             Py_DECREF(item);
             if (copied_item == NULL) {
                 Py_DECREF(copied_list);
@@ -924,12 +904,8 @@ static PyObject* deepcopy_tuple(PyObject* source_obj,
 
   for (Py_ssize_t i = 0; i < tuple_length; i++) {
     PyObject* element = PyTuple_GET_ITEM(source_obj, i);
-    PyObject* copied_element;
-    LIKELY_GET_ATOMIC(
-        copied_element,
-        element,
-        deepcopy_recursive_skip_atomic(element, memo_ptr, keepalive_list_ptr)
-    );
+    PyObject* copied_element =
+        deepcopy_likely_atomic(element, memo_ptr, keepalive_list_ptr);
     if (!copied_element) {
       Py_DECREF(copied_tuple);
       return NULL;
@@ -987,12 +963,8 @@ static PyObject* deepcopy_set(PyObject* source_obj,
   }
   PyObject* item;
   while ((item = PyIter_Next(iterator)) != NULL) {
-    PyObject* copied_item;
-    LIKELY_GET_ATOMIC(
-        copied_item,
-        item,
-        deepcopy_recursive_skip_atomic(item, memo_ptr, keepalive_list_ptr)
-    );
+    PyObject* copied_item =
+        deepcopy_likely_atomic(item, memo_ptr, keepalive_list_ptr);
     if (!copied_item) {
       Py_DECREF(item);
       Py_DECREF(iterator);
@@ -1037,12 +1009,8 @@ static PyObject* deepcopy_frozenset(PyObject* source_obj,
   }
   PyObject* item;
   while ((item = PyIter_Next(iterator)) != NULL) {
-    PyObject* copied_item;
-    LIKELY_GET_ATOMIC(
-        copied_item,
-        item,
-        deepcopy_recursive_skip_atomic(item, memo_ptr, keepalive_list_ptr)
-    );
+    PyObject* copied_item =
+        deepcopy_likely_atomic(item, memo_ptr, keepalive_list_ptr);
     if (!copied_item) {
       Py_DECREF(item);
       Py_DECREF(iterator);
@@ -1276,8 +1244,8 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     Py_INCREF(method_function);
     Py_INCREF(method_self);
     /* safe: types.MethodType implies 'self' is a user instance, not an atomic immutable */
-    PyObject* copied_self;
-    ALWAYS_SKIP_ATOMIC(copied_self, method_self, memo_ptr, keepalive_list_ptr);
+    PyObject* copied_self =
+        deepcopy_recursive_skip_atomic(method_self, memo_ptr, keepalive_list_ptr);
     if (!copied_self) {
       Py_DECREF(method_function);
       Py_DECREF(method_self);
@@ -1390,12 +1358,8 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     }
     for (Py_ssize_t i = 0; i < args_count; i++) {
       PyObject* arg = PyTuple_GET_ITEM(args, i);
-      PyObject* copied_arg;
-      LIKELY_GET_ATOMIC(
-          copied_arg,
-          arg,
-          deepcopy_recursive_skip_atomic(arg, memo_ptr, keepalive_list_ptr)
-      );
+      PyObject* copied_arg =
+          deepcopy(arg, memo_ptr, keepalive_list_ptr);
       if (!copied_arg) {
         Py_DECREF(deepcopied_args);
         Py_DECREF(reduce_result);
@@ -1421,13 +1385,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     PyObject* setstate_method =
         PyObject_GetAttr(reconstructed_obj, module_state.str_setstate);
     if (setstate_method) {
-      /* can't use ALWAYS_SKIP_ATOMIC because __setstate__ 'state' may be atomic per copy protocol */
-      PyObject* copied_state;
-      MAYBE_GET_ATOMIC(
-          copied_state,
-          state,
-          deepcopy_recursive_skip_atomic(state, memo_ptr, keepalive_list_ptr)
-      );
+      PyObject* copied_state = deepcopy(state, memo_ptr, keepalive_list_ptr);
       if (!copied_state) {
         Py_DECREF(setstate_method);
         Py_DECREF(reconstructed_obj);
@@ -1467,13 +1425,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
               Py_DECREF(reduce_result);
               return NULL;
             }
-            /* can't use ALWAYS_SKIP_ATOMIC because slot values may be atomic (any Python object) */
-            PyObject* copied_slot_value;
-            MAYBE_GET_ATOMIC(
-                copied_slot_value,
-                slot_value,
-                deepcopy_recursive_skip_atomic(slot_value, memo_ptr, keepalive_list_ptr)
-            );
+            PyObject* copied_slot_value = deepcopy(slot_value, memo_ptr, keepalive_list_ptr);
             Py_DECREF(slot_value);
             if (!copied_slot_value) {
               Py_DECREF(slot_key);
@@ -1503,13 +1455,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
         }
 
         if (dict_state && dict_state != Py_None) {
-          /* can't use ALWAYS_SKIP_ATOMIC because dict_state values may be atomic */
-          PyObject* copied_dict_state;
-          MAYBE_GET_ATOMIC(
-              copied_dict_state,
-              dict_state,
-              deepcopy_recursive_skip_atomic(dict_state, memo_ptr, keepalive_list_ptr)
-          );
+          PyObject* copied_dict_state = deepcopy(dict_state, memo_ptr, keepalive_list_ptr);
           if (!copied_dict_state) {
             Py_DECREF(reconstructed_obj);
             Py_DECREF(reduce_result);
@@ -1544,13 +1490,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
           Py_DECREF(update_result);
         }
       } else {
-        /* can't use ALWAYS_SKIP_ATOMIC because mapping state may contain atomic values */
-        PyObject* copied_dict_state;
-        MAYBE_GET_ATOMIC(
-            copied_dict_state,
-            state,
-            deepcopy_recursive_skip_atomic(state, memo_ptr, keepalive_list_ptr)
-        );
+        PyObject* copied_dict_state = deepcopy(state, memo_ptr, keepalive_list_ptr);
         if (!copied_dict_state) {
           Py_DECREF(reconstructed_obj);
           Py_DECREF(reduce_result);
@@ -1579,8 +1519,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
   }
 
   if (list_iterator && list_iterator != Py_None) {
-    PyObject* append_method =
-        PyObject_GetAttr(reconstructed_obj, module_state.str_append);
+    PyObject* append_method = PyObject_GetAttr(reconstructed_obj, module_state.str_append);
     if (!append_method) {
       Py_DECREF(reconstructed_obj);
       Py_DECREF(reduce_result);
@@ -1595,13 +1534,7 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     }
     PyObject* item;
     while ((item = PyIter_Next(iterator)) != NULL) {
-      /* can't use ALWAYS_SKIP_ATOMIC because list payload items may be atomic */
-      PyObject* copied_item;
-      LIKELY_GET_ATOMIC(
-          copied_item,
-          item,
-          deepcopy_recursive_skip_atomic(item, memo_ptr, keepalive_list_ptr)
-      );
+      PyObject* copied_item = deepcopy_likely_atomic(item, memo_ptr, keepalive_list_ptr);
       Py_DECREF(item);
       if (!copied_item) {
         Py_DECREF(iterator);
@@ -1644,20 +1577,13 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
       Py_INCREF(pair_key);
       Py_INCREF(pair_value);
 
-      PyObject* copied_key;
-      LIKELY_GET_ATOMIC(
-          copied_key,
-          pair_key,
-          deepcopy_recursive_skip_atomic(pair_key, memo_ptr, keepalive_list_ptr)
-      );
+      PyObject* copied_key =
+          deepcopy_likely_atomic(pair_key, memo_ptr, keepalive_list_ptr);
 
       PyObject* copied_value = NULL;
       if (copied_key) {
-        LIKELY_GET_ATOMIC(
-            copied_value,
-            pair_value,
-            deepcopy_recursive_skip_atomic(pair_value, memo_ptr, keepalive_list_ptr)
-        );
+        copied_value =
+            deepcopy_likely_atomic(pair_value, memo_ptr, keepalive_list_ptr);
       }
 
       Py_DECREF(pair_key);
@@ -1925,13 +1851,9 @@ have_args:
     Py_INCREF(memo_local);
   }
 
-  /* can't use ALWAYS_SKIP_ATOMIC because top-level 'x' may be atomic */
-  PyObject* result;
-  MAYBE_GET_ATOMIC(
-      result,
-      source_obj,
-      deepcopy_recursive_skip_atomic(source_obj, &memo_local, &keepalive_local)
-  );
+  /* can't use deepcopy_recursive_skip_atomic because top-level 'x' may be atomic */
+  PyObject* result =
+      deepcopy(source_obj, &memo_local, &keepalive_local);
   Py_XDECREF(keepalive_local);
   Py_XDECREF(memo_local);
   return result;
@@ -2073,8 +1995,8 @@ PyObject* py_replicate(PyObject* self,
       PyObject* keepalive_local = NULL;
 
       /* safe: earlier branch returned for atomics, so obj is non-atomic here */
-      PyObject* copy_i;
-      ALWAYS_SKIP_ATOMIC(copy_i, obj, &memo_local, &keepalive_local);
+      PyObject* copy_i =
+          deepcopy_recursive_skip_atomic(obj, &memo_local, &keepalive_local);
 
       Py_XDECREF(keepalive_local);
       Py_XDECREF(memo_local);
