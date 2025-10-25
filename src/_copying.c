@@ -28,6 +28,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__APPLE__) || defined(__linux__)
+#include <pthread.h>
+#endif
 
 #include "Python.h"
 #include "pycore_object.h"  // _PyNone_Type, _PyNotImplemented_Type
@@ -262,36 +265,129 @@ static inline int keepalive_append_original(PyObject** memo_ptr,
   return memo_keepalive_append(memo_ptr, keepalive_list_ptr, original_obj);
 }
 
-/* ------------------------- Recursion depth guard (thread-local) ------------- */
-/* Ultra-cheap TLS-based guard (C11), with TSS fallback for older compilers.
-   We sample Py_GetRecursionLimit() every 64 levels and clamp to 10_000.
-   Cost per guarded frame: one TLS increment + one cheap bit test. */
+/* ------------------------- Recursion depth guard (stack-space cap) ---------- */
+/* Goal: prevent SIGSEGV from C stack overflow with *minimal* overhead.
+   Strategy: per-thread cached stack bounds (from OS) + stride-sampled check.
+   - On macOS: pthread_get_stackaddr_np / pthread_get_stacksize_np
+   - On Linux:  pthread_getattr_np / pthread_attr_getstack
+   - Elsewhere: fall back to previous TSS-based depth/limit guard.
+
+   Overhead per guarded frame:
+     - Always: ++depth (TLS) + one bit-test.
+     - Every COPYC_STACKCHECK_STRIDE frames: 1 pointer compare against cached low-water mark.
+*/
+
+#ifndef COPYC_STACKCHECK_STRIDE
+#define COPYC_STACKCHECK_STRIDE 32u
+#endif
+
+/* Safety margin above the OS guard page to allow a few more frames even if
+   the stride delays the check. Keep generous but small enough not to bite into
+   useful stack. */
+#ifndef COPYC_STACK_SAFETY_MARGIN
+#define COPYC_STACK_SAFETY_MARGIN (256u * 1024u)  /* 256 KiB */
+#endif
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 static _Thread_local unsigned int _copyc_tls_depth = 0;
-static _Thread_local int          _copyc_tls_limit = 0;
+static _Thread_local int          _copyc_tls_stack_inited = 0;
+static _Thread_local char*        _copyc_tls_stack_low = NULL;   /* lowest usable addr + safety */
+static _Thread_local char*        _copyc_tls_stack_high = NULL;  /* highest addr (mostly informational) */
 #endif
+
+static inline void _copyc_stack_init_if_needed(void) {
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+  if (_copyc_tls_stack_inited) return;
+  _copyc_tls_stack_inited = 1;
+
+#if defined(__APPLE__)
+  /* macOS: base is the *high* address; stack grows downward. */
+  pthread_t t = pthread_self();
+  size_t sz = pthread_get_stacksize_np(t);
+  void* base = pthread_get_stackaddr_np(t);
+
+  char* high = (char*)base;
+  char* low  = high - (ptrdiff_t)sz;
+
+  /* Apply a safety margin above the OS guard page */
+  if ((size_t)sz > COPYC_STACK_SAFETY_MARGIN) {
+    low += COPYC_STACK_SAFETY_MARGIN;
+  }
+
+  _copyc_tls_stack_low  = low;
+  _copyc_tls_stack_high = high;
+#elif defined(__linux__)
+  /* Linux: attr stackaddr is the *low* address of the reserved stack region. */
+  pthread_attr_t attr;
+  if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+    void* addr = NULL;
+    size_t sz = 0;
+    if (pthread_attr_getstack(&attr, &addr, &sz) == 0 && addr && sz) {
+      char* low  = (char*)addr;
+      char* high = low + (ptrdiff_t)sz;
+
+      /* Apply safety margin above guard page (at the low end) */
+      if (sz > COPYC_STACK_SAFETY_MARGIN) {
+        low += COPYC_STACK_SAFETY_MARGIN;
+      }
+
+      _copyc_tls_stack_low  = low;
+      _copyc_tls_stack_high = high;
+    }
+    pthread_attr_destroy(&attr);
+  }
+#else
+  /* Other platforms: leave pointers NULL -> fall back path in enter(). */
+  _copyc_tls_stack_low = NULL;
+  _copyc_tls_stack_high = NULL;
+#endif
+
+  /* Nothing else to do; if we failed to obtain bounds, low remains NULL. */
+#else
+  /* No C11 TLS: nothing to initialize here; we will use TSS fallback. */
+#endif
+}
 
 static inline int _copyc_recdepth_enter(void) {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
   unsigned int d = ++_copyc_tls_depth;
 
-  /* Refresh cached limit every 64 levels or on first use */
-  if (UNLIKELY(((d & 63u) == 0u) | (_copyc_tls_limit == 0))) {
-    int lim = Py_GetRecursionLimit();
-    if (lim > 10000) lim = 10000;  /* conservative cap */
-    _copyc_tls_limit = lim;
-  }
+  /* Sample only every N frames to keep cost negligible. */
+  if (UNLIKELY((d & (COPYC_STACKCHECK_STRIDE - 1u)) == 0u)) {
+    _copyc_stack_init_if_needed();
 
-  if (UNLIKELY((int)d > _copyc_tls_limit)) {
-    _copyc_tls_depth--;
-    PyErr_SetString(PyExc_RecursionError,
-                    "maximum recursion depth exceeded in copyc.deepcopy");
-    return -1;
+    if (_copyc_tls_stack_low) {
+      /* Compare current stack pointer to low-water mark. */
+      char sp_probe;
+      char* sp = (char*)&sp_probe;
+
+      /* Most platforms grow downward; if sp <= low, we're in the danger zone. */
+      if (UNLIKELY(sp <= _copyc_tls_stack_low)) {
+        _copyc_tls_depth--;
+        PyErr_SetString(PyExc_RecursionError,
+                        "maximum recursion depth exceeded in copyc.deepcopy (stack safety cap)");
+        return -1;
+      }
+    } else {
+      /* No OS stack bounds available: TSS-based limit fallback (rare path). */
+      uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
+      uintptr_t next = depth_u + 1;
+
+      int limit = Py_GetRecursionLimit();
+      if (limit > 10000) { limit = 10000; }
+
+      if (UNLIKELY((int)next > limit)) {
+        _copyc_tls_depth--;
+        PyErr_SetString(PyExc_RecursionError,
+                        "maximum recursion depth exceeded in copyc.deepcopy");
+        return -1;
+      }
+      (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)next);
+    }
   }
   return 0;
 #else
-  /* Fallback: PyThread_tss-based guard */
+  /* No C11 TLS: fall back entirely to the existing TSS/limit accounting. */
   uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
   uintptr_t next = depth_u + 1;
 
