@@ -24,7 +24,13 @@
 
 #define PY_SSIZE_T_CLEAN
 
+/* Enable GNU extensions so pthread_getattr_np is declared on Linux */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
+
 #define Py_BUILD_CORE
+#include <stddef.h>  /* ptrdiff_t */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
