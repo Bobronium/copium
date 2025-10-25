@@ -214,7 +214,7 @@ static int pin_table_insert(PinTable** table_ptr, void* key, PinObject* pin) {
       if (first_tomb < 0)
         first_tomb = idx;
     } else if (slot_key == key) {
-      Py_SETREF(table->slots[idx].pin, Py_NewRef(pin));
+      Py_SETREF(table->slots[idx].pin, (PinObject*)Py_NewRef(pin));
       return 0;
     }
     idx = (idx + 1) & mask;

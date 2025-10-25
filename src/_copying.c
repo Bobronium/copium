@@ -522,9 +522,6 @@ static inline int dict_iterate_with_hash(PyObject* dict_obj,
     }                                                              \
   } while (0)
 
-static PyObject* deepcopy_recursive(PyObject* source_obj,
-                                    PyObject** memo_ptr,
-                                    PyObject** keepalive_list_ptr);
 static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
                                          PyObject** memo_ptr,
                                          PyObject** keepalive_list_ptr,
@@ -1628,26 +1625,6 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
   return reconstructed_obj;
 }
 
-static PyObject* deepcopy_recursive(PyObject* source_obj,
-                                    PyObject** memo_ptr,
-                                    PyObject** keepalive_list_ptr) {
-  /* Fast path: atomics never recurse; avoid any depth accounting */
-  if (LIKELY(is_atomic_immutable(source_obj))) {
-    return Py_NewRef(source_obj);
-  }
-
-  /* Enter our cheap thread-local recursion guard only for non-atomics */
-  if (UNLIKELY(_copium_recdepth_enter() < 0)) {
-    return NULL;
-  }
-
-  PyObject* result =
-      deepcopy_recursive_impl(source_obj, memo_ptr, keepalive_list_ptr,
-                              /*skip_atomic_check=*/1);
-
-  _copium_recdepth_leave();
-  return result;
-}
 
 /* Variant used when the caller has already excluded atomic immutables.
    Still enforces recursion guard, but skips atomic predicate entirely. */
