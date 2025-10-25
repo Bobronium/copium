@@ -651,7 +651,7 @@ def build_wheel(
     metadata_directory: str | None = None,
 ) -> str:
     """Build a wheel."""
-    if os.environ.get("DUPER_DISABLE_WHEEL_CACHE") == "1":
+    if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
         original = _inject_extensions()
         try:
