@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "setuptools-scm", "wheel"]
+requires = ["setuptools>=68", "setuptools-scm>=8.0", "wheel"]
 build-backend = "tools.build_system.backend"
 backend-path = ["."]
 
@@ -17,12 +17,9 @@ test-extras = ["test"]
 test-sources = ["tests", "pyproject.toml"]
 
 
-[tool.setuptools_scm]
-version_file = "src/copium/__about__.py"
-
 [project]
 name = "copium"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Fastest deepcopy implementation for CPython"
 readme = "README.md"
 authors = [{ name = "Arseny Boykov (Bobronium)", email = "hi@bobronium.me" }]

@@ -349,6 +349,102 @@ static struct PyModuleDef experimental_module_def = {
     NULL, NULL, NULL, NULL
 };
 
+/* ===================== Version submodule (__about__) ====================== */
+
+/* Version macros injected at build time */
+#ifndef COPIUM_VERSION
+#define COPIUM_VERSION "0.0.0+unknown"
+#endif
+
+#ifndef COPIUM_VERSION_MAJOR
+#define COPIUM_VERSION_MAJOR 0
+#endif
+
+#ifndef COPIUM_VERSION_MINOR
+#define COPIUM_VERSION_MINOR 0
+#endif
+
+#ifndef COPIUM_VERSION_PATCH
+#define COPIUM_VERSION_PATCH 0
+#endif
+
+/* COPIUM_VERSION_PRERELEASE is only defined if present (otherwise None) */
+/* COPIUM_VERSION_BUILD is only defined if present (otherwise None) */
+/* COPIUM_COMMIT_ID is only defined if available (otherwise None) */
+
+/**
+ * Create a VersionInfo namedtuple instance from static version macros
+ * Expected format: VersionInfo(major: int, minor: int, patch: int, prerelease: str | None, build: int | None)
+ */
+static PyObject* _create_version_info(PyObject* version_cls) {
+    PyObject* major = PyLong_FromLong(COPIUM_VERSION_MAJOR);
+    if (!major) return NULL;
+
+    PyObject* minor = PyLong_FromLong(COPIUM_VERSION_MINOR);
+    if (!minor) {
+        Py_DECREF(major);
+        return NULL;
+    }
+
+    PyObject* patch = PyLong_FromLong(COPIUM_VERSION_PATCH);
+    if (!patch) {
+        Py_DECREF(major);
+        Py_DECREF(minor);
+        return NULL;
+    }
+
+    /* Handle prerelease (string or None) */
+    PyObject* prerelease;
+#ifdef COPIUM_VERSION_PRERELEASE
+    prerelease = PyUnicode_FromString(COPIUM_VERSION_PRERELEASE);
+    if (!prerelease) {
+        Py_DECREF(major);
+        Py_DECREF(minor);
+        Py_DECREF(patch);
+        return NULL;
+    }
+#else
+    prerelease = Py_None;
+    Py_INCREF(Py_None);
+#endif
+
+    /* Handle build (int or None) */
+    PyObject* build;
+#ifdef COPIUM_VERSION_BUILD
+    build = PyLong_FromLong(COPIUM_VERSION_BUILD);
+    if (!build) {
+        Py_DECREF(major);
+        Py_DECREF(minor);
+        Py_DECREF(patch);
+        Py_DECREF(prerelease);
+        return NULL;
+    }
+#else
+    build = Py_None;
+    Py_INCREF(Py_None);
+#endif
+
+    /* Create VersionInfo instance */
+    PyObject* version_tuple = PyObject_CallFunction(version_cls, "OOOOO", major, minor, patch, prerelease, build);
+
+    Py_DECREF(major);
+    Py_DECREF(minor);
+    Py_DECREF(patch);
+    Py_DECREF(prerelease);
+    Py_DECREF(build);
+
+    return version_tuple;
+}
+
+static PyModuleDef about_module_def = {
+    PyModuleDef_HEAD_INIT,
+    "copium.__about__",
+    "Version information for copium",
+    -1,
+    NULL,
+    NULL, NULL, NULL, NULL
+};
+
 /* ===================== Helper for adding submodule ========================= */
 
 static int _add_submodule(PyObject* parent, const char* name, PyObject* submodule) {
@@ -445,6 +541,146 @@ PyMODINIT_FUNC PyInit_copium(void) {
         if (_add_submodule(module, "_experimental", experimental_module) < 0) {
             return NULL;
         }
+    }
+
+    /* Create and attach __about__ submodule with version info */
+    PyObject* about_module = PyModule_Create(&about_module_def);
+    if (!about_module) {
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Add version string to __about__ */
+    if (PyModule_AddStringConstant(about_module, "__version__", COPIUM_VERSION) < 0) {
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Import collections.namedtuple for creating VersionInfo and Author */
+    PyObject* collections = PyImport_ImportModule("collections");
+    if (!collections) {
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    PyObject* namedtuple = PyObject_GetAttrString(collections, "namedtuple");
+    Py_DECREF(collections);
+    if (!namedtuple) {
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Create VersionInfo namedtuple class: VersionInfo('VersionInfo', ['major', 'minor', 'patch', 'prerelease', 'build']) */
+    PyObject* version_info_cls = PyObject_CallFunction(namedtuple, "s[sssss]",
+                                                        "VersionInfo",
+                                                        "major", "minor", "patch", "prerelease", "build");
+    if (!version_info_cls) {
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Add VersionInfo class to __about__ module */
+    if (PyModule_AddObject(about_module, "VersionInfo", version_info_cls) < 0) {
+        Py_DECREF(version_info_cls);
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+    /* PyModule_AddObject steals reference, but we need it for creating instance */
+    Py_INCREF(version_info_cls);
+
+    /* Create VersionInfo instance from static macros */
+    PyObject* version_tuple = _create_version_info(version_info_cls);
+    Py_DECREF(version_info_cls);
+    if (!version_tuple) {
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    if (PyModule_AddObject(about_module, "__version_tuple__", version_tuple) < 0) {
+        Py_DECREF(version_tuple);
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Add __commit_id__ (string or None) */
+#ifdef COPIUM_COMMIT_ID
+    if (PyModule_AddStringConstant(about_module, "__commit_id__", COPIUM_COMMIT_ID) < 0) {
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+#else
+    Py_INCREF(Py_None);
+    if (PyModule_AddObject(about_module, "__commit_id__", Py_None) < 0) {
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+#endif
+
+    /* Create Author namedtuple class: Author('Author', ['name', 'email']) */
+    PyObject* author_cls = PyObject_CallFunction(namedtuple, "s[ss]", "Author", "name", "email");
+    Py_DECREF(namedtuple);
+    if (!author_cls) {
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Add Author class to __about__ module */
+    if (PyModule_AddObject(about_module, "Author", author_cls) < 0) {
+        Py_DECREF(author_cls);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+    /* PyModule_AddObject steals reference, but we need it for creating instance */
+    Py_INCREF(author_cls);
+
+    /* Create Author instance: Author(name="...", email="...") */
+    PyObject* author_instance = PyObject_CallFunction(author_cls, "ss",
+                                                       "Arseny Boykov (Bobronium)",
+                                                       "hi@bobronium.me");
+    Py_DECREF(author_cls);
+    if (!author_instance) {
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Create tuple containing the author */
+    PyObject* authors_tuple = PyTuple_Pack(1, author_instance);
+    Py_DECREF(author_instance);
+    if (!authors_tuple) {
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Add __authors__ to __about__ module */
+    if (PyModule_AddObject(about_module, "__authors__", authors_tuple) < 0) {
+        Py_DECREF(authors_tuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Attach __about__ to parent module */
+    if (_add_submodule(module, "__about__", about_module) < 0) {
+        return NULL;
     }
 
     return module;

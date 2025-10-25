@@ -8,7 +8,7 @@ T = TypeVar("T")
 
 def copy(x: T) -> T:
     """
-    Return a shallow copy of obj.
+    Natively compiled copy.
 
     :param x: object to copy.
     :return: shallow copy of the `x`.
@@ -16,7 +16,7 @@ def copy(x: T) -> T:
 
 def deepcopy(x: T, memo: dict[int, Any] | None = None) -> T:
     """
-    Return a deep copy of obj.
+    Natively compiled deepcopy.
 
     :param x: object to deepcopy
     :param memo: treat as opaque.

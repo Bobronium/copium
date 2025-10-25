@@ -1,5 +1,5 @@
 """
-PEP 517 build backend that wraps setuptools with aggressive caching.
+PEP 517 build backend that wraps setuptools with aggressive caching + setuptools-scm.
 
 This is a build backend entry point, NOT a library.
 NO setup.py required - this backend injects extensions dynamically.
@@ -9,6 +9,11 @@ Caching strategy:
 2. Cache metadata generation (avoid setuptools invocation)
 3. Cache build requirements (avoid setuptools invocation)
 4. Share state within single build process (prepare_metadata + build_wheel)
+
+Version strategy (via setuptools-scm):
+- Tags (v1.2.3)     -> release version: 1.2.3
+- Main commits      -> dev version: 1.2.4.dev42
+- Dirty working dir -> dev version: 1.2.4.dev42
 """
 
 from __future__ import annotations
@@ -40,7 +45,13 @@ class SetuptoolsBackend:
         return getattr(build_meta, item)
 
 
-echo = print
+def echo(*args: Any, **kwargs: Any) -> None:
+    print("[copium-build-system]", *args, **kwargs)  # noqa: T201
+
+
+def error(*args: Any, **kwargs: Any) -> None:
+    echo(*args, **kwargs, file=sys.stderr)
+
 
 setuptools_build_meta = SetuptoolsBackend()
 
@@ -60,6 +71,116 @@ REQUIRES_CACHE.mkdir(exist_ok=True)
 _session_state: dict[str, Any] = {}
 
 VECTOR_CALL_PATCH_AVAILABLE = sys.version_info >= (3, 12)
+
+# ============================================================================
+# Version Management (setuptools-scm integration)
+# ============================================================================
+
+
+def _parse_version_tuple(version: str) -> tuple[int | str, ...]:
+    """Parse PEP 440 version into tuple.
+
+    Examples:
+        "0.1.0" -> (0, 1, 0)
+        "0.1.1.dev5+g9a2b3c4" -> (0, 1, 1, "dev", 5)
+        "1.2.3rc1" -> (1, 2, 3, "rc", 1)
+        "1.2.3a1" -> (1, 2, 3, "a", 1)
+    """
+    import re
+
+    # Strip local version (+...)
+    base = version.split("+")[0]
+
+    # Match: X.Y.Z[.preNUM] or X.Y.ZpreNUM
+    # e.g., "0.1.1.dev5" or "1.2.3rc1"
+    pattern = r"(\d+)\.(\d+)\.(\d+)(?:[\.]?(dev|a|alpha|b|beta|rc)(\d+)?)?"
+    match = re.match(pattern, base)
+
+    if not match:
+        # Fallback: just return version as single-element tuple
+        return (version,)
+
+    major, minor, patch, pre_type, pre_num = match.groups()
+    result: list[int | str] = [int(major), int(minor), int(patch)]
+
+    if pre_type:
+        result.append(pre_type)
+        if pre_num:
+            result.append(int(pre_num))
+
+    return tuple(result)
+
+
+def _get_version_info() -> dict[str, Any]:
+    """Get version and parsed tuple from setuptools-scm."""
+    try:
+        from setuptools_scm import get_version
+
+        version = get_version(
+            root=str(PROJECT_ROOT), version_scheme="guess-next-dev", local_scheme="no-local-version"
+        )
+    except Exception as e:
+        echo(f"Version detection failed: {e}")
+        return {
+            "version": "0.0.0+unknown",
+            "commit_id": None,
+            "version_tuple": (0, 0, 0, "unknown"),
+        }
+
+    # Commit ID is embedded in version string by setuptools-scm (the gXXXXXXX part)
+    # No need to extract separately - leave as None
+    commit_id = None
+
+    # Parse version tuple
+    version_tuple = _parse_version_tuple(version)
+
+    echo(f"Version: {version}")
+    echo(f"Tuple: {version_tuple}")
+
+    return {
+        "version": version,
+        "commit_id": commit_id,
+        "version_tuple": version_tuple,
+    }
+
+
+def _version_info_to_macros(version_info: dict[str, Any]) -> list[tuple[str, str]]:
+    """Convert version info to C preprocessor macros."""
+    major, minor, patch, *rest = version_info["version_tuple"]
+    prerelease = build = None
+    match rest:
+        case [prerelease, build]:
+            ...
+        case [prerelease]:
+            ...
+        case []:
+            ...
+        case _:
+            error(f'Unexpected {version_info["version_tuple"]=}')
+
+    macros = [
+        ("COPIUM_VERSION", f'"{version_info["version"]}"'),
+        ("COPIUM_VERSION_MAJOR", str(major)),
+        ("COPIUM_VERSION_MINOR", str(minor)),
+        ("COPIUM_VERSION_PATCH", str(patch)),
+    ]
+    if version_info["commit_id"]:
+        macros.append(("COPIUM_COMMIT_ID", f'"{version_info["commit_id"]}"'))
+
+    if prerelease is not None:
+        if '"' in prerelease:
+            error(f"malformed {prerelease=}, skipping")
+        else:
+            macros.append(("COPIUM_VERSION_PRERELEASE", f'"{prerelease}"'))
+
+    if build is not None:
+        if not isinstance(build, int):
+            error(f"malformed {build=}, expected valid int, skipping")
+        else:
+            macros.append(("COPIUM_VERSION_BUILD", str(build)))
+
+    return macros
+
 
 # ============================================================================
 # Fast Copy (APFS clone on macOS)
@@ -208,11 +329,19 @@ def _deserialize_ext(d: dict[str, Any]) -> Extension:
 # ============================================================================
 
 
-def _get_c_extensions() -> list[Extension]:
-    """Get C extensions."""
+def _get_c_extensions(version_info: dict[str, Any] | None = None) -> list[Extension]:
+    """Get C extensions with version baked in."""
     from setuptools import Extension
 
     python_include = Path(sysconfig.get_paths()["include"])
+
+    # Get version info if not provided
+    if version_info is None:
+        version_info = _get_version_info()
+
+    # Convert to C macros
+    define_macros = _version_info_to_macros(version_info)
+
     return [
         Extension(
             "copium",
@@ -224,6 +353,7 @@ def _get_c_extensions() -> list[Extension]:
                 "src/_patching.c",
             ],
             include_dirs=[str(python_include), str(python_include / "internal")],
+            define_macros=define_macros,
         )
     ]
 
@@ -234,15 +364,22 @@ def _get_c_extensions() -> list[Extension]:
 
 
 def _inject_extensions() -> Callable[..., Any]:
-    """Monkey-patch setuptools.setup() to inject extensions."""
+    """Monkey-patch setuptools.setup() to inject extensions and version."""
     import setuptools
 
     original_setup = setuptools.setup
-    extensions = _get_c_extensions()
+
+    # Get version info once per build
+    version_info = _get_version_info()
+
+    # Get extensions with version baked in
+    extensions = _get_c_extensions(version_info)
 
     def patched_setup(*args: Any, **kwargs: Any) -> Any:
         if extensions:
             kwargs.setdefault("ext_modules", []).extend(extensions)
+        # Inject version from setuptools-scm
+        kwargs.setdefault("version", version_info["version"])
         return original_setup(*args, **kwargs)
 
     setuptools.setup = patched_setup
@@ -336,22 +473,22 @@ def get_requires_for_build_wheel(config_settings: dict[str, Any] | None = None) 
     if cache_file.exists():
         try:
             cached = json.loads(cache_file.read_text())
-            echo("[build-cache] Using cached build requirements")
+            echo("Using cached build requirements")
             return cached["requires"]
         except NoExceptionError as e:
-            echo(f"[build-cache] Requires cache load failed: {e}")
+            echo(f"Requires cache load failed: {e}")
             cache_file.unlink(missing_ok=True)
 
     # Generate
-    echo("[build-cache] Getting build requirements...")
+    echo("Getting build requirements...")
     result = setuptools_build_meta.get_requires_for_build_wheel(config_settings)
 
     # Cache
     try:
         cache_file.write_text(json.dumps({"requires": result, "timestamp": time.time()}, indent=2))
-        echo("[build-cache] Cached build requirements")
+        echo("Cached build requirements")
     except NoExceptionError as e:
-        echo(f"[build-cache] Requires cache save failed: {e}")
+        echo(f"Requires cache save failed: {e}")
 
     return result
 
@@ -365,22 +502,22 @@ def get_requires_for_build_editable(config_settings: dict[str, Any] | None = Non
     if cache_file.exists():
         try:
             cached = json.loads(cache_file.read_text())
-            echo("[build-cache] Using cached build requirements")
+            echo("Using cached build requirements")
             return cached["requires"]
         except NoExceptionError as e:
-            echo(f"[build-cache] Requires cache load failed: {e}")
+            echo(f"Requires cache load failed: {e}")
             cache_file.unlink(missing_ok=True)
 
     # Generate
-    echo("[build-cache] Getting build requirements...")
+    echo("Getting build requirements...")
     result = setuptools_build_meta.get_requires_for_build_editable(config_settings)
 
     # Cache
     try:
         cache_file.write_text(json.dumps({"requires": result, "timestamp": time.time()}, indent=2))
-        echo("[build-cache] Cached build requirements")
+        echo("Cached build requirements")
     except NoExceptionError as e:
-        echo(f"[build-cache] Requires cache save failed: {e}")
+        echo(f"Requires cache save failed: {e}")
 
     return result
 
@@ -392,7 +529,7 @@ def prepare_metadata_for_build_wheel(
     # Check session state
     if "wheel_metadata" in _session_state:
         cached_info = _session_state["wheel_metadata"]
-        echo("[build-cache] Reusing metadata from session")
+        echo("Reusing metadata from session")
         src = Path(cached_info["path"])
         dist_info_name = cached_info["name"]
         dst = Path(metadata_directory) / dist_info_name
@@ -407,7 +544,7 @@ def prepare_metadata_for_build_wheel(
     if cache_dir.exists() and info_file.exists():
         try:
             dist_info_name = info_file.read_text().strip()
-            echo("[build-cache] Using cached metadata")
+            echo("Using cached metadata")
             dst = Path(metadata_directory) / dist_info_name
             _fast_copy_tree(cache_dir / dist_info_name, dst)
             _session_state["wheel_metadata"] = {
@@ -415,13 +552,13 @@ def prepare_metadata_for_build_wheel(
                 "name": dist_info_name,
             }
         except NoExceptionError as e:
-            echo(f"[build-cache] Metadata cache load failed: {e}")
+            echo(f"Metadata cache load failed: {e}")
             shutil.rmtree(cache_dir, ignore_errors=True)
         else:
             return dist_info_name
 
     # Generate
-    echo("[build-cache] Generating metadata...")
+    echo("Generating metadata...")
     original = _inject_extensions()
     try:
         result = setuptools_build_meta.prepare_metadata_for_build_wheel(
@@ -436,9 +573,9 @@ def prepare_metadata_for_build_wheel(
         cache_dir.mkdir(exist_ok=True)
         info_file.write_text(result)
         _fast_copy_tree(src, cache_dir / result)
-        echo("[build-cache] Cached metadata")
+        echo("Cached metadata")
     except NoExceptionError as e:
-        echo(f"[build-cache] Metadata cache save failed: {e}")
+        echo(f"Metadata cache save failed: {e}")
 
     _session_state["wheel_metadata"] = {"path": str(src), "name": result}
     return result
@@ -451,7 +588,7 @@ def prepare_metadata_for_build_editable(
     # Check session state
     if "editable_metadata" in _session_state:
         cached_info = _session_state["editable_metadata"]
-        echo("[build-cache] Reusing metadata from session")
+        echo("Reusing metadata from session")
         src = Path(cached_info["path"])
         dist_info_name = cached_info["name"]
         dst = Path(metadata_directory) / dist_info_name
@@ -466,7 +603,7 @@ def prepare_metadata_for_build_editable(
     if cache_dir.exists() and info_file.exists():
         try:
             dist_info_name = info_file.read_text().strip()
-            echo("[build-cache] Using cached metadata")
+            echo("Using cached metadata")
             dst = Path(metadata_directory) / dist_info_name
             _fast_copy_tree(cache_dir / dist_info_name, dst)
             _session_state["editable_metadata"] = {
@@ -474,13 +611,13 @@ def prepare_metadata_for_build_editable(
                 "name": dist_info_name,
             }
         except NoExceptionError as e:
-            echo(f"[build-cache] Metadata cache load failed: {e}")
+            echo(f"Metadata cache load failed: {e}")
             shutil.rmtree(cache_dir, ignore_errors=True)
         else:
             return dist_info_name
 
     # Generate
-    echo("[build-cache] Generating metadata...")
+    echo("Generating metadata...")
     original = _inject_extensions()
     try:
         result = setuptools_build_meta.prepare_metadata_for_build_editable(
@@ -495,9 +632,9 @@ def prepare_metadata_for_build_editable(
         cache_dir.mkdir(exist_ok=True)
         info_file.write_text(result)
         _fast_copy_tree(src, cache_dir / result)
-        echo("[build-cache] Cached metadata")
+        echo("Cached metadata")
     except NoExceptionError as e:
-        echo(f"[build-cache] Metadata cache save failed: {e}")
+        echo(f"Metadata cache save failed: {e}")
 
     _session_state["editable_metadata"] = {"path": str(src), "name": result}
     return result
@@ -510,7 +647,7 @@ def build_wheel(
 ) -> str:
     """Build a wheel."""
     if os.environ.get("DUPER_DISABLE_WHEEL_CACHE") == "1":
-        echo("[build-cache] Wheel caching disabled")
+        echo("Wheel caching disabled")
         original = _inject_extensions()
         try:
             return setuptools_build_meta.build_wheel(
@@ -528,17 +665,17 @@ def build_wheel(
     if cache_file.exists() and name_file.exists():
         try:
             wheel_name = name_file.read_text().strip()
-            echo("[build-cache] Using cached wheel (instant)")
+            echo("Using cached wheel (instant)")
             dst = Path(wheel_directory) / wheel_name
             _fast_copy(cache_file, dst)
         except NoExceptionError as e:
-            echo(f"[build-cache] Cache load failed: {e}")
+            echo(f"Cache load failed: {e}")
             shutil.rmtree(cache_dir, ignore_errors=True)
         else:
             return wheel_name
 
     # Build
-    echo("[build-cache] Building wheel...")
+    echo("Building wheel...")
     original = _inject_extensions()
     try:
         result = setuptools_build_meta.build_wheel(
@@ -553,9 +690,9 @@ def build_wheel(
         cache_dir.mkdir(exist_ok=True)
         name_file.write_text(result)
         _fast_copy(src, cache_file)
-        echo("[build-cache] Cached wheel")
+        echo("Cached wheel")
     except NoExceptionError as e:
-        echo(f"[build-cache] Cache save failed: {e}")
+        echo(f"Cache save failed: {e}")
 
     return result
 
@@ -567,7 +704,7 @@ def build_editable(
 ) -> str:
     """Build an editable wheel."""
     if os.environ.get("DUPER_DISABLE_WHEEL_CACHE") == "1":
-        echo("[build-cache] Wheel caching disabled")
+        echo("Wheel caching disabled")
         original = _inject_extensions()
         try:
             return setuptools_build_meta.build_editable(
@@ -585,17 +722,17 @@ def build_editable(
     if cache_file.exists() and name_file.exists():
         try:
             wheel_name = name_file.read_text().strip()
-            echo("[build-cache] Using cached editable wheel (instant)")
+            echo("Using cached editable wheel (instant)")
             dst = Path(wheel_directory) / wheel_name
             _fast_copy(cache_file, dst)
         except NoExceptionError as e:
-            echo(f"[build-cache] Cache load failed: {e}")
+            echo(f"Cache load failed: {e}")
             shutil.rmtree(cache_dir, ignore_errors=True)
         else:
             return wheel_name
 
     # Build
-    echo("[build-cache] Building editable wheel...")
+    echo("Building editable wheel...")
     original = _inject_extensions()
     try:
         result = setuptools_build_meta.build_editable(
@@ -610,9 +747,9 @@ def build_editable(
         cache_dir.mkdir(exist_ok=True)
         name_file.write_text(result)
         _fast_copy(src, cache_file)
-        echo("[build-cache] Cached editable wheel")
+        echo("Cached editable wheel")
     except NoExceptionError as e:
-        echo(f"[build-cache] Cache save failed: {e}")
+        echo(f"Cache save failed: {e}")
 
     return result
 
