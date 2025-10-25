@@ -78,61 +78,91 @@ VECTOR_CALL_PATCH_AVAILABLE = sys.version_info >= (3, 12)
 
 
 def _parse_version_tuple(version: str) -> tuple[int | str, ...]:
-    """Parse PEP 440 version into tuple.
+    """
+    Parse (a subset of) PEP 440 into a tuple.
 
     Examples:
-        "0.1.0" -> (0, 1, 0)
-        "0.1.1.dev5+g9a2b3c4" -> (0, 1, 1, "dev", 5)
-        "1.2.3rc1" -> (1, 2, 3, "rc", 1)
-        "1.2.3a1" -> (1, 2, 3, "a", 1)
+      "0.1.0"          -> (0, 1, 0)
+      "0.1.1.dev5"     -> (0, 1, 1, "dev", 5)
+      "1.2.3rc1"       -> (1, 2, 3, "rc", 1)
+      "1.2.3a1"        -> (1, 2, 3, "a", 1)
+      "0.1.dev47"      -> (0, 1, 0, "dev", 47)
+      "0.1.dev"        -> (0, 1, 0, "dev")
     """
     import re
 
-    # Strip local version (+...)
-    base = version.split("+")[0]
+    base = version.split("+", 1)[0].strip()
 
-    # Match: X.Y.Z[.preNUM] or X.Y.ZpreNUM
-    # e.g., "0.1.1.dev5" or "1.2.3rc1"
-    pattern = r"(\d+)\.(\d+)\.(\d+)(?:[\.]?(dev|a|alpha|b|beta|rc)(\d+)?)?"
-    match = re.match(pattern, base)
+    pattern = re.compile(
+        r"""
+        ^
+        (?P<major>\d+)\.
+        (?P<minor>\d+)
+        (?:\.(?P<patch>\d+))?
+        (?:[\.]?(?P<pre>a|alpha|b|beta|rc)(?P<pre_n>\d+)?)?
+        (?:[\.]?(?P<dev>dev)(?P<dev_n>\d+)?)?
+        $
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
 
-    if not match:
-        # Fallback: just return version as single-element tuple
-        return (version,)
+    m = pattern.match(base)
+    if not m:
+        raise ValueError(f"Unable to parse {version=}")
 
-    major, minor, patch, pre_type, pre_num = match.groups()
-    result: list[int | str] = [int(major), int(minor), int(patch)]
+    g = {k: (v.lower() if isinstance(v, str) else v) for k, v in m.groupdict().items()}
 
-    if pre_type:
-        result.append(pre_type)
-        if pre_num:
-            result.append(int(pre_num))
+    major = int(g["major"])
+    minor = int(g["minor"])
+    patch = int(g["patch"]) if g["patch"] is not None else 0
+
+    result: list[int | str] = [major, minor, patch]
+
+    pre = g["pre"]
+    if pre:
+        if pre == "alpha":
+            pre = "a"
+        elif pre == "beta":
+            pre = "b"
+        result.append(pre)
+        if g["pre_n"] is not None:
+            result.append(int(g["pre_n"]))
+
+    if g["dev"]:
+        result.append("dev")
+        if g["dev_n"] is not None:
+            result.append(int(g["dev_n"]))
 
     return tuple(result)
 
 
 def _get_version_info() -> dict[str, Any]:
     """Get version and parsed tuple from setuptools-scm."""
+    fallback = {
+        "version": "0.0.0+unknown",
+        "commit_id": None,
+        "version_tuple": (0, 0, 0, "unknown"),
+    }
     try:
         from setuptools_scm import get_version
 
         version = get_version(
             root=str(PROJECT_ROOT), version_scheme="guess-next-dev", local_scheme="no-local-version"
         )
+        print(version, type(version))
     except Exception as e:
         echo(f"Version detection failed: {e}")
-        return {
-            "version": "0.0.0+unknown",
-            "commit_id": None,
-            "version_tuple": (0, 0, 0, "unknown"),
-        }
+        return fallback
 
     # Commit ID is embedded in version string by setuptools-scm (the gXXXXXXX part)
     # No need to extract separately - leave as None
     commit_id = None
 
-    # Parse version tuple
-    version_tuple = _parse_version_tuple(version)
+    try:
+        version_tuple = _parse_version_tuple(version)
+    except ValueError as e:
+        error(e)
+        return fallback
 
     echo(f"Version: {version}")
     echo(f"Tuple: {version_tuple}")
