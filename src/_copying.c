@@ -141,6 +141,9 @@ typedef struct {
   PyObject*
       create_precompiler_reconstructor; /* duper.snapshots.create_precompiler_reconstructor */
 
+  /* recursion depth guard (thread-local counter for safe deepcopy) */
+  Py_tss_t recdepth_tss;
+
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
   int dict_watcher_id;
   Py_tss_t watch_tss;
@@ -257,6 +260,66 @@ static inline int keepalive_append_original(PyObject** memo_ptr,
                                             PyObject** keepalive_list_ptr,
                                             PyObject* original_obj) {
   return memo_keepalive_append(memo_ptr, keepalive_list_ptr, original_obj);
+}
+
+/* ------------------------- Recursion depth guard (thread-local) ------------- */
+/* Ultra-cheap TLS-based guard (C11), with TSS fallback for older compilers.
+   We sample Py_GetRecursionLimit() every 64 levels and clamp to 10_000.
+   Cost per guarded frame: one TLS increment + one cheap bit test. */
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+static _Thread_local unsigned int _copyc_tls_depth = 0;
+static _Thread_local int          _copyc_tls_limit = 0;
+#endif
+
+static inline int _copyc_recdepth_enter(void) {
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+  unsigned int d = ++_copyc_tls_depth;
+
+  /* Refresh cached limit every 64 levels or on first use */
+  if (UNLIKELY(((d & 63u) == 0u) | (_copyc_tls_limit == 0))) {
+    int lim = Py_GetRecursionLimit();
+    if (lim > 10000) lim = 10000;  /* conservative cap */
+    _copyc_tls_limit = lim;
+  }
+
+  if (UNLIKELY((int)d > _copyc_tls_limit)) {
+    _copyc_tls_depth--;
+    PyErr_SetString(PyExc_RecursionError,
+                    "maximum recursion depth exceeded in copyc.deepcopy");
+    return -1;
+  }
+  return 0;
+#else
+  /* Fallback: PyThread_tss-based guard */
+  uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
+  uintptr_t next = depth_u + 1;
+
+  int limit = Py_GetRecursionLimit();
+  if (limit > 10000) { limit = 10000; }
+
+  if (UNLIKELY((int)next > limit)) {
+    PyErr_SetString(PyExc_RecursionError,
+                    "maximum recursion depth exceeded in copyc.deepcopy");
+    return -1;
+  }
+
+  (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)next);
+  return 0;
+#endif
+}
+
+static inline void _copyc_recdepth_leave(void) {
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+  if (_copyc_tls_depth > 0) {
+    _copyc_tls_depth--;
+  }
+#else
+  uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
+  if (depth_u > 0) {
+    (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)(depth_u - 1));
+  }
+#endif
 }
 
 /* ------------------------- Dict watcher (3.12+) ----------------------------
@@ -1000,9 +1063,6 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     Py_INCREF(memo_hit);
     return memo_hit;
   }
-  if (PyErr_Occurred()) {
-    return NULL;
-  }
 
   if (PyList_CheckExact(source_obj)) {
     PyObject* result =
@@ -1436,8 +1496,22 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
 static PyObject* deepcopy_recursive(PyObject* source_obj,
                                     PyObject** memo_ptr,
                                     PyObject** keepalive_list_ptr) {
-  return deepcopy_recursive_impl(source_obj, memo_ptr, keepalive_list_ptr,
-                                 /*skip_atomic_check=*/0);
+  /* Fast path: atomics never recurse; avoid any depth accounting */
+  if (LIKELY(is_atomic_immutable(source_obj))) {
+    return Py_NewRef(source_obj);
+  }
+
+  /* Enter our cheap thread-local recursion guard only for non-atomics */
+  if (UNLIKELY(_copyc_recdepth_enter() < 0)) {
+    return NULL;
+  }
+
+  PyObject* result =
+      deepcopy_recursive_impl(source_obj, memo_ptr, keepalive_list_ptr,
+                              /*skip_atomic_check=*/1);
+
+  _copyc_recdepth_leave();
+  return result;
 }
 
 /* -------------------------------- Public API --------------------------------
@@ -1625,8 +1699,8 @@ have_args:
     Py_INCREF(memo_local);
   }
 
-  PyObject* result = deepcopy_recursive_impl(
-      source_obj, &memo_local, &keepalive_local, /*skip_atomic_check=*/1);
+  PyObject* result = deepcopy_recursive(
+      source_obj, &memo_local, &keepalive_local);
   Py_XDECREF(keepalive_local);
   Py_XDECREF(memo_local);
   return result;
@@ -1767,7 +1841,7 @@ PyObject* py_replicate(PyObject* self,
       PyObject* memo_local = NULL;
       PyObject* keepalive_local = NULL;
 
-      PyObject* copy_i = deepcopy_recursive_impl(obj, &memo_local, &keepalive_local, /*skip_atomic_check=*/1);
+      PyObject* copy_i = deepcopy_recursive(obj, &memo_local, &keepalive_local);
 
       Py_XDECREF(keepalive_local);
       Py_XDECREF(memo_local);
@@ -2236,6 +2310,9 @@ static void cleanup_on_init_failure(void) {
     PyThread_tss_delete(&module_state.watch_tss);
   }
 #endif
+  if (PyThread_tss_is_created(&module_state.recdepth_tss)) {
+    PyThread_tss_delete(&module_state.recdepth_tss);
+  }
 }
 
 #define LOAD_TYPE(source_module, type_name, target_field)         \
@@ -2387,6 +2464,20 @@ int _copium_copying_init(PyObject* module) {
     return -1;
   }
 #endif
+
+  /* Create thread-local recursion depth guard */
+  if (PyThread_tss_create(&module_state.recdepth_tss) != 0) {
+    PyErr_SetString(PyExc_ImportError, "copyc: failed to create recursion TSS");
+    Py_XDECREF(mod_types);
+    Py_XDECREF(mod_builtins);
+    Py_XDECREF(mod_weakref);
+    Py_XDECREF(mod_copyreg);
+    Py_XDECREF(mod_re);
+    Py_XDECREF(mod_decimal);
+    Py_XDECREF(mod_fractions);
+    cleanup_on_init_failure();
+    return -1;
+  }
 
   Py_DECREF(mod_types);
   Py_DECREF(mod_builtins);
