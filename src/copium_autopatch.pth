@@ -1,0 +1,1 @@
+import os, sys; os.environ.get('COPIUM_PATCH_DEEPCOPY') == '1' and __import__('copium.patch').patch.enable()
