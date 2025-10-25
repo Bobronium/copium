@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "setuptools-scm", "wheel"]
-build-backend = "tools.build.backend"
+build-backend = "tools.build_system.backend"
 backend-path = ["."]
 
 [tool.cibuildwheel.macos]
