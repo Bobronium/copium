@@ -1,9 +1,11 @@
 import copy as stdlib_copy
+import sys
 from typing import Any
 
 import pytest
 from indifference import assert_equivalent_transformations
 
+import copium
 from tests.conftest import CASES
 
 
@@ -108,3 +110,30 @@ def test_duper_deepcopy_parity_threaded_mutating(copy) -> None:
         assert not not_done
         correct_runs = sum(1 for f in done if f.result())
         assert correct_runs == total_runs
+
+
+def test_recursion_error():
+    def make_nested(depth):
+        result = {}
+        for _ in range(depth):
+            result = {"child": result}
+        return result
+
+    recursion_limit = sys.getrecursionlimit()
+
+    at_interpreter_limit = make_nested(256)
+
+    try:
+        sys.setrecursionlimit(256)
+        with pytest.raises(RecursionError):
+            stdlib_copy.deepcopy(at_interpreter_limit)
+
+        assert copium.deepcopy(at_interpreter_limit) == at_interpreter_limit, (
+            "Unexpectedly affected by interpreter recursion limit"
+        )
+    finally:
+        sys.setrecursionlimit(recursion_limit)
+
+    value = make_nested(99999)
+    with pytest.raises(RecursionError):
+        copium.deepcopy(value)  # without safeguards this can SIGSEGV
