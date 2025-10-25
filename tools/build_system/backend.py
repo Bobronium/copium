@@ -448,6 +448,11 @@ def _wheel_fingerprint(build_type: str) -> str:
     if pyproject.exists():
         sources_hash.update(pyproject.read_bytes())
 
+    # 4) Hash .pth file if present
+    pth_file = PROJECT_ROOT / "src" / "copium_autopatch.pth"
+    if pth_file.exists():
+        sources_hash.update(pth_file.read_bytes())
+
     fp = {
         "type": build_type,
         "sources": sources_hash.hexdigest(),
