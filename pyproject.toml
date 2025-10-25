@@ -83,10 +83,7 @@ benchmark = [
     "ipython>=8.37.0",
     "datamodelzoo",
 ]
-exp = [
-    "vl-convert-python>=1.8.0",
 
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
