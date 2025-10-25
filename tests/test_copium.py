@@ -128,11 +128,11 @@ def test_recursion_error():
         with pytest.raises(RecursionError):
             stdlib_copy.deepcopy(at_interpreter_limit)
 
-        assert copium.deepcopy(at_interpreter_limit) == at_interpreter_limit, (
-            "Unexpectedly affected by interpreter recursion limit"
-        )
+        copied = copium.deepcopy(at_interpreter_limit)
     finally:
         sys.setrecursionlimit(recursion_limit)
+
+    assert copied == at_interpreter_limit, "Unexpectedly affected by interpreter recursion limit"
 
     value = make_nested(99999)
     with pytest.raises(RecursionError):
