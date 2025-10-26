@@ -171,3 +171,66 @@ def test_graceful_recursion_error_with_increased_limit():
     value = make_nested(too_large)
     with recursion_limit(too_large), pytest.raises(RecursionError):
         copium.deepcopy(value)  # without safeguards this can SIGSEGV
+
+
+def test_memo_reused():
+    class Observative:
+        observations = set()
+
+        def __deepcopy__(self, memo):
+            self.observations.add(id(memo))
+
+    ref_thieves = []
+    for _i in range(1000):
+        obj = [[], a := Observative(), a, "123", {}]
+        ref_thieves.append({})
+        copied = copium.deepcopy(obj)
+        ref_thieves.append({})
+        assert copied == [[], None, None, "123", {}]
+        assert copied[0] is not obj[0]
+        assert copied[-1] is not obj[-1]
+
+    assert len(Observative.observations) == 1
+
+    for _i in range(1000):
+        obj = [[], a := Observative(), a, "123", {}]
+        ref_thieves.append({})
+        stdlib_copy.deepcopy(obj)
+        ref_thieves.append({})
+
+    # might become flaky at some point, but serves the purpose now
+    assert len(Observative.observations) == 1001
+
+
+def test_memo_reference_stolen():
+    class Nostalgic:
+        memories = {}
+
+        def __deepcopy__(self, memo):
+            self.memories[id(memo)] = memo
+
+    for _i in range(100):
+        obj = [[], a := Nostalgic(), a, "123", {}]
+
+        assert_equivalent_transformations(obj, stdlib_copy.deepcopy(obj), copium.deepcopy(obj))
+
+    assert len(Nostalgic.memories) == 200
+
+
+def test_memo_reference_passthrough():
+    class Chaotic:
+        observations = set()
+
+        def __init__(self, foo):
+            self.foo = foo
+
+        def __deepcopy__(self, memo):
+            if type(memo) is not dict:
+                self.observations.add(id(memo))
+            Chaotic(copium.deepcopy(self.foo, memo))
+
+    for _i in range(100):
+        obj = [[], a := Chaotic({1, 2, 3}), a, "123", {}]
+        assert_equivalent_transformations(obj, stdlib_copy.deepcopy(obj), copium.deepcopy(obj))
+
+    assert len(Chaotic.observations) == 1
