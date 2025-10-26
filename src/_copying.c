@@ -840,7 +840,7 @@ static PyObject* deepcopy_list(PyObject* source_obj,
 
     for (Py_ssize_t i = 0; i < initial_size; ++i) {
         #if PY_VERSION_HEX < PY_VERSION_3_12_HEX
-          Py_INCREF(Py_None)
+          Py_INCREF(Py_None);
         #endif
         PyList_SET_ITEM(copied_list, i, Py_None);
     }
@@ -885,7 +885,7 @@ static PyObject* deepcopy_list(PyObject* source_obj,
         }
         // on 3.12 Py_None is immortal
         #if PY_VERSION_HEX < PY_VERSION_3_12_HEX
-          Py_DECREF(Py_None)
+          Py_DECREF(Py_None);
         #endif
         PyList_SET_ITEM(copied_list, i, copied_item);
     }
