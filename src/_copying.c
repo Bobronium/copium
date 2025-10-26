@@ -221,19 +221,6 @@ static inline int ensure_memo_exists(PyObject** memo_ptr) {
   return 0;
 }
 
-static inline __attribute__((unused)) PyObject* memo_lookup(PyObject** memo_ptr, void* key) {
-  PyObject* memo = *memo_ptr;
-  if (memo == NULL)
-    return NULL;
-  return memo_lookup_obj(memo, key);
-}
-
-static inline __attribute__((unused)) int memo_store(PyObject** memo_ptr, void* key, PyObject* value) {
-  if (ensure_memo_exists(memo_ptr) < 0)
-    return -1;
-  return memo_store_obj(*memo_ptr, key, value);
-}
-
 /* Hash-aware variants: use C memo fast path if available */
 static inline PyObject* memo_lookup_h(PyObject** memo_ptr, void* key, Py_ssize_t khash) {
   PyObject* memo = *memo_ptr;
