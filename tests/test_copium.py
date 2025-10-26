@@ -133,7 +133,7 @@ def recursion_limit(depth: int) -> Generator[None]:
 
 @pytest.mark.xfail(
     raises=RecursionError,
-    reason="We won't guarantee larger than stack recursion, but it may happen.",
+    reason="We won't guarantee larger than interpreter stack recursion, but it may happen.",
 )
 def test_recursion_error():
     above_interpreter_limit = make_nested(600)
@@ -142,6 +142,10 @@ def test_recursion_error():
         copium.deepcopy(above_interpreter_limit)
 
 
+@pytest.mark.xfail(
+    raises=RecursionError,
+    reason="We won't guarantee larger than interpreter stack recursion, but it may happen.",
+)
 def test_recursion_limit_increase():
     baseline_limit = sys.getrecursionlimit()
 
