@@ -47,20 +47,38 @@ jobs:
             echo "RUN_ID=${{ inputs.run-id }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Download wheels
-        uses: actions/download-artifact@v4
+      - name: Prepare directories
+        run: |
+          rm -rf artifacts dist
+          mkdir -p artifacts dist
+
+      - name: Download Wheels
+        uses: dawidd6/action-download-artifact@v3
         with:
-          run-id: ${{ steps.resolve.outputs.RUN_ID }}
-          pattern: Wheels-*
-          merge-multiple: true
-          path: dist
+          run_id: ${{ steps.resolve.outputs.RUN_ID }}
+          name: "^Wheels-"
+          name_is_regexp: true
+          path: artifacts
+          if_no_artifact_found: fail
 
       - name: Download sdist
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v3
         with:
-          run-id: ${{ steps.resolve.outputs.RUN_ID }}
+          run_id: ${{ steps.resolve.outputs.RUN_ID }}
           name: sdist
-          path: dist
+          path: artifacts
+          if_no_artifact_found: fail
+
+      - name: Flatten artifacts into ./dist
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          # Copy wheels and sdists from any artifact subfolder into ./dist
+          for f in artifacts/**/*.whl artifacts/**/*.tar.gz; do
+            cp -v "$f" dist/
+          done
+          echo "Contents of dist:"
+          ls -l dist
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
