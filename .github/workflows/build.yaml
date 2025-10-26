@@ -18,11 +18,11 @@ jobs:
           # Linux
           - { os: ubuntu-latest,    platform: linux,   archs: x86_64, arch_label: "x86_64" }
           - { os: ubuntu-24.04-arm, platform: linux,   archs: aarch64, arch_label: "ARM64" }
-          - { os: ubuntu-latest, platform: linux, archs: ppc64le, arch_label: "ppc64le" }
-          - { os: ubuntu-latest, platform: linux, archs: s390x,   arch_label: "s390x" }
+          # - { os: ubuntu-latest, platform: linux, archs: ppc64le, arch_label: "ppc64le" }
+          # - { os: ubuntu-latest, platform: linux, archs: s390x,   arch_label: "s390x" }
           # Windows
-          - { os: windows-latest,   platform: windows, archs: AMD64,  arch_label: "x64" }
-          - { os: windows-11-arm,   platform: windows, archs: ARM64,  arch_label: "ARM64" }
+          # - { os: windows-latest,   platform: windows, archs: AMD64,  arch_label: "x64" }
+          # - { os: windows-11-arm,   platform: windows, archs: ARM64,  arch_label: "ARM64" }
           # macOS
           - { os: macos-15,         platform: macos,   archs: arm64,  arch_label: "Apple Silicon" }
           - { os: macos-15-intel,   platform: macos,   archs: x86_64, arch_label: "Intel" }
