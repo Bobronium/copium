@@ -12,10 +12,25 @@ jobs:
     # Separate native runners so mac gets native arm64 & x86_64 (universal2), Windows gets MSVC, etc.
     strategy:
       fail-fast: false
+      max-parallel: 64
       matrix:
-        os: [ ubuntu-latest, ubuntu-24.04-arm, windows-latest, windows-11-arm, macos-13, macos-14 ]
+        build:
+          # Linux
+          - { os: ubuntu-latest,    platform: linux,   archs: x86_64, arch_label: "x86_64" }
+          - { os: ubuntu-24.04-arm, platform: linux,   archs: aarch64, arch_label: "ARM64" }
+          - { os: ubuntu-latest, platform: linux, archs: ppc64le, arch_label: "ppc64le" }
+          - { os: ubuntu-latest, platform: linux, archs: s390x,   arch_label: "s390x" }
+          # Windows
+          - { os: windows-latest,   platform: windows, archs: AMD64,  arch_label: "x64" }
+          - { os: windows-11-arm,   platform: windows, archs: ARM64,  arch_label: "ARM64" }
+          # macOS
+          - { os: macos-15,         platform: macos,   archs: arm64,  arch_label: "Apple Silicon" }
+          - { os: macos-15-intel,   platform: macos,   archs: x86_64, arch_label: "Intel" }
+        python: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.build.os }}
+
+    name: "Python ${{ matrix.python }} | ${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }} | ${{ matrix.build.arch_label }}"
 
     steps:
       - uses: actions/checkout@v4
@@ -32,12 +47,13 @@ jobs:
           enable-cache: true
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.1.3
+        uses: pypa/cibuildwheel@v3.2.1
         env:
+          CIBW_BUILD: "${{ format('cp{0}-*', replace(matrix.python, '.', '')) }}"
+          CIBW_ARCHS: "${{ matrix.build.archs }}"
           CIBW_BUILD_VERBOSITY: 1
-          CIBW_ARCHS_LINUX: ${{ runner.arch == 'X64' && 'auto ppc64le s390x' || 'auto' }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
+          name: "Wheels-${{ matrix.python }}-${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }}-${{ matrix.build.arch_label }}"
           path: ./wheelhouse/*.whl
