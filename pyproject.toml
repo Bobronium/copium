@@ -75,6 +75,8 @@ test = [
     "indifference>=0.1.0",
     "typing-extensions; python_version < '3.12'",
     "datamodelzoo",
+    "pytest-codspeed>=4.2.0",
+    "pytest-test-groups>=1.2.1",
 ]
 
 docs = [
