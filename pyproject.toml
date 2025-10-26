@@ -69,6 +69,7 @@ typecheck = [
     "mypy>=1.10",
     "pyright>=1.1.400",
     "zuban>=0.2.0",
+    "pytest",
 ]
 test = [
     "pytest>=8",
