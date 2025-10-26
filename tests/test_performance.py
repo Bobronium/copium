@@ -12,7 +12,7 @@ random.seed(1)
 COMBINED_CASES = [
     Case(
         "all",
-        factory=lambda: random.shuffle([case.obj for case in BASE_CASES] * 1000),
+        factory=lambda: (c := [case.obj for case in BASE_CASES] * 1000, random.shuffle(c), c)[-1],
     ),
     Case(
         "cpython:91610",
