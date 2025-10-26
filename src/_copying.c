@@ -537,14 +537,6 @@ static inline int dict_iterate_with_hash(PyObject* dict_obj,
   do {                                                             \
     if ((check_condition)) {                                       \
       /* Pin-accelerated empty branch: consult _pinning.c first */ \
-      PinObject* __pin = _duper_lookup_pin_for_object(source_obj); \
-      if (__pin) {                                                 \
-        PyObject* __res = PyObject_CallNoArgs(__pin->factory);     \
-        if (__res) {                                               \
-          __pin->hits += 1;                                        \
-        }                                                          \
-        return __res;                                              \
-      }                                                            \
       return (make_empty_expr);                                    \
     }                                                              \
   } while (0)
@@ -1207,17 +1199,6 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
   if (!skip_atomic_check) {
     if (is_atomic_immutable(source_obj))
       return Py_NewRef(source_obj);
-  }
-
-  /* Consult pins via integration hook */
-  {
-    PinObject* pin = _duper_lookup_pin_for_object(source_obj);
-    if (pin) {
-      PyObject* result = PyObject_CallNoArgs(pin->factory);
-      if (result)
-        pin->hits += 1;
-      return result;
-    }
   }
 
   void* object_id = (void*)source_obj;
