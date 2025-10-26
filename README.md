@@ -16,7 +16,7 @@ An extremely fast Python copy/deepcopy implementation, written in C.
 </div>
 
 <div align="center">
-  <i>Getting a deep copy of <a href="https://github.com/python-jsonschema/jsonschema/blob/0798cd7a59caea669e2de2ecac9c6e2dfcb57f6d/jsonschema/validators.py#L812">jsonschema.Draft202012Validator.META_SCHEMA</a>.</i>
+  <i><code>deepcopy_memo</code> suite from <a href="https://github.com/python/pyperformance/blob/643526f166869c6006009d316be38a35a3cffb2c/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py#L88">python/pyperformance</a></i>
 </div>
 
 ## Highlights
