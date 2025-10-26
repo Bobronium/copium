@@ -1,4 +1,4 @@
-name: Wheels
+name: Build
 
 on:
   push:
@@ -35,7 +35,7 @@ jobs:
 
     runs-on: ${{ matrix.build.os }}
 
-    name: "Python ${{ matrix.python }} | ${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }} | ${{ matrix.build.arch_label }}"
+    name: "Python ${{ matrix.python.display }} / ${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }} / ${{ matrix.build.arch_label }}"
 
     steps:
       - uses: actions/checkout@v4
@@ -60,5 +60,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: "Wheels-${{ matrix.python }}-${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }}-${{ matrix.build.arch_label }}"
+          name: "Wheels-${{ matrix.python.display }}-${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }}-${{ matrix.build.arch_label }}"
           path: ./wheelhouse/*.whl
