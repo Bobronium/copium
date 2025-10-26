@@ -104,6 +104,8 @@ extern int       memo_store_obj_h(PyObject* memo, void* key, PyObject* value, Py
 
 /* Exported pointer hasher (same as C memo table) */
 extern Py_ssize_t memo_hash_pointer(void* key);
+/* Clear memo table in-place without freeing capacity (for TLS reuse) */
+extern void memo_table_clear(MemoTable* table);
 
 /* Keepalive unification helpers (new) */
 extern int memo_keepalive_ensure(PyObject** memo_ptr, PyObject** keep_proxy_ptr);
@@ -1888,14 +1890,11 @@ have_args:
       return NULL;
     }
     MemoObject* mo = (MemoObject*)memo_local;
+    /* Reuse existing allocation for instant setup */
     if (mo->table) {
-      memo_table_free(mo->table);
-      mo->table = NULL;
+      memo_table_clear(mo->table);
     }
     keepvector_clear(&mo->keep);
-    PyMem_Free(mo->keep.items);
-    mo->keep.items = NULL;
-    mo->keep.capacity = 0;
     using_tls_memo = 1;
   } else {
     if (!PyDict_Check(memo_arg) && Py_TYPE(memo_arg) != &Memo_Type) {

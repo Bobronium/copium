@@ -113,6 +113,21 @@ void memo_table_free(MemoTable* table) {
   free(table);
 }
 
+/* New: reset table contents in-place but keep capacity for reuse (TLS buffer) */
+void memo_table_clear(MemoTable* table) {
+  if (!table) return;
+  for (Py_ssize_t i = 0; i < table->size; i++) {
+    void* key = table->slots[i].key;
+    if (key && key != MEMO_TOMBSTONE) {
+      Py_XDECREF(table->slots[i].value);
+    }
+    table->slots[i].key = NULL;
+    table->slots[i].value = NULL;
+  }
+  table->used = 0;
+  table->filled = 0;
+}
+
 static int memo_table_resize(MemoTable** table_ptr, Py_ssize_t min_capacity_needed) {
   MemoTable* old = *table_ptr;
   Py_ssize_t new_size = 8;
@@ -486,14 +501,12 @@ static PyObject* Memo_iter(MemoObject* self) {
 
 static PyObject* Memo_clear(MemoObject* self, PyObject* noargs) {
   (void)noargs;
+  /* Keep the allocated table capacity for reuse; just clear contents. */
   if (self->table) {
-    memo_table_free(self->table);
-    self->table = NULL;
+    memo_table_clear(self->table);
   }
+  /* Keep the keepalive vector capacity; only DECREF contained objects. */
   keepvector_clear(&self->keep);
-  PyMem_Free(self->keep.items);
-  self->keep.items = NULL;
-  self->keep.capacity = 0;
   Py_RETURN_NONE;
 }
 
