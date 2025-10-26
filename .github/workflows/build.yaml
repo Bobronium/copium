@@ -26,7 +26,12 @@ jobs:
           # macOS
           - { os: macos-15,         platform: macos,   archs: arm64,  arch_label: "Apple Silicon" }
           - { os: macos-15-intel,   platform: macos,   archs: x86_64, arch_label: "Intel" }
-        python: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
+        python:
+          - { display: "3.10", tag: "cp310" }
+          - { display: "3.11", tag: "cp311" }
+          - { display: "3.12", tag: "cp312" }
+          - { display: "3.13", tag: "cp313" }
+          - { display: "3.14", tag: "cp314" }
 
     runs-on: ${{ matrix.build.os }}
 
@@ -49,7 +54,7 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.2.1
         env:
-          CIBW_BUILD: "${{ format('cp{0}-*', replace(matrix.python, '.', '')) }}"
+          CIBW_BUILD: "${{ matrix.python.tag }}-*"
           CIBW_ARCHS: "${{ matrix.build.archs }}"
           CIBW_BUILD_VERBOSITY: 1
 
