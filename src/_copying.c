@@ -47,6 +47,8 @@
 #include "pycore_dict.h"
 #endif
 
+#include "_memo.h"
+
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -155,6 +157,9 @@ typedef struct {
   /* recursion depth guard (thread-local counter for safe deepcopy) */
   Py_tss_t recdepth_tss;
 
+  /* thread-local memo for implicit use */
+  Py_tss_t memo_tss;
+
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
   int dict_watcher_id;
   Py_tss_t watch_tss;
@@ -258,6 +263,32 @@ static inline int keepalive_append_original(PyObject** memo_ptr,
                                             PyObject** keepalive_list_ptr,
                                             PyObject* original_obj) {
   return memo_keepalive_append(memo_ptr, keepalive_list_ptr, original_obj);
+}
+
+
+static inline int memo_is_stolen(PyObject *memo) {
+    // Best effort to check that memo is not owned anywhere.
+    // No safeguards for race conditions, since it's highly unlikely
+    // that somebody would steal the reference in the first place.
+    // if this will cause problems, fallback to PyUnstable_Object_IsUniquelyReferenced
+    return Py_REFCNT(memo) > 1;
+}
+
+
+static PyObject* get_thread_local_memo(void) {
+  void* val = PyThread_tss_get(&module_state.memo_tss);
+  if (val == NULL || memo_is_stolen(val)) {
+    PyObject* memo = Memo_New();
+    if (memo == NULL) {
+      return NULL;
+    }
+    if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
+      Py_DECREF(memo);
+      return NULL;
+    }
+    return memo;
+  }
+  return (PyObject*)val;
 }
 
 /* ------------------------- Recursion depth guard (stack-space cap) ---------- */
@@ -1868,8 +1899,24 @@ have_args:
 
   PyObject* memo_local = NULL;
   PyObject* keepalive_local = NULL;
+  int using_tls_memo = 0;
 
-  if (memo_arg != Py_None) {
+  if (memo_arg == Py_None) {
+    memo_local = get_thread_local_memo();
+    if (memo_local == NULL) {
+      return NULL;
+    }
+    MemoObject* mo = (MemoObject*)memo_local;
+    if (mo->table) {
+      memo_table_free(mo->table);
+      mo->table = NULL;
+    }
+    keepvector_clear(&mo->keep);
+    PyMem_Free(mo->keep.items);
+    mo->keep.items = NULL;
+    mo->keep.capacity = 0;
+    using_tls_memo = 1;
+  } else {
     if (!PyDict_Check(memo_arg) && Py_TYPE(memo_arg) != &Memo_Type) {
       PyErr_Format(PyExc_TypeError,
                    "argument 'memo' must be dict, not %.200s",
@@ -1884,7 +1931,19 @@ have_args:
   PyObject* result =
       deepcopy(source_obj, &memo_local, &keepalive_local);
   Py_XDECREF(keepalive_local);
-  Py_XDECREF(memo_local);
+  if (using_tls_memo) {
+    MemoObject* mo = (MemoObject*)memo_local;
+    if (mo->table) {
+      memo_table_free(mo->table);
+      mo->table = NULL;
+    }
+    keepvector_clear(&mo->keep);
+    PyMem_Free(mo->keep.items);
+    mo->keep.items = NULL;
+    mo->keep.capacity = 0;
+  } else {
+    Py_XDECREF(memo_local);
+  }
   return result;
 }
 
@@ -2497,6 +2556,9 @@ static void cleanup_on_init_failure(void) {
     PyThread_tss_delete(&module_state.watch_tss);
   }
 #endif
+  if (PyThread_tss_is_created(&module_state.memo_tss)) {
+    PyThread_tss_delete(&module_state.memo_tss);
+  }
   if (PyThread_tss_is_created(&module_state.recdepth_tss)) {
     PyThread_tss_delete(&module_state.recdepth_tss);
   }
@@ -2690,6 +2752,20 @@ int _copium_copying_init(PyObject* module) {
   /* Create thread-local recursion depth guard */
   if (PyThread_tss_create(&module_state.recdepth_tss) != 0) {
     PyErr_SetString(PyExc_ImportError, "copium: failed to create recursion TSS");
+    Py_XDECREF(mod_types);
+    Py_XDECREF(mod_builtins);
+    Py_XDECREF(mod_weakref);
+    Py_XDECREF(mod_copyreg);
+    Py_XDECREF(mod_re);
+    Py_XDECREF(mod_decimal);
+    Py_XDECREF(mod_fractions);
+    cleanup_on_init_failure();
+    return -1;
+  }
+
+  /* Create thread-local memo */
+  if (PyThread_tss_create(&module_state.memo_tss) != 0) {
+    PyErr_SetString(PyExc_ImportError, "copium: failed to create memo TSS");
     Py_XDECREF(mod_types);
     Py_XDECREF(mod_builtins);
     Py_XDECREF(mod_weakref);

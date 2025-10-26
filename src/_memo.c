@@ -17,6 +17,8 @@
 #include <string.h>
 #include "Python.h"
 
+#include "_memo.h"
+
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -27,25 +29,6 @@
 
 /* ------------------------------ Memo table -------------------------------- */
 
-typedef struct {
-  void* key;       /* object address; NULL = empty; (void*)-1 = tombstone */
-  PyObject* value; /* owned reference */
-} MemoEntry;
-
-typedef struct {
-  MemoEntry*  slots;
-  Py_ssize_t  size;    /* power of two */
-  Py_ssize_t  used;    /* non-empty (excludes tombstones) */
-  Py_ssize_t  filled;  /* non-empty + tombstones */
-} MemoTable;
-
-/* ------------------------------ Keep vector -------------------------------- */
-
-typedef struct {
-  PyObject**  items;
-  Py_ssize_t  size;
-  Py_ssize_t  capacity;
-} KeepVector;
 
 /* Forward decl to refer to Memo_Type in helpers */
 typedef struct _MemoObject MemoObject;
@@ -103,7 +86,7 @@ static int keepvector_append(KeepVector* kv, PyObject* obj) {
   return 0;
 }
 
-static void keepvector_clear(KeepVector* kv) {
+void keepvector_clear(KeepVector* kv) {
   for (Py_ssize_t i = 0; i < kv->size; i++) {
     Py_XDECREF(kv->items[i]);
   }
@@ -305,11 +288,6 @@ int memo_table_remove(MemoTable* table, void* key) {
 
 /* ------------------------- Memo type & keep proxy -------------------------- */
 
-struct _MemoObject {
-  PyObject_HEAD
-  MemoTable* table;
-  KeepVector keep; /* internal keepalive vector */
-};
 
 PyTypeObject Memo_Type;
 
@@ -513,6 +491,9 @@ static PyObject* Memo_clear(MemoObject* self, PyObject* noargs) {
     self->table = NULL;
   }
   keepvector_clear(&self->keep);
+  PyMem_Free(self->keep.items);
+  self->keep.items = NULL;
+  self->keep.capacity = 0;
   Py_RETURN_NONE;
 }
 
