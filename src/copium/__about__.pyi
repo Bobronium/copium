@@ -15,9 +15,11 @@ class VersionInfo(NamedTuple):
     patch: int
     prerelease: str | None
     build: int | None
+    build_hash: str
 
 __version__: str
 __version_tuple__: VersionInfo
 __commit_id__: str | None
+__build_hash__: str
 
 __authors__: Final[tuple[Author[Literal["Arseny Boykov (Bobronium)"], Literal["hi@bobronium.me"]]]]

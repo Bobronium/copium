@@ -374,9 +374,20 @@ static struct PyModuleDef experimental_module_def = {
 
 /**
  * Create a VersionInfo namedtuple instance from static version macros
- * Expected format: VersionInfo(major: int, minor: int, patch: int, prerelease: str | None, build: int | None)
+ * Expected format:
+ *   VersionInfo(
+ *       major: int,
+ *       minor: int,
+ *       patch: int,
+ *       prerelease: str | None,
+ *       build: int | None,
+ *       build_hash: str
+ *   )
  */
 static PyObject* _create_version_info(PyObject* version_cls) {
+#ifndef COPIUM_BUILD_HASH
+# error "COPIUM_BUILD_HASH must be defined by the build backend"
+#endif
     PyObject* major = PyLong_FromLong(COPIUM_VERSION_MAJOR);
     if (!major) return NULL;
 
@@ -424,14 +435,28 @@ static PyObject* _create_version_info(PyObject* version_cls) {
     Py_INCREF(Py_None);
 #endif
 
+    /* Required build_hash (string) */
+    PyObject* build_hash = PyUnicode_FromString(COPIUM_BUILD_HASH);
+    if (!build_hash) {
+        Py_DECREF(major);
+        Py_DECREF(minor);
+        Py_DECREF(patch);
+        Py_DECREF(prerelease);
+        Py_DECREF(build);
+        return NULL;
+    }
+
     /* Create VersionInfo instance */
-    PyObject* version_tuple = PyObject_CallFunction(version_cls, "OOOOO", major, minor, patch, prerelease, build);
+    PyObject* version_tuple = PyObject_CallFunction(
+        version_cls, "OOOOOO", major, minor, patch, prerelease, build, build_hash
+    );
 
     Py_DECREF(major);
     Py_DECREF(minor);
     Py_DECREF(patch);
     Py_DECREF(prerelease);
     Py_DECREF(build);
+    Py_DECREF(build_hash);
 
     return version_tuple;
 }
@@ -573,10 +598,11 @@ PyMODINIT_FUNC PyInit_copium(void) {
         return NULL;
     }
 
-    /* Create VersionInfo namedtuple class: VersionInfo('VersionInfo', ['major', 'minor', 'patch', 'prerelease', 'build']) */
-    PyObject* version_info_cls = PyObject_CallFunction(namedtuple, "s[sssss]",
+    /* Create VersionInfo namedtuple class:
+       VersionInfo('VersionInfo', ['major', 'minor', 'patch', 'prerelease', 'build', 'build_hash']) */
+    PyObject* version_info_cls = PyObject_CallFunction(namedtuple, "s[ssssss]",
                                                         "VersionInfo",
-                                                        "major", "minor", "patch", "prerelease", "build");
+                                                        "major", "minor", "patch", "prerelease", "build", "build_hash");
     if (!version_info_cls) {
         Py_DECREF(namedtuple);
         Py_DECREF(about_module);
@@ -630,6 +656,46 @@ PyMODINIT_FUNC PyInit_copium(void) {
         return NULL;
     }
 #endif
+
+    /* Add __build_hash__ (required string) */
+#ifndef COPIUM_BUILD_HASH
+# error "COPIUM_BUILD_HASH must be defined by the build backend"
+#endif
+    if (PyModule_AddStringConstant(about_module, "__build_hash__", COPIUM_BUILD_HASH) < 0) {
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    /* Add __build_hash__ (string or None) */
+#ifdef COPIUM_BUILD_HASH
+    if (PyModule_AddStringConstant(about_module, "__build_hash__", COPIUM_BUILD_HASH) < 0) {
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+#else
+    Py_INCREF(Py_None);
+    if (PyModule_AddObject(about_module, "__build_hash__", Py_None) < 0) {
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
+#endif
+
+    /* Add __build_hash__ (required string) */
+#ifndef COPIUM_BUILD_HASH
+# error "COPIUM_BUILD_HASH must be defined by the build backend"
+#endif
+    if (PyModule_AddStringConstant(about_module, "__build_hash__", COPIUM_BUILD_HASH) < 0) {
+        Py_DECREF(namedtuple);
+        Py_DECREF(about_module);
+        Py_DECREF(module);
+        return NULL;
+    }
 
     /* Create Author namedtuple class: Author('Author', ['name', 'email']) */
     PyObject* author_cls = PyObject_CallFunction(namedtuple, "s[ss]", "Author", "name", "email");

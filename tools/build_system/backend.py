@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Any
 
+from packaging.version import Version
+
 # Import setuptools backend to wrap
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -79,61 +81,23 @@ VECTOR_CALL_PATCH_AVAILABLE = sys.version_info >= (3, 12)
 
 def _parse_version_tuple(version: str) -> tuple[int | str, ...]:
     """
-    Parse (a subset of) PEP 440 into a tuple.
+    Lightweight compatibility shim using packaging.version.Version.
 
-    Examples:
-      "0.1.0"          -> (0, 1, 0)
-      "0.1.1.dev5"     -> (0, 1, 1, "dev", 5)
-      "1.2.3rc1"       -> (1, 2, 3, "rc", 1)
-      "1.2.3a1"        -> (1, 2, 3, "a", 1)
-      "0.1.dev47"      -> (0, 1, 0, "dev", 47)
-      "0.1.dev"        -> (0, 1, 0, "dev")
+    Returns a compact tuple:
+      (major, minor, patch)                   for final releases
+      (major, minor, patch, 'rc'| 'a'|'b', n) for pre-releases
+      (major, minor, patch, 'dev', n)         for dev releases
     """
-    import re
+    v = Version(version)
+    major, minor, patch = ([*list(v.release), 0, 0, 0])[:3]
 
-    base = version.split("+", 1)[0].strip()
+    if v.pre is not None:
+        label, num = v.pre  # label in {'a','b','rc'}
+        return (major, minor, patch, label, int(num))
+    if v.dev is not None:
+        return (major, minor, patch, "dev", int(v.dev))
 
-    pattern = re.compile(
-        r"""
-        ^
-        (?P<major>\d+)\.
-        (?P<minor>\d+)
-        (?:\.(?P<patch>\d+))?
-        (?:[\.]?(?P<pre>a|alpha|b|beta|rc)(?P<pre_n>\d+)?)?
-        (?:[\.]?(?P<dev>dev)(?P<dev_n>\d+)?)?
-        $
-        """,
-        re.IGNORECASE | re.VERBOSE,
-    )
-
-    m = pattern.match(base)
-    if not m:
-        raise ValueError(f"Unable to parse {version=}")
-
-    g = {k: (v.lower() if isinstance(v, str) else v) for k, v in m.groupdict().items()}
-
-    major = int(g["major"])
-    minor = int(g["minor"])
-    patch = int(g["patch"]) if g["patch"] is not None else 0
-
-    result: list[int | str] = [major, minor, patch]
-
-    pre = g["pre"]
-    if pre:
-        if pre == "alpha":
-            pre = "a"
-        elif pre == "beta":
-            pre = "b"
-        result.append(pre)
-        if g["pre_n"] is not None:
-            result.append(int(g["pre_n"]))
-
-    if g["dev"]:
-        result.append("dev")
-        if g["dev_n"] is not None:
-            result.append(int(g["dev_n"]))
-
-    return tuple(result)
+    return (major, minor, patch)
 
 
 def _get_version_info() -> dict[str, Any]:
@@ -149,8 +113,8 @@ def _get_version_info() -> dict[str, Any]:
         version = get_version(
             root=str(PROJECT_ROOT), version_scheme="guess-next-dev", local_scheme="no-local-version"
         )
-        print(version, type(version))
-    except Exception as e:
+        echo("setuptools-scm:", version)
+    except NoExceptionError as e:
         echo(f"Version detection failed: {e}")
         return fallback
 
@@ -280,7 +244,7 @@ def _hash_file(path: Path) -> str:
 
 def _hash_dict(d: dict[str, Any]) -> str:
     """Compute SHA256 hash of a dictionary."""
-    return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8]
 
 
 def _environment_fingerprint() -> dict[str, Any]:
@@ -359,7 +323,10 @@ def _deserialize_ext(d: dict[str, Any]) -> Extension:
 # ============================================================================
 
 
-def _get_c_extensions(version_info: dict[str, Any] | None = None) -> list[Extension]:
+def _get_c_extensions(
+    version_info: dict[str, Any] | None = None,
+    build_hash: str | None = None,
+) -> list[Extension]:
     """Get C extensions with version baked in."""
     from setuptools import Extension
 
@@ -371,6 +338,11 @@ def _get_c_extensions(version_info: dict[str, Any] | None = None) -> list[Extens
 
     # Convert to C macros
     define_macros = _version_info_to_macros(version_info)
+
+    # Thread the build fingerprint into the native extension when available
+    if build_hash is not None:
+        # String-literal for the C preprocessor: "abcd1234..."
+        define_macros.append(("COPIUM_BUILD_HASH", f'"{build_hash}"'))
 
     return [
         Extension(
@@ -393,8 +365,8 @@ def _get_c_extensions(version_info: dict[str, Any] | None = None) -> list[Extens
 # ============================================================================
 
 
-def _inject_extensions() -> Callable[..., Any]:
-    """Monkey-patch setuptools.setup() to inject extensions and version."""
+def _inject_extensions(build_type: str = "wheel") -> Callable[..., Any]:
+    """Monkey-patch setuptools.setup() to inject extensions, version, and build hash."""
     import setuptools
 
     original_setup = setuptools.setup
@@ -402,8 +374,11 @@ def _inject_extensions() -> Callable[..., Any]:
     # Get version info once per build
     version_info = _get_version_info()
 
-    # Get extensions with version baked in
-    extensions = _get_c_extensions(version_info)
+    # Compute build fingerprint to embed as COPIUM_BUILD_HASH
+    build_hash = _wheel_fingerprint(build_type)
+
+    # Get extensions with version + build hash baked in
+    extensions = _get_c_extensions(version_info, build_hash)
 
     def patched_setup(*args: Any, **kwargs: Any) -> Any:
         if extensions:
@@ -440,7 +415,9 @@ def _wheel_fingerprint(build_type: str) -> str:
 
     # 2) Hash C/C++ sources and headers that the extensions actually use
     #    (use the file lists declared by setuptools.Extension)
-    exts = _get_c_extensions()
+    # Do not inject the real build hash while computing the fingerprint itself.
+    # This keeps the fingerprint stable and avoids circular dependency.
+    exts = _get_c_extensions(build_hash=None)
     c_like_exts = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
 
     def _abs(p: str) -> Path:
@@ -621,9 +598,9 @@ def prepare_metadata_for_build_wheel(
 
     # Generate
     echo("Generating metadata...")
-    original = _inject_extensions()
+    original = _inject_extensions(build_type="editable")
     try:
-        result = setuptools_build_meta.prepare_metadata_for_build_wheel(
+        result = setuptools_build_meta.prepare_metadata_for_build_editable(
             metadata_directory, config_settings
         )
     finally:
@@ -738,7 +715,7 @@ def build_wheel(
 
     # Build
     echo("Building wheel...")
-    original = _inject_extensions()
+    original = _inject_extensions(build_type="wheel")
     try:
         result = setuptools_build_meta.build_wheel(
             wheel_directory, config_settings, metadata_directory
@@ -767,7 +744,7 @@ def build_sdist(sdist_directory: str, config_settings: dict[str, Any] | None = N
     section in pyproject.toml during sdist.
     """
     echo("Building sdist...")
-    original = _inject_extensions()
+    original = _inject_extensions(build_type="sdist")
     try:
         return setuptools_build_meta.build_sdist(sdist_directory, config_settings)
     finally:
@@ -810,7 +787,7 @@ def build_editable(
 
     # Build
     echo("Building editable wheel...")
-    original = _inject_extensions()
+    original = _inject_extensions(build_type="editable")
     try:
         result = setuptools_build_meta.build_editable(
             wheel_directory, config_settings, metadata_directory
