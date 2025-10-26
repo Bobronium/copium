@@ -57,12 +57,12 @@ tasks:
 
   format:
     desc: Format
-    cmd: uv run --inexact --extra lint ruff format src tests
+    cmd: uv run --no-project ruff format src tests
 
   lint:
     desc: Lint
     deps: [ format ]
-    cmd: uv run --inexact --extra lint ruff check src tests --fix
+    cmd: uv run --no-project ruff check src tests --fix
 
   clear:
     desc: Clear __pycache__
