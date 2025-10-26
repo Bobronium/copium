@@ -45,7 +45,7 @@ COMBINED_CASES = [
     "case",
     (pytest.param(case, id=case.name) for case in COMBINED_CASES),
 )
-def test_individual_cases(case: Any, copy, benchmark) -> None:
+def test_combined_cases(case: Any, copy, benchmark) -> None:
     benchmark(copy.deepcopy, case.obj)
 
 
