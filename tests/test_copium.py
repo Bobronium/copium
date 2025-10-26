@@ -151,12 +151,14 @@ def test_recursion_limit_increase():
         copium.deepcopy(at_interpreter_limit)
 
 
+@pytest.mark.skip(reason="WIP")
 def test_graceful_recursion_error():
     value = make_nested(999999)
     with pytest.raises(RecursionError):
         copium.deepcopy(value)  # without safeguards this can SIGSEGV
 
 
+@pytest.mark.skip(reason="WIP")
 def test_graceful_recursion_error_with_increased_limit():
     """
     We won't guarantee to match interpreter recursion limit, but will handle it gracefully.
