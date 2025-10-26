@@ -8,5 +8,4 @@ T = TypeVar("T")
 XT = NewType("XT", tuple[int, str, dict[str, str]])  # ty doesn't understand TypeAlias yet.
 X: Final[XT] = XT((1, "2", {"3": "4"}))
 
-
 __all__ = ["XT", "X"]

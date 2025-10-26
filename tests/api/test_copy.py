@@ -6,8 +6,13 @@ from typing import TYPE_CHECKING
 from typing import NamedTuple
 
 import pytest
-from typing_extensions import assert_never
-from typing_extensions import assert_type
+
+try:
+    from typing import assert_never  # type: ignore[attr-defined,unused-ignore]
+    from typing import assert_type  # type: ignore[attr-defined,unused-ignore]
+except ImportError:
+    from typing_extensions import assert_never
+    from typing_extensions import assert_type
 
 import copium
 from tests.api import XT

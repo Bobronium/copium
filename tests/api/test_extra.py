@@ -3,7 +3,11 @@
 # SPDX-License-Identifier: MIT
 
 import pytest
-from typing_extensions import assert_type
+
+try:
+    from typing import assert_type  # type: ignore[attr-defined,unused-ignore]
+except ImportError:
+    from typing_extensions import assert_type
 
 import copium.extra  # type: ignore[reportMissingModuleSource,unused-ignore]
 from tests.api import XT

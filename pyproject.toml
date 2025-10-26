@@ -73,7 +73,7 @@ typecheck = [
 ]
 test = [
     "pytest>=8",
-    "pytest_assert_type>=0.1.3",
+    "pytest-assert-type>=0.1.5",
     "indifference>=0.1.0",
     "typing-extensions; python_version < '3.12'",
     "datamodelzoo",

@@ -4,7 +4,11 @@
 from typing import Literal
 
 import pytest
-from typing_extensions import assert_type
+
+try:
+    from typing import assert_type  # type: ignore[attr-defined,unused-ignore]
+except ImportError:
+    from typing_extensions import assert_type
 
 import copium.__about__  # type: ignore[reportMissingModuleSource,unused-ignore]
 
