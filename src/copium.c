@@ -313,13 +313,24 @@ static PyMethodDef experimental_methods[] = {
 
 /* ===================== Module definitions ================================== */
 
+static int copium_exec(PyObject *module);
+
+static struct PyModuleDef_Slot main_slots[] = {
+#ifdef Py_GIL_DISABLED
+    {Py_mod_gil, Py_MOD_GIL_NOT_USED},
+#endif
+    {Py_mod_exec, copium_exec},
+    {0, NULL}
+};
+
 static struct PyModuleDef main_module_def = {
     PyModuleDef_HEAD_INIT,
     "copium",
     "Fast, full-native deepcopy with reduce protocol and keepalive memo.",
-    -1,
+    0,
     main_methods,
-    NULL, NULL, NULL, NULL
+    main_slots,
+    NULL, NULL, NULL
 };
 
 static struct PyModuleDef extra_module_def = {
@@ -533,69 +544,74 @@ static int _add_submodule(PyObject* parent, const char* name, PyObject* submodul
 /* ===================== Module initialization =============================== */
 
 PyMODINIT_FUNC PyInit_copium(void) {
-    PyObject* module = PyModule_Create(&main_module_def);
-    if (!module) return NULL;
-
-    /* Initialize internal state */
-    if (_copium_copying_init(module) < 0) {
+#if PY_VERSION_HEX >= 0x03050000
+    return PyModuleDef_Init(&main_module_def);
+#else
+    PyObject *module = PyModule_Create(&main_module_def);
+    if (module == NULL) return NULL;
+    if (copium_exec(module) < 0) {
         Py_DECREF(module);
         return NULL;
+    }
+    return module;
+#endif
+}
+
+static int copium_exec(PyObject *module) {
+    /* Initialize internal state */
+    if (_copium_copying_init(module) < 0) {
+        return -1;
     }
 
     /* Create and attach extra submodule */
     PyObject* extra_module = PyModule_Create(&extra_module_def);
     if (_add_submodule(module, "extra", extra_module) < 0) {
-        return NULL;
+        return -1;
     }
 
     /* Create and attach patch submodule */
     PyObject* patch_module = PyModule_Create(&patch_module_def);
     if (_add_submodule(module, "patch", patch_module) < 0) {
-        return NULL;
+        return -1;
     }
 
     /* Add low-level patching API (apply/unapply/applied/get_vectorcall_ptr) to patch module */
     if (_copium_patching_add_api(patch_module) < 0) {
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Conditionally create and attach experimental submodule */
     if (_copium_copying_duper_available()) {
         PyObject* experimental_module = PyModule_Create(&experimental_module_def);
         if (_add_submodule(module, "_experimental", experimental_module) < 0) {
-            return NULL;
+            return -1;
         }
     }
 
     /* Create and attach __about__ submodule with version info */
     PyObject* about_module = PyModule_Create(&about_module_def);
     if (!about_module) {
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Add version string to __about__ */
     if (PyModule_AddStringConstant(about_module, "__version__", COPIUM_VERSION) < 0) {
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Import collections.namedtuple for creating VersionInfo and Author */
     PyObject* collections = PyImport_ImportModule("collections");
     if (!collections) {
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     PyObject* namedtuple = PyObject_GetAttrString(collections, "namedtuple");
     Py_DECREF(collections);
     if (!namedtuple) {
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Create VersionInfo namedtuple class:
@@ -606,8 +622,7 @@ PyMODINIT_FUNC PyInit_copium(void) {
     if (!version_info_cls) {
         Py_DECREF(namedtuple);
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Add VersionInfo class to __about__ module */
@@ -615,8 +630,7 @@ PyMODINIT_FUNC PyInit_copium(void) {
         Py_DECREF(version_info_cls);
         Py_DECREF(namedtuple);
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
     /* PyModule_AddObject steals reference, but we need it for creating instance */
     Py_INCREF(version_info_cls);
@@ -627,16 +641,14 @@ PyMODINIT_FUNC PyInit_copium(void) {
     if (!version_tuple) {
         Py_DECREF(namedtuple);
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     if (PyModule_AddObject(about_module, "__version_tuple__", version_tuple) < 0) {
         Py_DECREF(version_tuple);
         Py_DECREF(namedtuple);
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Add __commit_id__ (string or None) */
@@ -644,16 +656,14 @@ PyMODINIT_FUNC PyInit_copium(void) {
     if (PyModule_AddStringConstant(about_module, "__commit_id__", COPIUM_COMMIT_ID) < 0) {
         Py_DECREF(namedtuple);
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 #else
     Py_INCREF(Py_None);
     if (PyModule_AddObject(about_module, "__commit_id__", Py_None) < 0) {
         Py_DECREF(namedtuple);
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 #endif
 
@@ -664,37 +674,7 @@ PyMODINIT_FUNC PyInit_copium(void) {
     if (PyModule_AddStringConstant(about_module, "__build_hash__", COPIUM_BUILD_HASH) < 0) {
         Py_DECREF(namedtuple);
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
-    }
-
-    /* Add __build_hash__ (string or None) */
-#ifdef COPIUM_BUILD_HASH
-    if (PyModule_AddStringConstant(about_module, "__build_hash__", COPIUM_BUILD_HASH) < 0) {
-        Py_DECREF(namedtuple);
-        Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
-    }
-#else
-    Py_INCREF(Py_None);
-    if (PyModule_AddObject(about_module, "__build_hash__", Py_None) < 0) {
-        Py_DECREF(namedtuple);
-        Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
-    }
-#endif
-
-    /* Add __build_hash__ (required string) */
-#ifndef COPIUM_BUILD_HASH
-# error "COPIUM_BUILD_HASH must be defined by the build backend"
-#endif
-    if (PyModule_AddStringConstant(about_module, "__build_hash__", COPIUM_BUILD_HASH) < 0) {
-        Py_DECREF(namedtuple);
-        Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Create Author namedtuple class: Author('Author', ['name', 'email']) */
@@ -702,16 +682,14 @@ PyMODINIT_FUNC PyInit_copium(void) {
     Py_DECREF(namedtuple);
     if (!author_cls) {
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Add Author class to __about__ module */
     if (PyModule_AddObject(about_module, "Author", author_cls) < 0) {
         Py_DECREF(author_cls);
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
     /* PyModule_AddObject steals reference, but we need it for creating instance */
     Py_INCREF(author_cls);
@@ -723,8 +701,7 @@ PyMODINIT_FUNC PyInit_copium(void) {
     Py_DECREF(author_cls);
     if (!author_instance) {
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Create tuple containing the author */
@@ -732,22 +709,20 @@ PyMODINIT_FUNC PyInit_copium(void) {
     Py_DECREF(author_instance);
     if (!authors_tuple) {
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Add __authors__ to __about__ module */
     if (PyModule_AddObject(about_module, "__authors__", authors_tuple) < 0) {
         Py_DECREF(authors_tuple);
         Py_DECREF(about_module);
-        Py_DECREF(module);
-        return NULL;
+        return -1;
     }
 
     /* Attach __about__ to parent module */
     if (_add_submodule(module, "__about__", about_module) < 0) {
-        return NULL;
+        return -1;
     }
 
-    return module;
+    return 0;
 }
