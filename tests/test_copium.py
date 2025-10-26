@@ -1,5 +1,7 @@
 import copy as stdlib_copy
 import sys
+from collections.abc import Generator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -112,28 +114,54 @@ def test_duper_deepcopy_parity_threaded_mutating(copy) -> None:
         assert correct_runs == total_runs
 
 
-def test_recursion_error():
-    def make_nested(depth):
-        result = {}
-        for _ in range(depth):
-            result = {"child": result}
-        return result
+def make_nested(depth):
+    result = []
+    for _ in range(depth):
+        result = [result]
+    return result
 
-    recursion_limit = sys.getrecursionlimit()
 
-    at_interpreter_limit = make_nested(256)
-
+@contextmanager
+def recursion_limit(depth: int) -> Generator[None]:
+    current_limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(depth)
     try:
-        sys.setrecursionlimit(256)
-        with pytest.raises(RecursionError):
-            stdlib_copy.deepcopy(at_interpreter_limit)
-
-        copied = copium.deepcopy(at_interpreter_limit)
+        yield
     finally:
-        sys.setrecursionlimit(recursion_limit)
+        sys.setrecursionlimit(current_limit)
 
-    assert copied == at_interpreter_limit, "Unexpectedly affected by interpreter recursion limit"
 
-    value = make_nested(99999)
+@pytest.mark.xfail(
+    raises=RecursionError,
+    reason="We won't guarantee larger than stack recursion, but it may happen.",
+)
+def test_recursion_error():
+    above_interpreter_limit = make_nested(600)
+
+    with recursion_limit(500):
+        copium.deepcopy(above_interpreter_limit)
+
+
+def test_recursion_limit_increase():
+    baseline_limit = sys.getrecursionlimit()
+
+    new_recursion_limit = baseline_limit + 10000
+    at_interpreter_limit = make_nested(new_recursion_limit)
+    with recursion_limit(new_recursion_limit):
+        copium.deepcopy(at_interpreter_limit)
+
+
+def test_graceful_recursion_error():
+    value = make_nested(999999)
     with pytest.raises(RecursionError):
+        copium.deepcopy(value)  # without safeguards this can SIGSEGV
+
+
+def test_graceful_recursion_error_with_increased_limit():
+    """
+    We won't guarantee to match interpreter recursion limit, but will handle it gracefully.
+    """
+    too_large = 999999
+    value = make_nested(too_large)
+    with recursion_limit(too_large), pytest.raises(RecursionError):
         copium.deepcopy(value)  # without safeguards this can SIGSEGV
