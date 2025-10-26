@@ -131,6 +131,7 @@ typedef struct {
   PyObject* str_dict;
   PyObject* str_append;
   PyObject* str_update;
+  PyObject* str_new;
 
   /* cached types */
   PyTypeObject* BuiltinFunctionType;
@@ -146,6 +147,8 @@ typedef struct {
   /* stdlib refs */
   PyObject* copyreg_dispatch; /* dict */
   PyObject* copy_Error;       /* exception class */
+  PyObject* copyreg_newobj;   /* copyreg.__newobj__ (or sentinel) */
+  PyObject* copyreg_newobj_ex;/* copyreg.__newobj_ex__ (or sentinel) */
   PyObject*
       create_precompiler_reconstructor; /* duper.snapshots.create_precompiler_reconstructor */
 
@@ -1342,29 +1345,80 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
   }
 
   PyObject* reconstructed_obj = NULL;
-  if (PyTuple_GET_SIZE(args) == 0) {
-    reconstructed_obj = PyObject_CallNoArgs(constructor);
-  } else {
-    Py_ssize_t args_count = PyTuple_GET_SIZE(args);
-    PyObject* deepcopied_args = PyTuple_New(args_count);
-    if (!deepcopied_args) {
-      Py_DECREF(reduce_result);
-      return NULL;
+
+  /* Fast path: copyreg.__newobj__ / __newobj_ex__ */
+  if (constructor == module_state.copyreg_newobj) {
+    if (LIKELY(PyTuple_Check(args) && PyTuple_GET_SIZE(args) >= 1)) {
+      PyObject* cls = PyTuple_GET_ITEM(args, 0);
+      if (PyType_Check(cls)) {
+        Py_ssize_t npos = PyTuple_GET_SIZE(args) - 1;
+        PyObject* newargs = PyTuple_New(npos);
+        if (!newargs) { Py_DECREF(reduce_result); return NULL; }
+        for (Py_ssize_t i = 0; i < npos; i++) {
+          PyObject* a = PyTuple_GET_ITEM(args, i + 1);
+          PyObject* ca = deepcopy(a, memo_ptr, keepalive_list_ptr);
+          if (!ca) {
+            Py_DECREF(newargs);
+            Py_DECREF(reduce_result);
+            return NULL;
+          }
+          PyTuple_SET_ITEM(newargs, i, ca);
+        }
+        reconstructed_obj = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, newargs, NULL);
+        Py_DECREF(newargs);
+      }
     }
-    for (Py_ssize_t i = 0; i < args_count; i++) {
-      PyObject* arg = PyTuple_GET_ITEM(args, i);
-      PyObject* copied_arg =
-          deepcopy(arg, memo_ptr, keepalive_list_ptr);
-      if (!copied_arg) {
-        Py_DECREF(deepcopied_args);
+  } else if (constructor == module_state.copyreg_newobj_ex) {
+    if (LIKELY(PyTuple_Check(args) && PyTuple_GET_SIZE(args) == 3)) {
+      PyObject* cls     = PyTuple_GET_ITEM(args, 0);
+      PyObject* pargs   = PyTuple_GET_ITEM(args, 1);
+      PyObject* pkwargs = PyTuple_GET_ITEM(args, 2);
+      if (PyType_Check(cls) && PyTuple_Check(pargs)) {
+        PyObject* dc_pargs = deepcopy(pargs, memo_ptr, keepalive_list_ptr);
+        if (!dc_pargs) { Py_DECREF(reduce_result); return NULL; }
+        PyObject* dc_kwargs = NULL;
+        if (pkwargs != Py_None) {
+          if (PyDict_Check(pkwargs) && PyDict_Size(pkwargs) == 0) {
+            dc_kwargs = NULL; /* omit kwargs entirely */
+          } else {
+            dc_kwargs = deepcopy(pkwargs, memo_ptr, keepalive_list_ptr);
+            if (!dc_kwargs) { Py_DECREF(dc_pargs); Py_DECREF(reduce_result); return NULL; }
+          }
+        }
+        reconstructed_obj = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, dc_pargs, dc_kwargs);
+        Py_DECREF(dc_pargs);
+        Py_XDECREF(dc_kwargs);
+      }
+    }
+  }
+
+  if (!reconstructed_obj) {
+    /* General path (previous behavior) */
+    if (PyTuple_GET_SIZE(args) == 0) {
+      reconstructed_obj = PyObject_CallNoArgs(constructor);
+    } else {
+      Py_ssize_t args_count = PyTuple_GET_SIZE(args);
+      PyObject* deepcopied_args = PyTuple_New(args_count);
+      if (!deepcopied_args) {
         Py_DECREF(reduce_result);
         return NULL;
       }
-      PyTuple_SET_ITEM(deepcopied_args, i, copied_arg);
+      for (Py_ssize_t i = 0; i < args_count; i++) {
+        PyObject* arg = PyTuple_GET_ITEM(args, i);
+        PyObject* copied_arg =
+            deepcopy(arg, memo_ptr, keepalive_list_ptr);
+        if (!copied_arg) {
+          Py_DECREF(deepcopied_args);
+          Py_DECREF(reduce_result);
+          return NULL;
+        }
+        PyTuple_SET_ITEM(deepcopied_args, i, copied_arg);
+      }
+      reconstructed_obj = PyObject_CallObject(constructor, deepcopied_args);
+      Py_DECREF(deepcopied_args);
     }
-    reconstructed_obj = PyObject_CallObject(constructor, deepcopied_args);
-    Py_DECREF(deepcopied_args);
   }
+
   if (!reconstructed_obj) {
     Py_DECREF(reduce_result);
     return NULL;
@@ -2416,6 +2470,7 @@ static void cleanup_on_init_failure(void) {
   Py_XDECREF(module_state.str_dict);
   Py_XDECREF(module_state.str_append);
   Py_XDECREF(module_state.str_update);
+  Py_XDECREF(module_state.str_new);
 
   Py_XDECREF(module_state.BuiltinFunctionType);
   Py_XDECREF(module_state.MethodType);
@@ -2429,6 +2484,8 @@ static void cleanup_on_init_failure(void) {
 
   Py_XDECREF(module_state.copyreg_dispatch);
   Py_XDECREF(module_state.copy_Error);
+  Py_XDECREF(module_state.copyreg_newobj);
+  Py_XDECREF(module_state.copyreg_newobj_ex);
   Py_XDECREF(module_state.create_precompiler_reconstructor);
 
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
@@ -2469,11 +2526,12 @@ int _copium_copying_init(PyObject* module) {
   module_state.str_dict      = PyUnicode_InternFromString("__dict__");
   module_state.str_append    = PyUnicode_InternFromString("append");
   module_state.str_update    = PyUnicode_InternFromString("update");
+  module_state.str_new       = PyUnicode_InternFromString("__new__");
 
   if (!module_state.str_reduce_ex || !module_state.str_reduce ||
       !module_state.str_deepcopy || !module_state.str_setstate ||
       !module_state.str_dict || !module_state.str_append ||
-      !module_state.str_update) {
+      !module_state.str_update || !module_state.str_new) {
     PyErr_SetString(PyExc_ImportError,
                     "copium: failed to intern required names");
     cleanup_on_init_failure();
@@ -2532,6 +2590,40 @@ int _copium_copying_init(PyObject* module) {
     Py_XDECREF(mod_fractions);
     cleanup_on_init_failure();
     return -1;
+  }
+
+  /* Cache copyreg special constructors; if absent, store unique sentinels */
+  module_state.copyreg_newobj = PyObject_GetAttrString(mod_copyreg, "__newobj__");
+  if (!module_state.copyreg_newobj) {
+    PyErr_Clear();
+    module_state.copyreg_newobj = PyObject_CallNoArgs((PyObject*)&PyBaseObject_Type);
+    if (!module_state.copyreg_newobj) {
+      Py_XDECREF(mod_types);
+      Py_XDECREF(mod_builtins);
+      Py_XDECREF(mod_weakref);
+      Py_XDECREF(mod_copyreg);
+      Py_XDECREF(mod_re);
+      Py_XDECREF(mod_decimal);
+      Py_XDECREF(mod_fractions);
+      cleanup_on_init_failure();
+      return -1;
+    }
+  }
+  module_state.copyreg_newobj_ex = PyObject_GetAttrString(mod_copyreg, "__newobj_ex__");
+  if (!module_state.copyreg_newobj_ex) {
+    PyErr_Clear();
+    module_state.copyreg_newobj_ex = PyObject_CallNoArgs((PyObject*)&PyBaseObject_Type);
+    if (!module_state.copyreg_newobj_ex) {
+      Py_XDECREF(mod_types);
+      Py_XDECREF(mod_builtins);
+      Py_XDECREF(mod_weakref);
+      Py_XDECREF(mod_copyreg);
+      Py_XDECREF(mod_re);
+      Py_XDECREF(mod_decimal);
+      Py_XDECREF(mod_fractions);
+      cleanup_on_init_failure();
+      return -1;
+    }
   }
 
   PyObject* mod_copy = PyImport_ImportModule("copy");
