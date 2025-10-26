@@ -51,6 +51,20 @@ Py_ssize_t memo_hash_pointer(void* ptr) {
   return hash_pointer(ptr);
 }
 
+/* Retention policy caps for TLS memo/keepalive reuse */
+#ifndef COPIUM_MEMO_RETAIN_MAX_SLOTS
+#define COPIUM_MEMO_RETAIN_MAX_SLOTS (1<<17)  /* 131072 slots (~2 MiB for 16B entries) */
+#endif
+#ifndef COPIUM_MEMO_RETAIN_SHRINK_TO
+#define COPIUM_MEMO_RETAIN_SHRINK_TO (1<<13)  /* 8192 slots */
+#endif
+#ifndef COPIUM_KEEP_RETAIN_MAX
+#define COPIUM_KEEP_RETAIN_MAX (1<<13)        /* 8192 elements */
+#endif
+#ifndef COPIUM_KEEP_RETAIN_TARGET
+#define COPIUM_KEEP_RETAIN_TARGET (1<<10)     /* 1024 elements */
+#endif
+
 /* ------------------------------ Keep vector impl --------------------------- */
 
 static void keepvector_init(KeepVector* kv) {
@@ -100,6 +114,24 @@ static void keepvector_free(KeepVector* kv) {
   kv->capacity = 0;
 }
 
+/* Shrink capacity if it ballooned past the cap; keep it modest thereafter. */
+void keepvector_shrink_if_large(KeepVector* kv) {
+  if (!kv || !kv->items) return;
+  if (kv->capacity > COPIUM_KEEP_RETAIN_MAX) {
+    Py_ssize_t target = COPIUM_KEEP_RETAIN_TARGET;
+    if (target < kv->size) {
+      /* In practice size==0 after clear, but be safe. */
+      target = kv->size ? kv->size : 1;
+    }
+    PyObject** ni = (PyObject**)PyMem_Realloc(kv->items, (size_t)target * sizeof(PyObject*));
+    if (ni) {
+      kv->items = ni;
+      kv->capacity = target;
+    }
+    /* If realloc fails, we keep the larger buffer; correctness preserved. */
+  }
+}
+
 /* ------------------------------ Memo table impl ---------------------------- */
 
 void memo_table_free(MemoTable* table) {
@@ -111,6 +143,41 @@ void memo_table_free(MemoTable* table) {
   }
   free(table->slots);
   free(table);
+}
+
+/* Clear in-place but keep capacity (fast reuse). */
+void memo_table_clear(MemoTable* table) {
+  if (!table) return;
+  for (Py_ssize_t i = 0; i < table->size; i++) {
+    void* key = table->slots[i].key;
+    if (key && key != MEMO_TOMBSTONE) {
+      Py_XDECREF(table->slots[i].value);
+    }
+    table->slots[i].key = NULL;
+    table->slots[i].value = NULL;
+  }
+  table->used = 0;
+  table->filled = 0;
+}
+
+/* Reset-with-policy: clear, and shrink if past cap back to a small target. */
+int memo_table_reset(MemoTable** table_ptr) {
+  if (!table_ptr) return 0;
+  MemoTable* t = *table_ptr;
+  if (!t) return 0;
+
+  /* Always drop references and zero slots first. */
+  memo_table_clear(t);
+
+  if (t->size > COPIUM_MEMO_RETAIN_MAX_SLOTS) {
+    /* Rebuild a smaller table; migrating 0 entries is cheap. */
+    Py_ssize_t min_needed = COPIUM_MEMO_RETAIN_SHRINK_TO / 2;
+    if (min_needed < 1) min_needed = 1;
+    if (memo_table_resize(table_ptr, min_needed) < 0) {
+      return -1;
+    }
+  }
+  return 0;
 }
 
 /* New: reset table contents in-place but keep capacity for reuse (TLS buffer) */

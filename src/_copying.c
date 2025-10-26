@@ -104,6 +104,10 @@ extern int       memo_store_obj_h(PyObject* memo, void* key, PyObject* value, Py
 
 /* Exported pointer hasher (same as C memo table) */
 extern Py_ssize_t memo_hash_pointer(void* key);
+/* Reset/shrink memo table for TLS reuse */
+extern int memo_table_reset(MemoTable** table_ptr);
+/* Shrink keepalive vector if it ballooned */
+extern void keepvector_shrink_if_large(KeepVector* kv);
 /* Clear memo table in-place without freeing capacity (for TLS reuse) */
 extern void memo_table_clear(MemoTable* table);
 
@@ -1914,13 +1918,10 @@ have_args:
   if (using_tls_memo) {
     MemoObject* mo = (MemoObject*)memo_local;
     if (mo->table) {
-      memo_table_free(mo->table);
-      mo->table = NULL;
+      (void)memo_table_reset(&mo->table);
     }
     keepvector_clear(&mo->keep);
-    PyMem_Free(mo->keep.items);
-    mo->keep.items = NULL;
-    mo->keep.capacity = 0;
+    keepvector_shrink_if_large(&mo->keep);
   } else {
     Py_XDECREF(memo_local);
   }
