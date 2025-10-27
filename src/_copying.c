@@ -23,7 +23,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-#define Py_BUILD_CORE
+#define Py_BUILD_CORE_MODULE
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
