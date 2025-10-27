@@ -61,11 +61,6 @@
 
 #define XDECREF_CLEAR(op) do { Py_XDECREF(op); (op) = NULL; } while (0)
 
-/* Sentinel for 'no hash computed yet' so we can avoid hashing pointers when memo is uninitialized */
-#ifndef MEMO_NOHASH
-#  define MEMO_NOHASH ((Py_ssize_t)-1)
-#endif
-
 /* ---------------- Pin integration surface (provided by _pinning.c) --------- */
 typedef struct {
   PyObject_HEAD
@@ -193,26 +188,33 @@ static inline int ctx_ensure_memo(DCtx* ctx) {
   return 0;
 }
 
-static inline PyObject* ctx_memo_lookup_h(DCtx* ctx, void* key, Py_ssize_t khash) {
+/* Lookup in memo. If memo is uninitialized, no hash work is done and NULL is returned. */
+static inline PyObject* ctx_memo_lookup(DCtx* ctx, void* key) {
   if (!ctx->memo) return NULL;
   if (Py_TYPE(ctx->memo) == &Memo_Type) {
-    if (khash == MEMO_NOHASH) {
-      khash = memo_hash_pointer(key);
-    }
-    return memo_lookup_obj_h(ctx->memo, key, khash);
+    Py_ssize_t h = memo_hash_pointer(key);
+    return memo_lookup_obj_h(ctx->memo, key, h);
   }
   return memo_lookup_obj(ctx->memo, key);
 }
 
-static inline int ctx_memo_store_h(DCtx* ctx, void* key, PyObject* value, Py_ssize_t khash) {
+/* Store into memo. Ensures memo exists. Computes hash only when using Memo_Type. */
+static inline int ctx_memo_store(DCtx* ctx, void* key, PyObject* value) {
   if (ctx_ensure_memo(ctx) < 0) return -1;
   if (Py_TYPE(ctx->memo) == &Memo_Type) {
-    if (khash == MEMO_NOHASH) {
-      khash = memo_hash_pointer(key);
-    }
-    return memo_store_obj_h(ctx->memo, key, value, khash);
+    Py_ssize_t h = memo_hash_pointer(key);
+    return memo_store_obj_h(ctx->memo, key, value, h);
   }
   return memo_store_obj(ctx->memo, key, value);
+}
+
+/* Unified finalize: store in memo and record keepalive if the copy is not identical. */
+static inline int ctx_publish_final(DCtx* ctx, void* key, PyObject* original, PyObject* copied) {
+  if (ctx_memo_store(ctx, key, copied) < 0) return -1;
+  if (copied != original) {
+    return memo_keepalive_append(&ctx->memo, &ctx->keepalive, original);
+  }
+  return 0;
 }
 
 static inline int ctx_keepalive_append_if_different(DCtx* ctx, PyObject* original, PyObject* copied) {
@@ -460,24 +462,24 @@ static PyObject* dc_dispatch_skip_atomic(PyObject* src, PyTypeObject* tp, DCtx* 
 
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
 static PyObject* dc_dict_with_watcher(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                      void* oid, Py_ssize_t ohash);
+                                      void* oid);
 #endif
 static PyObject* dc_dict_legacy(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                void* oid, Py_ssize_t ohash);
+                                void* oid);
 
 static PyObject* dc_copy_list(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                              void* oid, Py_ssize_t ohash);
+                              void* oid);
 static PyObject* dc_copy_tuple(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                               void* oid, Py_ssize_t ohash);
+                               void* oid);
 static PyObject* dc_copy_set(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                             void* oid, Py_ssize_t ohash);
+                             void* oid);
 static PyObject* dc_copy_frozenset(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                   void* oid, Py_ssize_t ohash);
+                                   void* oid);
 static PyObject* dc_copy_bytearray(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                   void* oid, Py_ssize_t ohash);
+                                   void* oid);
 
 static PyObject* dc_reduce_reconstruct(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                       void* oid, Py_ssize_t ohash);
+                                       void* oid);
 
 /* ---------------- reduce helpers / protocol ------------------------------- */
 
@@ -575,11 +577,10 @@ static PyObject* dc_dispatch_skip_atomic(PyObject* src, PyTypeObject* tp, DCtx* 
   if (UNLIKELY(_copium_recdepth_enter() < 0)) return NULL;
 
   void* oid = (void*)src;
-  Py_ssize_t ohash = MEMO_NOHASH;
 
-  /* Memo hit? (lazy memo: if no memo yet, lookup returns NULL quickly) */
+  /* Memo hit? (no hash work if memo is absent) */
   {
-    PyObject* hit = ctx_memo_lookup_h(ctx, oid, ohash);
+    PyObject* hit = ctx_memo_lookup(ctx, oid);
     if (hit) {
       Py_INCREF(hit);
       _copium_recdepth_leave();
@@ -590,38 +591,38 @@ static PyObject* dc_dispatch_skip_atomic(PyObject* src, PyTypeObject* tp, DCtx* 
 
   /* Fast exact containers */
   if (tp == &PyList_Type) {
-    PyObject* out = dc_copy_list(src, tp, ctx, oid, ohash);
+    PyObject* out = dc_copy_list(src, tp, ctx, oid);
     _copium_recdepth_leave();
     return out;
   }
   if (tp == &PyTuple_Type) {
-    PyObject* out = dc_copy_tuple(src, tp, ctx, oid, ohash);
+    PyObject* out = dc_copy_tuple(src, tp, ctx, oid);
     _copium_recdepth_leave();
     return out;
   }
   if (tp == &PyDict_Type) {
     PyObject* out;
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
-    out = dc_dict_with_watcher(src, tp, ctx, oid, ohash);
-    if (out == Py_None) { Py_DECREF(out); out = dc_dict_legacy(src, tp, ctx, oid, ohash); }
+    out = dc_dict_with_watcher(src, tp, ctx, oid);
+    if (out == Py_None) { Py_DECREF(out); out = dc_dict_legacy(src, tp, ctx, oid); }
 #else
-    out = dc_dict_legacy(src, tp, ctx, oid, ohash);
+    out = dc_dict_legacy(src, tp, ctx, oid);
 #endif
     _copium_recdepth_leave();
     return out;
   }
   if (tp == &PySet_Type) {
-    PyObject* out = dc_copy_set(src, tp, ctx, oid, ohash);
+    PyObject* out = dc_copy_set(src, tp, ctx, oid);
     _copium_recdepth_leave();
     return out;
   }
   if (tp == &PyFrozenSet_Type) {
-    PyObject* out = dc_copy_frozenset(src, tp, ctx, oid, ohash);
+    PyObject* out = dc_copy_frozenset(src, tp, ctx, oid);
     _copium_recdepth_leave();
     return out;
   }
   if (tp == &PyByteArray_Type) {
-    PyObject* out = dc_copy_bytearray(src, tp, ctx, oid, ohash);
+    PyObject* out = dc_copy_bytearray(src, tp, ctx, oid);
     _copium_recdepth_leave();
     return out;
   }
@@ -640,8 +641,7 @@ static PyObject* dc_dispatch_skip_atomic(PyObject* src, PyTypeObject* tp, DCtx* 
     Py_DECREF(func);
     Py_DECREF(cself);
     if (!bm) { _copium_recdepth_leave(); return NULL; }
-    if (ctx_memo_store_h(ctx, oid, bm, ohash) < 0) { Py_DECREF(bm); _copium_recdepth_leave(); return NULL; }
-    if (ctx_keepalive_append_original(ctx, src) < 0) { Py_DECREF(bm); _copium_recdepth_leave(); return NULL; }
+    if (ctx_publish_final(ctx, oid, src, bm) < 0) { Py_DECREF(bm); _copium_recdepth_leave(); return NULL; }
     _copium_recdepth_leave();
     return bm;
   }
@@ -658,8 +658,7 @@ static PyObject* dc_dispatch_skip_atomic(PyObject* src, PyTypeObject* tp, DCtx* 
       Py_DECREF(dm);
       if (!r) { _copium_recdepth_leave(); return NULL; }
       if (r != src) {
-        if (ctx_memo_store_h(ctx, oid, r, ohash) < 0) { Py_DECREF(r); _copium_recdepth_leave(); return NULL; }
-        if (ctx_keepalive_append_original(ctx, src) < 0) { Py_DECREF(r); _copium_recdepth_leave(); return NULL; }
+        if (ctx_publish_final(ctx, oid, src, r) < 0) { Py_DECREF(r); _copium_recdepth_leave(); return NULL; }
       }
       _copium_recdepth_leave();
       return r;
@@ -668,7 +667,7 @@ static PyObject* dc_dispatch_skip_atomic(PyObject* src, PyTypeObject* tp, DCtx* 
 
   /* copyreg/ __reduce__ protocol */
   {
-    PyObject* out = dc_reduce_reconstruct(src, tp, ctx, oid, ohash);
+    PyObject* out = dc_reduce_reconstruct(src, tp, ctx, oid);
     _copium_recdepth_leave();
     return out;
   }
@@ -677,7 +676,7 @@ static PyObject* dc_dispatch_skip_atomic(PyObject* src, PyTypeObject* tp, DCtx* 
 /* ---------------- Container implementations -------------------------------- */
 
 static PyObject* dc_copy_list(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                              void* oid, Py_ssize_t ohash) {
+                              void* oid) {
   (void)tp;
   Py_ssize_t n = PyList_GET_SIZE(src);
   /* allocate completely initialized list (no NULL slots ordered) */
@@ -685,7 +684,7 @@ static PyObject* dc_copy_list(PyObject* src, PyTypeObject* tp, DCtx* ctx,
   if (!out) return NULL;
 
   /* Pre-publish into memo for cycles */
-  if (ctx_memo_store_h(ctx, oid, out, ohash) < 0) { Py_DECREF(out); return NULL; }
+  if (ctx_memo_store(ctx, oid, out) < 0) { Py_DECREF(out); return NULL; }
 
   for (Py_ssize_t i = 0; i < n; i++) {
     if (i >= PyList_GET_SIZE(src)) break;
@@ -699,7 +698,7 @@ static PyObject* dc_copy_list(PyObject* src, PyTypeObject* tp, DCtx* ctx,
       PyObject* ci = dc_dispatch_skip_atomic(it, Py_TYPE(it), ctx);
       Py_DECREF(it);
       if (!ci) { Py_DECREF(out); return NULL; }
-      PyList_SET_ITEM(out, i, ci);
+      PyList_SetItem(out, i, ci);
     }
   }
 
@@ -708,7 +707,7 @@ static PyObject* dc_copy_list(PyObject* src, PyTypeObject* tp, DCtx* ctx,
 }
 
 static PyObject* dc_copy_tuple(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                               void* oid, Py_ssize_t ohash) {
+                               void* oid) {
   (void)tp;
   Py_ssize_t n = PyTuple_GET_SIZE(src);
   if (n == 0) return Py_NewRef(src); /* empty tuple is atomic */
@@ -737,18 +736,17 @@ static PyObject* dc_copy_tuple(PyObject* src, PyTypeObject* tp, DCtx* ctx,
     return src;
   }
 
-  PyObject* hit = ctx_memo_lookup_h(ctx, oid, ohash);
+  PyObject* hit = ctx_memo_lookup(ctx, oid);
   if (hit) { Py_INCREF(hit); Py_DECREF(out); return hit; }
   if (PyErr_Occurred()) { Py_DECREF(out); return NULL; }
 
-  if (ctx_memo_store_h(ctx, oid, out, ohash) < 0) { Py_DECREF(out); return NULL; }
-  if (ctx_keepalive_append_if_different(ctx, src, out) < 0) { Py_DECREF(out); return NULL; }
+  if (ctx_publish_final(ctx, oid, src, out) < 0) { Py_DECREF(out); return NULL; }
   return out;
 }
 
 #if PY_VERSION_HEX >= PY_VERSION_3_12_HEX
 static PyObject* dc_dict_with_watcher(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                      void* oid, Py_ssize_t ohash) {
+                                      void* oid) {
   (void)tp;
   int mutated = 0;
   WatchContext w = {.dict = src, .mutated_flag = &mutated, .prev = NULL};
@@ -763,7 +761,7 @@ static PyObject* dc_dict_with_watcher(PyObject* src, PyTypeObject* tp, DCtx* ctx
   PyObject* out = PyDict_New();
   if (!out) { (void)PyDict_Unwatch(module_state.dict_watcher_id, src); watch_context_pop(); return NULL; }
 
-  if (ctx_memo_store_h(ctx, oid, out, ohash) < 0) {
+  if (ctx_memo_store(ctx, oid, out) < 0) {
     Py_DECREF(out);
     (void)PyDict_Unwatch(module_state.dict_watcher_id, src);
     watch_context_pop();
@@ -839,12 +837,12 @@ static PyObject* dc_dict_with_watcher(PyObject* src, PyTypeObject* tp, DCtx* ctx
 #endif
 
 static PyObject* dc_dict_legacy(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                void* oid, Py_ssize_t ohash) {
+                                void* oid) {
   (void)tp;
   Py_ssize_t expect = PyDict_Size(src);
   PyObject* out = PyDict_New();
   if (!out) return NULL;
-  if (ctx_memo_store_h(ctx, oid, out, ohash) < 0) { Py_DECREF(out); return NULL; }
+  if (ctx_memo_store(ctx, oid, out) < 0) { Py_DECREF(out); return NULL; }
 
   Py_ssize_t pos = 0;
   PyObject *k, *v;
@@ -890,11 +888,11 @@ static PyObject* dc_dict_legacy(PyObject* src, PyTypeObject* tp, DCtx* ctx,
 }
 
 static PyObject* dc_copy_set(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                             void* oid, Py_ssize_t ohash) {
+                             void* oid) {
   (void)tp;
   PyObject* out = PySet_New(NULL);
   if (!out) return NULL;
-  if (ctx_memo_store_h(ctx, oid, out, ohash) < 0) { Py_DECREF(out); return NULL; }
+  if (ctx_memo_store(ctx, oid, out) < 0) { Py_DECREF(out); return NULL; }
 
   PyObject* it = PyObject_GetIter(src);
   if (!it) { Py_DECREF(out); return NULL; }
@@ -916,8 +914,8 @@ static PyObject* dc_copy_set(PyObject* src, PyTypeObject* tp, DCtx* ctx,
 }
 
 static PyObject* dc_copy_frozenset(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                   void* oid, Py_ssize_t ohash) {
-  (void)tp; (void)ohash; /* store after creation */
+                                   void* oid) {
+  (void)tp;
   PyObject* it = PyObject_GetIter(src);
   if (!it) return NULL;
   PyObject* tmp = PyList_New(0);
@@ -939,13 +937,13 @@ static PyObject* dc_copy_frozenset(PyObject* src, PyTypeObject* tp, DCtx* ctx,
   PyObject* out = PyFrozenSet_New(tmp);
   Py_DECREF(tmp);
   if (!out) return NULL;
-  if (ctx_memo_store_h(ctx, (void*)src, out, MEMO_NOHASH) < 0) { Py_DECREF(out); return NULL; }
+  if (ctx_memo_store(ctx, oid, out) < 0) { Py_DECREF(out); return NULL; }
   if (ctx_keepalive_append_if_different(ctx, src, out) < 0) { Py_DECREF(out); return NULL; }
   return out;
 }
 
 static PyObject* dc_copy_bytearray(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                   void* oid, Py_ssize_t ohash) {
+                                   void* oid) {
   (void)tp;
   Py_ssize_t n =
 #if defined(PyByteArray_GET_SIZE)
@@ -956,7 +954,7 @@ static PyObject* dc_copy_bytearray(PyObject* src, PyTypeObject* tp, DCtx* ctx,
   PyObject* out = PyByteArray_FromStringAndSize(NULL, n);
   if (!out) return NULL;
   if (n) memcpy(PyByteArray_AS_STRING(out), PyByteArray_AS_STRING(src), (size_t)n);
-  if (ctx_memo_store_h(ctx, oid, out, ohash) < 0) { Py_DECREF(out); return NULL; }
+  if (ctx_memo_store(ctx, oid, out) < 0) { Py_DECREF(out); return NULL; }
   if (ctx_keepalive_append_if_different(ctx, src, out) < 0) { Py_DECREF(out); return NULL; }
   return out;
 }
@@ -1189,7 +1187,7 @@ static PyObject* dc_reconstruct_state_deep(PyObject* new_obj,
 }
 
 static PyObject* dc_reduce_reconstruct(PyObject* src, PyTypeObject* tp, DCtx* ctx,
-                                       void* oid, Py_ssize_t ohash) {
+                                       void* oid) {
   (void)tp;
   PyObject* rr = try_reduce_via_registry(src, Py_TYPE(src));
   if (!rr) {
@@ -1267,7 +1265,7 @@ static PyObject* dc_reduce_reconstruct(PyObject* src, PyTypeObject* tp, DCtx* ct
 
   if (!out) { Py_DECREF(rr); return NULL; }
 
-  if (ctx_memo_store_h(ctx, oid, out, ohash) < 0) { Py_DECREF(out); Py_DECREF(rr); return NULL; }
+  if (ctx_publish_final(ctx, oid, src, out) < 0) { Py_DECREF(out); Py_DECREF(rr); return NULL; }
 
   if ((state && state != Py_None) || (listiter && listiter != Py_None) || (dictiter && dictiter != Py_None)) {
     PyObject* applied = dc_reconstruct_state_deep(out,
@@ -1279,7 +1277,6 @@ static PyObject* dc_reduce_reconstruct(PyObject* src, PyTypeObject* tp, DCtx* ct
     Py_DECREF(applied);
   }
 
-  if (ctx_keepalive_append_original(ctx, src) < 0) { Py_DECREF(out); Py_DECREF(rr); return NULL; }
   Py_DECREF(rr);
   return out;
 }
