@@ -362,7 +362,11 @@ def _get_c_extensions(
                 "src/_pinning.c",
                 "src/_patching.c",
             ],
-            include_dirs=[str(python_include), str(python_include / "internal")],
+            include_dirs=[
+                str(python_include),
+                str(python_include / "internal"),
+                Path(sys.executable) / "lib",
+            ],
             define_macros=define_macros,
             libraries=libraries,
         )
