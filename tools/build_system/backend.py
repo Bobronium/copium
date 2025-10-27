@@ -344,14 +344,6 @@ def _get_c_extensions(
         # String-literal for the C preprocessor: "abcd1234..."
         define_macros.append(("COPIUM_BUILD_HASH", f'"{build_hash}"'))
 
-    if sys.platform == "win32":
-        libname = sysconfig.get_config_var("LIBRARY")
-        if libname and libname.endswith(".lib"):
-            libraries = [os.path.splitext(libname)[0]]
-        else:
-            libraries = [f"python{sys.version_info.major}{sys.version_info.minor}"]
-    else:
-        libraries = None
     return [
         Extension(
             "copium",
@@ -365,10 +357,8 @@ def _get_c_extensions(
             include_dirs=[
                 str(python_include),
                 str(python_include / "internal"),
-                str(Path(sys.executable) / "lib"),
             ],
             define_macros=define_macros,
-            libraries=libraries,
         )
     ]
 
