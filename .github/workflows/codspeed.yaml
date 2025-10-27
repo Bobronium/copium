@@ -3,7 +3,7 @@ name: CodSpeed Benchmarks
 on:
   push:
     tags: [ "v*" ]
-    branches: [ main ]
+    branches: [ "*" ]
   pull_request:
   workflow_dispatch:
 
