@@ -219,7 +219,7 @@ static inline int is_atomic_immutable(PyObject *obj) {
     // If available in your target CPython, a flag check is even cheaper:
     //   if (PyType_HasFeature(t, Py_TPFLAGS_TYPE_SUBCLASS)) return 1;
     // Falling back to the conservative general check:
-    return PyType_IsSubtype(t, &PyType_Type);
+    return (PyType_HasFeature(t, Py_TPFLAGS_TYPE_SUBCLASS));
 }
 
 /* ------------------------ Lazy memo/keepalive helpers -----------------------
