@@ -1241,10 +1241,6 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
     return result;
   }
 
-  if (PyModule_Check(source_obj)) {
-    return Py_NewRef(source_obj);
-  }
-
   if (is_method_type_exact(source_obj)) {
     PyObject* method_function = PyMethod_GET_FUNCTION(source_obj);
     PyObject* method_self = PyMethod_GET_SELF(source_obj);
@@ -1278,23 +1274,6 @@ static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
       return NULL;
     }
     return bound_method;
-  }
-
-  if (Py_TYPE(source_obj) == &PyBaseObject_Type) {
-    PyObject* new_baseobject = PyObject_New(PyObject, &PyBaseObject_Type);
-    if (!new_baseobject) {
-      return NULL;
-    }
-    if (memo_store_h(memo_ptr, object_id, new_baseobject, object_id_hash) < 0) {
-      Py_DECREF(new_baseobject);
-      return NULL;
-    }
-    if (keepalive_append_original(memo_ptr, keepalive_list_ptr,
-                                  source_obj) < 0) {
-      Py_DECREF(new_baseobject);
-      return NULL;
-    }
-    return new_baseobject;
   }
 
   {
