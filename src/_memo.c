@@ -145,20 +145,9 @@ void memo_table_free(MemoTable* table) {
   free(table);
 }
 
-/* Clear in-place but keep capacity (fast reuse). */
-void memo_table_clear(MemoTable* table) {
-  if (!table) return;
-  for (Py_ssize_t i = 0; i < table->size; i++) {
-    void* key = table->slots[i].key;
-    if (key && key != MEMO_TOMBSTONE) {
-      Py_XDECREF(table->slots[i].value);
-    }
-    table->slots[i].key = NULL;
-    table->slots[i].value = NULL;
-  }
-  table->used = 0;
-  table->filled = 0;
-}
+/* Forward decls: keep non-static clear visible cross-file; resize is local static. */
+void memo_table_clear(MemoTable* table);
+static int memo_table_resize(MemoTable** table_ptr, Py_ssize_t min_capacity_needed);
 
 /* Reset-with-policy: clear, and shrink if past cap back to a small target. */
 int memo_table_reset(MemoTable** table_ptr) {
