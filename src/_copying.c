@@ -61,6 +61,11 @@
 
 #define XDECREF_CLEAR(op) do { Py_XDECREF(op); (op) = NULL; } while (0)
 
+/* Sentinel for 'no hash computed yet' so we can avoid hashing pointers when memo is uninitialized */
+#ifndef MEMO_NOHASH
+#  define MEMO_NOHASH ((Py_ssize_t)-1)
+#endif
+
 /* ---------------- Pin integration surface (provided by _pinning.c) --------- */
 typedef struct {
   PyObject_HEAD
@@ -191,6 +196,9 @@ static inline int ctx_ensure_memo(DCtx* ctx) {
 static inline PyObject* ctx_memo_lookup_h(DCtx* ctx, void* key, Py_ssize_t khash) {
   if (!ctx->memo) return NULL;
   if (Py_TYPE(ctx->memo) == &Memo_Type) {
+    if (khash == MEMO_NOHASH) {
+      khash = memo_hash_pointer(key);
+    }
     return memo_lookup_obj_h(ctx->memo, key, khash);
   }
   return memo_lookup_obj(ctx->memo, key);
@@ -199,6 +207,9 @@ static inline PyObject* ctx_memo_lookup_h(DCtx* ctx, void* key, Py_ssize_t khash
 static inline int ctx_memo_store_h(DCtx* ctx, void* key, PyObject* value, Py_ssize_t khash) {
   if (ctx_ensure_memo(ctx) < 0) return -1;
   if (Py_TYPE(ctx->memo) == &Memo_Type) {
+    if (khash == MEMO_NOHASH) {
+      khash = memo_hash_pointer(key);
+    }
     return memo_store_obj_h(ctx->memo, key, value, khash);
   }
   return memo_store_obj(ctx->memo, key, value);
@@ -564,7 +575,7 @@ static PyObject* dc_dispatch_skip_atomic(PyObject* src, PyTypeObject* tp, DCtx* 
   if (UNLIKELY(_copium_recdepth_enter() < 0)) return NULL;
 
   void* oid = (void*)src;
-  Py_ssize_t ohash = memo_hash_pointer(oid);
+  Py_ssize_t ohash = MEMO_NOHASH;
 
   /* Memo hit? (lazy memo: if no memo yet, lookup returns NULL quickly) */
   {
@@ -928,7 +939,7 @@ static PyObject* dc_copy_frozenset(PyObject* src, PyTypeObject* tp, DCtx* ctx,
   PyObject* out = PyFrozenSet_New(tmp);
   Py_DECREF(tmp);
   if (!out) return NULL;
-  if (ctx_memo_store_h(ctx, (void*)src, out, memo_hash_pointer((void*)src)) < 0) { Py_DECREF(out); return NULL; }
+  if (ctx_memo_store_h(ctx, (void*)src, out, MEMO_NOHASH) < 0) { Py_DECREF(out); return NULL; }
   if (ctx_keepalive_append_if_different(ctx, src, out) < 0) { Py_DECREF(out); return NULL; }
   return out;
 }
