@@ -365,7 +365,7 @@ def _get_c_extensions(
             include_dirs=[
                 str(python_include),
                 str(python_include / "internal"),
-                Path(sys.executable) / "lib",
+                str(Path(sys.executable) / "lib"),
             ],
             define_macros=define_macros,
             libraries=libraries,
