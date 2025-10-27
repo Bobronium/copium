@@ -549,8 +549,7 @@ static inline int dict_iterate_with_hash(PyObject* dict_obj,
 
 static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
                                          PyObject** memo_ptr,
-                                         PyObject** keepalive_list_ptr,
-                                         int skip_atomic_check);
+                                         PyObject** keepalive_list_ptr);
 static PyObject* deepcopy_recursive_skip_atomic(PyObject* source_obj,
                                                 PyObject** memo_ptr,
                                                 PyObject** keepalive_list_ptr);
@@ -1200,12 +1199,7 @@ static int unpack_reduce_result_tuple(PyObject* reduce_result,
 
 static PyObject* deepcopy_recursive_impl(PyObject* source_obj,
                                          PyObject** memo_ptr,
-                                         PyObject** keepalive_list_ptr,
-                                         int skip_atomic_check) {
-  if (!skip_atomic_check) {
-    if (is_atomic_immutable(source_obj))
-      return Py_NewRef(source_obj);
-  }
+                                         PyObject** keepalive_list_ptr) {
 
   void* object_id = (void*)source_obj;
   Py_ssize_t object_id_hash = memo_hash_pointer(object_id);
@@ -1706,8 +1700,7 @@ static PyObject* deepcopy_recursive_skip_atomic(PyObject* source_obj,
     return NULL;
   }
   PyObject* result =
-      deepcopy_recursive_impl(source_obj, memo_ptr, keepalive_list_ptr,
-                              /*skip_atomic_check=*/1);
+      deepcopy_recursive_impl(source_obj, memo_ptr, keepalive_list_ptr);
   _copium_recdepth_leave();
   return result;
 }
