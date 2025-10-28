@@ -505,6 +505,13 @@ static PyObject* Memo_subscript(MemoObject* self, PyObject* pykey) {
   void* key = PyLong_AsVoidPtr(pykey);
   if (key == NULL && PyErr_Occurred()) return NULL;
 
+  /* Special-case for keepalive: memo[id(memo)] */
+  if (key == (void*)self) {
+    /* Return a fresh proxy bound to the internal keep vector.
+       Do NOT store it in the table to avoid creating a non-GC-tracked cycle. */
+    return KeepList_New(self);
+  }
+
   PyObject* value = memo_table_lookup(self->table, key);
   if (!value) {
     PyErr_SetObject(PyExc_KeyError, pykey);
@@ -589,14 +596,6 @@ static PyMappingMethods Memo_as_mapping = {
     (objobjargproc)Memo_ass_subscript
 };
 
-static PyMethodDef Memo_methods[] = {
-    {"clear", (PyCFunction)Memo_clear, METH_NOARGS, NULL},
-    {"get",   (PyCFunction)NULL,       METH_FASTCALL, NULL}, /* populated below for ABI stability */
-    {"__contains__", (PyCFunction)Memo_contains, METH_O, NULL},
-    {"keep", (PyCFunction)Memo_keep, METH_NOARGS, NULL}, /* expose keepalive proxy */
-    {NULL, NULL, 0, NULL}
-};
-
 /* Late-bound 'get' to keep identical signature as before */
 static PyObject* Memo_get(MemoObject* self, PyObject* const* args, Py_ssize_t nargs) {
   if (nargs < 1 || nargs > 2) {
@@ -625,15 +624,58 @@ static PyObject* Memo_get(MemoObject* self, PyObject* const* args, Py_ssize_t na
   }
 }
 
+static PyObject* Memo_setdefault(MemoObject* self, PyObject* const* args, Py_ssize_t nargs) {
+  if (nargs < 1 || nargs > 2) {
+    PyErr_SetString(PyExc_TypeError, "setdefault expected 1 or 2 arguments");
+    return NULL;
+  }
+  PyObject* pykey = args[0];
+  if (!PyLong_Check(pykey)) {
+    PyErr_SetString(PyExc_KeyError, "keys must be integers");
+    return NULL;
+  }
+  void* key = PyLong_AsVoidPtr(pykey);
+  if (key == NULL && PyErr_Occurred()) return NULL;
+
+  /* Special handling: id(memo) exposes keepalive proxy without storing. */
+  if (key == (void*)self) {
+    return KeepList_New(self);
+  }
+
+  /* Existing value? */
+  PyObject* value = memo_table_lookup(self->table, key);
+  if (value) {
+    Py_INCREF(value);
+    return value;
+  }
+
+  /* No existing value: store default (or None if omitted) and return it. */
+  PyObject* def = (nargs == 2) ? args[1] : Py_None;
+  if (memo_table_insert(&self->table, key, def) < 0) {
+    return NULL;
+  }
+  Py_INCREF(def);
+  return def;
+}
+
+static PyMethodDef Memo_methods[] = {
+  {"clear", (PyCFunction)Memo_clear, METH_NOARGS, NULL},
+  {"get",   (PyCFunction)NULL,       METH_FASTCALL, NULL}, /* populated below for ABI stability */
+  {"setdefault", (PyCFunction)Memo_setdefault, METH_FASTCALL, NULL},
+  {"__contains__", (PyCFunction)Memo_contains, METH_O, NULL},
+  {"keep", (PyCFunction)Memo_keep, METH_NOARGS, NULL}, /* expose keepalive proxy */
+  {NULL, NULL, 0, NULL}
+};
+
 PyTypeObject Memo_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name      = "copium._copying._Memo",
-    .tp_basicsize = sizeof(MemoObject),
-    .tp_dealloc   = (destructor)Memo_dealloc,
-    .tp_flags     = Py_TPFLAGS_DEFAULT,
-    .tp_as_mapping= &Memo_as_mapping,
-    .tp_iter      = (getiterfunc)Memo_iter,
-    .tp_methods   = Memo_methods,
+  PyVarObject_HEAD_INIT(NULL, 0)
+  .tp_name      = "copium._copying._Memo",
+  .tp_basicsize = sizeof(MemoObject),
+  .tp_dealloc   = (destructor)Memo_dealloc,
+  .tp_flags     = Py_TPFLAGS_DEFAULT,
+  .tp_as_mapping= &Memo_as_mapping,
+  .tp_iter      = (getiterfunc)Memo_iter,
+  .tp_methods   = Memo_methods,
 };
 
 /* --------------------------- C hooks for _copying.c ------------------------ */
