@@ -1,5 +1,6 @@
 import copy as stdlib_copy
 import sys
+import weakref
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
@@ -11,10 +12,6 @@ import copium
 from tests.conftest import CASES
 
 
-@pytest.mark.xfail(
-    reason="copium will not expose keepalive list, unless memo was supplied by the user",
-    raises=KeyError,
-)
 def test_deepcopy_keepalive_internal(copy) -> None:
     """
     Note: this test is not part of Lib/test/test_copy.py.
@@ -29,6 +26,28 @@ def test_deepcopy_keepalive_internal(copy) -> None:
     copied = copy.deepcopy([x, a := A()])
 
     assert copied == [x, a]
+
+
+def test_deepcopy_keepalive_internal_add(copy) -> None:
+    """
+    Note: this test is not part of Lib/test/test_copy.py.
+    """
+    x = []
+
+    class A:
+        ref: weakref.ref = None
+
+        def __deepcopy__(self, memo):
+            if A.ref is None:
+                A.ref = weakref.ref(ref := A())
+                memo.setdefault(id(memo), []).append(ref)
+            else:
+                assert A.ref(), "expected keepalive to keep track of A.ref"
+            return self
+
+    copied = copy.deepcopy([x, a := A(), b := A()])
+
+    assert copied == [x, a, b]
 
 
 def test_deepcopy_memo_dict_keepalive_internal(copy) -> None:
