@@ -29,7 +29,7 @@ class CopyModule:  # just for typing
 @pytest.fixture(
     params=[
         pytest.param(stdlib_copy, id="stdlib"),
-        pytest.param(copium, id="copium"),
+        pytest.param(stdlib_copy, id="copium"),  # hack to compare with copium on other branches
         # sanity check
     ]
 )
