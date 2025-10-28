@@ -175,7 +175,7 @@ def test_graceful_recursion_error_with_increased_limit():
 
 def test_memo_reused():
     class Observative:
-        observations = set()
+        observations = set()  # noqa: RUF012
 
         def __deepcopy__(self, memo):
             self.observations.add(id(memo))
@@ -204,7 +204,7 @@ def test_memo_reused():
 
 def test_memo_reference_stolen():
     class Nostalgic:
-        memories = {}
+        memories = {}  # noqa: RUF012
 
         def __deepcopy__(self, memo):
             self.memories[id(memo)] = memo
@@ -219,7 +219,7 @@ def test_memo_reference_stolen():
 
 def test_memo_reference_passthrough():
     class Chaotic:
-        observations = set()
+        observations = set()  # noqa: RUF012
 
         def __init__(self, foo):
             self.foo = foo
