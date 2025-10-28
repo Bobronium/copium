@@ -37,6 +37,9 @@
 #if defined(__APPLE__) || defined(__linux__)
 #include <pthread.h>
 #endif
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include "Python.h"
 #include "pycore_object.h"  // _PyNone_Type, _PyNotImplemented_Type
@@ -422,6 +425,40 @@ static inline int _copium_recdepth_enter(void) {
   /* No C11 TLS: fall back entirely to the existing TSS/limit accounting. */
   uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
   uintptr_t next = depth_u + 1;
+
+#ifdef _WIN32
+  /* Sample the native Windows stack bounds every N frames to prevent hard crashes. */
+  if (UNLIKELY((next & (COPIUM_STACKCHECK_STRIDE - 1u)) == 0u)) {
+    typedef VOID (WINAPI *GetStackLimitsFn)(PULONG_PTR, PULONG_PTR);
+    static GetStackLimitsFn _copium_pGetCurrentThreadStackLimits = NULL;
+    static int _copium_stacklimits_resolved = 0;
+    if (!_copium_stacklimits_resolved) {
+      HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+      if (hKernel32) {
+        _copium_pGetCurrentThreadStackLimits =
+            (GetStackLimitsFn)GetProcAddress(hKernel32, "GetCurrentThreadStackLimits");
+      }
+      _copium_stacklimits_resolved = 1;
+    }
+    if (_copium_pGetCurrentThreadStackLimits) {
+      ULONG_PTR low = 0, high = 0;
+      _copium_pGetCurrentThreadStackLimits(&low, &high);
+      char sp_probe;
+      char* sp = (char*)&sp_probe;
+      char* lowc = (char*)low;
+      size_t sz = (size_t)(high - low);
+      if (sz > COPIUM_STACK_SAFETY_MARGIN) {
+        lowc += COPIUM_STACK_SAFETY_MARGIN;
+      }
+      /* Windows stacks grow downward; if sp <= lowc we are too close to the guard page. */
+      if (UNLIKELY(sp <= lowc)) {
+        PyErr_SetString(PyExc_RecursionError,
+                        "maximum recursion depth exceeded in copium.deepcopy (stack safety cap)");
+        return -1;
+      }
+    }
+  }
+#endif
 
   int limit = Py_GetRecursionLimit();
   if (limit > 10000) { limit = 10000; }
