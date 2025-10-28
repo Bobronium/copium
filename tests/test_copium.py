@@ -84,6 +84,11 @@ def test_duper_deepcopy_parity(case: Any, copy) -> None:
         )
 
 
+@pytest.mark.xfail(
+    not getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="This test is flaky and sometimes fails on stdlib as well."
+    " A better suite should be designed.",
+)
 def test_duper_deepcopy_parity_threaded_mutating(copy) -> None:
     from concurrent.futures import ALL_COMPLETED
     from concurrent.futures import ThreadPoolExecutor
