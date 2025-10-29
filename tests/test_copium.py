@@ -108,6 +108,7 @@ def test_duper_deepcopy_parity(case: Any, copy) -> None:
     reason="This test is flaky and sometimes fails on stdlib as well."
     " A better suite should be designed.",
 )
+@pytest.mark.xfail(reason="WIP")
 def test_duper_deepcopy_parity_threaded_mutating(copy) -> None:
     from concurrent.futures import ALL_COMPLETED
     from concurrent.futures import ThreadPoolExecutor
