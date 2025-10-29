@@ -101,14 +101,21 @@ extern void memo_table_clear(MemoTable* table);
 /* Ready both Memo and _KeepList types */
 extern int memo_ready_types(void);
 
-/* ------------------------------ Small helpers ------------------------------
- */
+/* ------------------------------ Small helpers ------------------------------ */
 
-#define XDECREF_CLEAR(op) \
-    do {                  \
-        Py_XDECREF(op);   \
-        (op) = NULL;      \
-    } while (0)
+#if PY_VERSION_HEX < PY_VERSION_3_13_HEX
+static inline int get_optional_attr(PyObject* obj, PyObject* name, PyObject** out) {
+    *out = PyObject_GetAttr(obj, name);
+    if (*out)
+        return 1;  // found
+    if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        PyErr_Clear();
+        return 0;  // not found (and error cleared)
+    }
+    return -1;  // real error (still set)
+}
+#define PyObject_GetOptionalAttr(obj, name, out) get_optional_attr((obj), (name), (out))
+#endif
 
 /* ------------------------------ Module state --------------------------------
  * Cache frequently used objects/types. Pin-specific caches live in _pinning.c.
@@ -2019,9 +2026,7 @@ have_args:
     }
 
     PyErr_Format(
-        PyExc_TypeError,
-        "argument 'memo' must be dict, not %.200s",
-        Py_TYPE(memo_arg)->tp_name
+        PyExc_TypeError, "argument 'memo' must be dict, not %.200s", Py_TYPE(memo_arg)->tp_name
     );
     return NULL;
 }
