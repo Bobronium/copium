@@ -11,11 +11,13 @@
  *     - memo_keepalive_ensure, memo_keepalive_append, memo_ready_types
  */
 #define PY_SSIZE_T_CLEAN
+#define Py_BUILD_CORE_MODULE
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include "Python.h"
+#include "pycore_object.h"
 
 #include "_memo.h"
 
@@ -25,6 +27,15 @@
 #else
 #define LIKELY(x) (x)
 #define UNLIKELY(x) (x)
+#endif
+
+/* _memo.h (top) */
+#if defined(_MSC_VER)
+#  define COPIUM_ALWAYS_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#  define COPIUM_ALWAYS_INLINE __attribute__((always_inline)) inline
+#else
+#  define COPIUM_ALWAYS_INLINE inline
 #endif
 
 /* ------------------------------ Memo table -------------------------------- */
@@ -91,7 +102,7 @@ static int keepvector_grow(KeepVector* kv, Py_ssize_t min_capacity) {
     return 0;
 }
 
-static int keepvector_append(KeepVector* kv, PyObject* obj) {
+int keepvector_append(KeepVector* kv, PyObject* obj) {
     if (kv->size >= kv->capacity) {
         if (keepvector_grow(kv, kv->size + 1) < 0)
             return -1;
