@@ -47,6 +47,14 @@
 #else
 #include "pycore_dict.h"
 #endif
+// _PySet_NextEntry()
+
+#if PY_VERSION_HEX < PY_VERSION_3_13_HEX
+#include "setobject.h"
+#else
+#include "pycore_setobject.h"
+#endif
+
 
 #include "_memo.h"
 
@@ -786,66 +794,85 @@ static PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_has
         return NULL;
     }
 
-    PyObject* it = PyObject_GetIter(obj);
-    if (!it) {
+    /* Snapshot into a pre-sized tuple without invoking user code. */
+    Py_ssize_t n = PySet_Size(obj);
+    if (n == -1) {
         Py_DECREF(copy);
         return NULL;
     }
+    PyObject* snap = PyTuple_New(n);
+    if (!snap) {
+        Py_DECREF(copy);
+        return NULL;
+    }
+
+    Py_ssize_t pos = 0;
     PyObject* item;
-    while ((item = PyIter_Next(it)) != NULL) {
-        PyObject* citem = deepcopy_c(item, mo);
-        Py_DECREF(item);
+    Py_hash_t hash;
+    Py_ssize_t i = 0;
+
+    while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
+        if (i < n) {
+            /* item is borrowed; store owned ref in the tuple */
+            Py_INCREF(item);
+            PyTuple_SET_ITEM(snap, i, item);
+            i++;
+        } else {
+            /* If the set grows during snapshotting, ignore extras to avoid overflow. */
+        }
+    }
+    if (PyErr_Occurred()) {
+        Py_DECREF(snap);
+        Py_DECREF(copy);
+        return NULL;
+    }
+
+    for (Py_ssize_t j = 0; j < i; j++) {
+        PyObject* elem = PyTuple_GET_ITEM(snap, j); /* borrowed from snapshot */
+        PyObject* citem = deepcopy_c(elem, mo);
         if (!citem) {
-            Py_DECREF(it);
+            Py_DECREF(snap);
             Py_DECREF(copy);
             return NULL;
         }
         if (PySet_Add(copy, citem) < 0) {
             Py_DECREF(citem);
-            Py_DECREF(it);
+            Py_DECREF(snap);
             Py_DECREF(copy);
             return NULL;
         }
         Py_DECREF(citem);
     }
-    Py_DECREF(it);
-    if (PyErr_Occurred()) {
-        Py_DECREF(copy);
-        return NULL;
-    }
+    Py_DECREF(snap);
 
     KEEP_APPEND_AFTER_COPY_C(obj);
     return copy;
 }
 
 static PyObject* deepcopy_frozenset_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
-    PyObject* temp = PyList_New(0);
+    /* Pre-size snapshot: frozenset is immutable, so size won't change mid-loop. */
+    Py_ssize_t n = PySet_Size(obj);
+    if (n == -1)
+        return NULL;
+
+    PyObject* temp = PyTuple_New(n);
     if (!temp)
         return NULL;
 
-    PyObject* it = PyObject_GetIter(obj);
-    if (!it) {
-        Py_DECREF(temp);
-        return NULL;
-    }
+    Py_ssize_t pos = 0, i = 0;
     PyObject* item;
-    while ((item = PyIter_Next(it)) != NULL) {
+    Py_hash_t hash;
+
+    while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
+        /* item is borrowed; deepcopy_c returns a new reference which tuple will own. */
         PyObject* citem = deepcopy_c(item, mo);
-        Py_DECREF(item);
         if (!citem) {
-            Py_DECREF(it);
             Py_DECREF(temp);
             return NULL;
         }
-        if (PyList_Append(temp, citem) < 0) {
-            Py_DECREF(citem);
-            Py_DECREF(it);
-            Py_DECREF(temp);
-            return NULL;
-        }
-        Py_DECREF(citem);
+        PyTuple_SET_ITEM(temp, i, citem); // steals reference to citem
+        i++;
     }
-    Py_DECREF(it);
     if (PyErr_Occurred()) {
         Py_DECREF(temp);
         return NULL;
@@ -1563,33 +1590,57 @@ static PyObject* deepcopy_set_py(
         return NULL;
     }
 
-    PyObject* it = PyObject_GetIter(obj);
-    if (!it) {
+    /* Snapshot into a pre-sized tuple without invoking user code. */
+    Py_ssize_t n = PySet_Size(obj);
+    if (n == -1) {
         Py_DECREF(copy);
         return NULL;
     }
+    PyObject* snap = PyTuple_New(n);
+    if (!snap) {
+        Py_DECREF(copy);
+        return NULL;
+    }
+
+    Py_ssize_t pos = 0;
     PyObject* item;
-    while ((item = PyIter_Next(it)) != NULL) {
-        PyObject* citem = deepcopy_py(item, memo_dict, keep_list_ptr);
-        Py_DECREF(item);
+    Py_hash_t hash;
+    Py_ssize_t i = 0;
+
+    while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
+        if (i < n) {
+            /* item is borrowed; store owned ref in the tuple */
+            Py_INCREF(item);
+            PyTuple_SET_ITEM(snap, i, item);
+            i++;
+        } else {
+            /* If the set grows during snapshotting, ignore extras to avoid overflow. */
+        }
+    }
+    if (PyErr_Occurred()) {
+        Py_DECREF(snap);
+        Py_DECREF(copy);
+        return NULL;
+    }
+
+    /* Deepcopy from the stable snapshot prefix. */
+    for (Py_ssize_t j = 0; j < i; j++) {
+        PyObject* elem = PyTuple_GET_ITEM(snap, j); /* borrowed from snap */
+        PyObject* citem = deepcopy_py(elem, memo_dict, keep_list_ptr);
         if (!citem) {
-            Py_DECREF(it);
+            Py_DECREF(snap);
             Py_DECREF(copy);
             return NULL;
         }
         if (PySet_Add(copy, citem) < 0) {
             Py_DECREF(citem);
-            Py_DECREF(it);
+            Py_DECREF(snap);
             Py_DECREF(copy);
             return NULL;
         }
         Py_DECREF(citem);
     }
-    Py_DECREF(it);
-    if (PyErr_Occurred()) {
-        Py_DECREF(copy);
-        return NULL;
-    }
+    Py_DECREF(snap);
 
     KEEP_APPEND_AFTER_COPY_PY(obj);
     return copy;
@@ -1598,33 +1649,29 @@ static PyObject* deepcopy_set_py(
 static PyObject* deepcopy_frozenset_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
-    PyObject* temp = PyList_New(0);
+    /* Pre-size snapshot: frozenset is immutable, so size won't change mid-loop. */
+    Py_ssize_t n = PySet_Size(obj);
+    if (n == -1)
+        return NULL;
+
+    PyObject* temp = PyTuple_New(n);
     if (!temp)
         return NULL;
 
-    PyObject* it = PyObject_GetIter(obj);
-    if (!it) {
-        Py_DECREF(temp);
-        return NULL;
-    }
+    Py_ssize_t pos = 0, i = 0;
     PyObject* item;
-    while ((item = PyIter_Next(it)) != NULL) {
+    Py_hash_t hash;
+
+    while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
+        /* item is borrowed; deepcopy_py returns a new reference which tuple will own. */
         PyObject* citem = deepcopy_py(item, memo_dict, keep_list_ptr);
-        Py_DECREF(item);
         if (!citem) {
-            Py_DECREF(it);
             Py_DECREF(temp);
             return NULL;
         }
-        if (PyList_Append(temp, citem) < 0) {
-            Py_DECREF(citem);
-            Py_DECREF(it);
-            Py_DECREF(temp);
-            return NULL;
-        }
-        Py_DECREF(citem);
+        PyTuple_SET_ITEM(temp, i, citem);  /* steals reference to citem */
+        i++;
     }
-    Py_DECREF(it);
     if (PyErr_Occurred()) {
         Py_DECREF(temp);
         return NULL;
