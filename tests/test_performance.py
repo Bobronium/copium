@@ -1,3 +1,4 @@
+import platform
 import random
 import sys
 from typing import Any
@@ -41,8 +42,12 @@ COMBINED_CASES = [
     ),
 ]
 
+python_version = ".".join(map(str, sys.version_info[:2]))
+if not getattr(sys, "_is_gil_enabled", lambda: True)():
+    python_version += "t"
+python_version += f"-{platform.machine()}"
 
-if (python_version := ".".join(map(str, sys.version_info[:2]))) == "3.13":
+if python_version == "3.13-x86-64":
     # backwards compatibility with previous benchmarks runs
 
     @pytest.mark.parametrize(
