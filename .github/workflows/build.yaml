@@ -145,35 +145,3 @@ jobs:
           git add assets/*.svg BENCHMARKS.md
           git commit -m "Update benchmark assets and BENCHMARKS.md from CI" || echo "No changes to commit"
           git push
-
-  aggregate-benchmarks:
-    name: Aggregate benchmarks
-    runs-on: ubuntu-latest
-    needs: wheels
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - name: Download pyperf artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          pattern: pyperf-*
-      - name: Run aggregation script
-        run: uv run tools/aggregate_benchmarks.py
-      - name: Upload BENCHMARKS.md
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmarks-md
-          path: BENCHMARKS.md
-      - name: Update assets on main
-        if: github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add assets/*.svg BENCHMARKS.md
-          git commit -m "Update benchmark assets and BENCHMARKS.md from CI" || echo "No changes to commit"
-          git push
-
