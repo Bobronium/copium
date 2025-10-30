@@ -69,15 +69,65 @@ jobs:
 
       - name: Find wheel
         id: wheel
-        run: echo "path=$(ls wheelhouse/*.whl)" >> $GITHUB_OUTPUT
+        shell: bash
+        run: |
+          set -euo pipefail
+          py="${{ matrix.python.tag }}"
+          plat="${{ matrix.build.platform }}"
+          arch="${{ matrix.build.archs }}"
+
+          choose_linux() {
+            # Prefer manylinux if present; otherwise pick musllinux
+            found=$(ls wheelhouse/*-"$py"-"$py"-manylinux*_"$arch".whl 2>/dev/null | head -n1 || true)
+            if [[ -z "$found" ]]; then
+              found=$(ls wheelhouse/*-"$py"-"$py"-musllinux*_"$arch".whl 2>/dev/null | head -n1 || true)
+            fi
+            echo "$found"
+          }
+
+          choose_macos() {
+            # Match by arch; tag looks like macosx_11_0_arm64 or macosx_10_9_x86_64
+            ls wheelhouse/*-"$py"-"$py"-macosx_*_"$arch".whl 2>/dev/null | head -n1 || true
+          }
+
+          choose_windows() {
+            if [[ "$arch" == "AMD64" ]]; then
+              ls wheelhouse/*-"$py"-"$py"-win_amd64.whl 2>/dev/null | head -n1 || true
+            else
+              ls wheelhouse/*-"$py"-"$py"-win_arm64.whl 2>/dev/null | head -n1 || true
+            fi
+          }
+
+          case "$plat" in
+            linux)   wheel="$(choose_linux)"   ;;
+            macos)   wheel="$(choose_macos)"   ;;
+            windows) wheel="$(choose_windows)" ;;
+            *) echo "Unknown platform: $plat" >&2; exit 1 ;;
+          esac
+
+          if [[ -z "$wheel" ]]; then
+            echo "No matching wheel found for $py $plat $arch" >&2
+            ls -al wheelhouse >&2 || true
+            exit 1
+          fi
+
+          printf 'path=%s\n' "$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Tune pyperf
+        run: |
+          uv sync --python ${{ matrix.python.display }}  --extra benchmark
+          uv run sudo pyperf system tune || echo unable to tune system
 
       - name: Run stdlib pyperf benchmark
-        run: uv run --with pyperf pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        env:
+          PYTHONHASHSEED: "0"
+        run: uv run --python ${{ matrix.python.display }}  pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Run copium pyperf benchmark
         env:
+          PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
-        run: uv run --with ${{ steps.wheel.outputs.path }} --with pyperf pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --python ${{ matrix.python.display }}  ${{ steps.wheel.outputs.path }} --with pyperf pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Upload pyperf jsons
         uses: actions/upload-artifact@v4
@@ -88,17 +138,13 @@ jobs:
             copium-*.json
 
       - name: Sync deps without project
-        run: uv sync --extra test --no-install-project
-
-      - name: Install wheel
-        run: uv pip install ${{ steps.wheel.outputs.path }}
+        run: uv sync --python ${{ matrix.python.display }} --extra test --no-install-project
 
       - name: Run codspeed benchmarks
         uses: CodSpeedHQ/action@v4
         with:
           mode: instrumentation
-          run: uv run --no-sync pytest tests/ --codspeed
-
+          run: uv run --python ${{ matrix.python.display }} --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed
   sdist:
     runs-on: ubuntu-latest
     steps:
