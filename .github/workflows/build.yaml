@@ -114,20 +114,20 @@ jobs:
           printf 'path=%s\n' "$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Tune pyperf
+        if: runner.os == 'Linux'
         run: |
-          uv sync --python ${{ matrix.python.display }}  --extra benchmark
-          uv run sudo pyperf system tune || echo unable to tune system
+          sudo uv run pyperf system tune || echo unable to tune system
 
       - name: Run stdlib pyperf benchmark
         env:
           PYTHONHASHSEED: "0"
-        run: uv run --python ${{ matrix.python.display }} --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --python ${{ matrix.python.display }} --with pyperf --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Run copium pyperf benchmark
         env:
           PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
-        run: uv run --python ${{ matrix.python.display }} --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --python ${{ matrix.python.display }} --with pyperf --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Upload pyperf jsons
         uses: actions/upload-artifact@v4
