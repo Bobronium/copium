@@ -7,7 +7,6 @@
  * - Implements MutableMapping protocol with views
  * - Keepalive vector with a Python-facing proxy implementing a MutableSequence
  * - C hooks used by _copying.c:
- *     - Memo_New, memo_lookup_obj(_h), memo_store_obj(_h), memo_hash_pointer
  *     - memo_keepalive_ensure, memo_keepalive_append, memo_ready_types
  */
 #define PY_SSIZE_T_CLEAN
@@ -716,56 +715,6 @@ PyTypeObject Memo_Type = {
     .tp_methods = Memo_methods,
 };
 
-/* --------------------------- C hooks for _copying.c ------------------------ */
-
-/* Old generic APIs (no precomputed hash) */
-PyObject* memo_lookup_obj(PyObject* memo, void* key) {
-    if (Py_TYPE(memo) == &Memo_Type) {
-        MemoObject* mo = (MemoObject*)memo;
-        return memo_table_lookup(mo->table, key);
-    } else {
-        PyObject* pykey = PyLong_FromVoidPtr(key);
-        if (!pykey)
-            return NULL;
-        PyObject* res = PyDict_GetItemWithError(memo, pykey);
-        Py_DECREF(pykey);
-        return res;
-    }
-}
-
-int memo_store_obj(PyObject* memo, void* key, PyObject* value) {
-    if (Py_TYPE(memo) == &Memo_Type) {
-        MemoObject* mo = (MemoObject*)memo;
-        return memo_table_insert(&mo->table, key, value);
-    } else {
-        PyObject* pykey = PyLong_FromVoidPtr(key);
-        if (!pykey)
-            return -1;
-        int res = PyDict_SetItem(memo, pykey, value);
-        Py_DECREF(pykey);
-        return res;
-    }
-}
-
-/* New hash-aware hot-path APIs (use only for C _Memo; fall back for PyDict) */
-PyObject* memo_lookup_obj_h(PyObject* memo, void* key, Py_ssize_t khash) {
-    if (Py_TYPE(memo) == &Memo_Type) {
-        MemoObject* mo = (MemoObject*)memo;
-        return memo_table_lookup_h(mo->table, key, khash);
-    } else {
-        /* For Python dicts, we can't rely on internal _KnownHash APIs portably. */
-        return memo_lookup_obj(memo, key);
-    }
-}
-
-int memo_store_obj_h(PyObject* memo, void* key, PyObject* value, Py_ssize_t khash) {
-    if (Py_TYPE(memo) == &Memo_Type) {
-        MemoObject* mo = (MemoObject*)memo;
-        return memo_table_insert_h(&mo->table, key, value, khash);
-    } else {
-        return memo_store_obj(memo, key, value);
-    }
-}
 
 /* --------------------------- Keepalive unification ------------------------- */
 
