@@ -1,15 +1,18 @@
+import collections
 import copy as stdlib_copy
 import sys
 import weakref
 from collections.abc import Generator
 from contextlib import contextmanager
+from types import MappingProxyType
 from typing import Any
 
 import pytest
 from indifference import assert_equivalent_transformations
 
 import copium
-from tests.conftest import CASES
+from datamodelzoo import CASES
+from tests.conftest import CASE_PARAMS
 
 
 def test_deepcopy_keepalive_internal(copy) -> None:
@@ -77,25 +80,55 @@ def test_mutable_keys(copy):
     assert original_key not in copied
 
 
-@pytest.mark.parametrize("case", CASES)
-def test_duper_deepcopy_parity(case: Any, copy) -> None:
-    deepcopy_failed = False
-    try:
-        baseline = stdlib_copy.deepcopy(case.obj)
-    except Exception as e:
-        baseline = e
-        deepcopy_failed = True
+memo_options = ["absent", "dict", "None", "mutable_mapping", "mapping"]
+
+
+@pytest.mark.parametrize("memo", memo_options, ids=[f"memo_{option}" for option in memo_options])
+@pytest.mark.parametrize("case", CASE_PARAMS)
+def test_duper_deepcopy_parity(case: Any, copy, memo) -> None:
+    builtin_deepcopy_error = None
+
+
+
+    def get_kwargs():
+        if memo == "dict":
+            kwargs = {"memo": {}}
+        elif memo == "None":
+            kwargs = {"memo": None}
+        elif memo == "mapping":
+            kwargs = {"memo": collections.UserDict()}
+        elif memo == "mapping":
+            kwargs = {"memo": MappingProxyType({})}  # expected to throw
+        else:
+            kwargs = {}
+        return kwargs
 
     try:
-        candidate = copy.deepcopy(case.obj)
+        baseline = stdlib_copy.deepcopy(case.obj, **get_kwargs())
     except Exception as e:
-        if not deepcopy_failed:
+        baseline = None
+        builtin_deepcopy_error = e
+
+    candidate_name = f"{copy.deepcopy.__module__}.{copy.deepcopy.__name__}"
+    try:
+        candidate = copy.deepcopy(case.obj, **get_kwargs())
+    except Exception as e:
+        if builtin_deepcopy_error is None:
             raise AssertionError(
-                f"{copy.deepcopy} failed unexpectedly when {stdlib_copy.deepcopy} didn't"
+                f"{candidate_name} failed unexpectedly when copy.deepcopy didn't"
             ) from e
-        assert type(e) is type(baseline), "copium failed with different error"
-        assert e.args == baseline.args, "copium failed with different error message"
+        assert type(e) is type(builtin_deepcopy_error), (
+            f"{candidate_name} failed with different error"
+        )
+        assert e.args == builtin_deepcopy_error.args, (
+            f"{candidate_name} failed with different error message"
+        )
     else:
+        if builtin_deepcopy_error is not None:
+            raise AssertionError(
+                f"{candidate_name} expected to produce {builtin_deepcopy_error!r} exception, but didn't"
+            ) from builtin_deepcopy_error
+
         assert_equivalent_transformations(
             case.obj,
             baseline,

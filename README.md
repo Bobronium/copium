@@ -82,8 +82,6 @@ There are two main benefits of using `copium.patch`,
 - unless `memo` argument supplied as `dict` when calling `copium.deepcopy()`, special lightweight memo storage will be
   used to reduce memoization overhead. It implements `MutableMapping` methods, so any custom `__deepcopy__` methods
   should work as expected
-- `copium.deepcopy()` will raise `TypeError` if `type(memo) is not dict` — if you're unsure what it means, don't worry —
-  you don't need to supply memo to deepcopy in the first place.
 - `copium` uses unstable CPython API. This means that it might break on new major Python release
 
 ## Benchmarks

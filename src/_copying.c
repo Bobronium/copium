@@ -175,11 +175,12 @@ static inline void dict_iter_init(DictIterGuard* di, PyObject* dict) {
     di->last_event = 0;
     di->prev = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
 
+    /* Push onto TLS stack first so any same-thread mutation after Watch sees this guard. */
+    PyThread_tss_set(&g_dictiter_tss, di);
+
     if (g_dict_watcher_registered && PyDict_Watch(g_dict_watcher_id, dict) == 0) {
         di->watching = 1;
     }
-    /* Push onto TLS stack so the watcher callback can see us. */
-    PyThread_tss_set(&g_dictiter_tss, di);
 }
 
 static inline void dict_iter_cleanup(DictIterGuard* di) {
@@ -277,6 +278,7 @@ typedef struct {
     PyObject* str_new;
 
     // cached types
+    PyObject* sentinel;
     PyTypeObject* BuiltinFunctionType;
     PyTypeObject* MethodType;
     PyTypeObject* CodeType;
@@ -512,57 +514,67 @@ static inline void _copium_recdepth_leave(void) {
 
 /* ----------------------- Python-dict memo helpers (inline) ------------------ */
 
-static inline PyObject* dict_memo_lookup(PyObject* dict, void* key_ptr) {
+static PyObject* custom_memo_lookup(PyObject* memo, void* key_ptr) {
     PyObject* pykey = PyLong_FromVoidPtr(key_ptr);
-    if (!pykey)
+    if (UNLIKELY(!pykey))
         return NULL;
-    PyObject* res = PyDict_GetItemWithError(dict, pykey); /* borrowed */
-    Py_DECREF(pykey);
-    return res;
+    PyObject* res;
+    if (PyDict_CheckExact(memo)) {
+        res = PyDict_GetItemWithError(memo, pykey);
+        Py_DECREF(pykey);
+        if (UNLIKELY(res == NULL)) {
+            return NULL;
+        }
+        Py_INCREF(res);
+        return res;
+    } else {
+        res = PyObject_CallMethod(memo, "get", "OO", pykey, module_state.sentinel);
+        Py_DECREF(pykey);
+        if (UNLIKELY(!res))
+            return NULL;
+        if (res == module_state.sentinel) {
+            Py_DECREF(res);
+            return NULL;
+        }
+        return res;
+    }
 }
 
-static inline int dict_memo_store(PyObject* dict, void* key_ptr, PyObject* value) {
+static int custom_memo_store(PyObject* memo, void* key_ptr, PyObject* value) {
     PyObject* pykey = PyLong_FromVoidPtr(key_ptr);
-    if (!pykey)
+    if (UNLIKELY(!pykey))
         return -1;
-    int rc = PyDict_SetItem(dict, pykey, value);
+    int rc;
+    if (PyDict_CheckExact(memo)) {
+        rc = PyDict_SetItem(memo, pykey, value);
+    } else {
+        rc = PyObject_SetItem(memo, pykey, value);
+    }
     Py_DECREF(pykey);
     return rc;
 }
 
-static inline int ensure_keep_list_for_pymemo(PyObject* memo_dict, PyObject** keep_list_ptr) {
+static inline int ensure_keep_list_for_pymemo(PyObject* memo, PyObject** keep_list_ptr) {
     if (*keep_list_ptr)
         return 0;
-    PyObject* pykey = PyLong_FromVoidPtr((void*)memo_dict);
-    if (!pykey)
-        return -1;
-
-    PyObject* existing = PyDict_GetItemWithError(memo_dict, pykey); /* borrowed */
-    if (!existing) {
-        if (PyErr_Occurred()) {
-            Py_DECREF(pykey);
-            return -1;
-        }
-        PyObject* new_list = PyList_New(0);
-        if (!new_list) {
-            Py_DECREF(pykey);
-            return -1;
-        }
-        if (PyDict_SetItem(memo_dict, pykey, new_list) < 0) {
-            Py_DECREF(pykey);
-            Py_DECREF(new_list);
-            return -1;
-        }
-        Py_DECREF(new_list);
-        existing = PyDict_GetItemWithError(memo_dict, pykey); /* reborrow */
-        if (!existing) {
-            Py_DECREF(pykey);
-            return -1;
-        }
+    void* key_ptr = (void*)memo;
+    PyObject* existing = custom_memo_lookup(memo, key_ptr);
+    if (existing) {
+        *keep_list_ptr = existing;
+        return 0;
     }
-    Py_INCREF(existing);
-    *keep_list_ptr = existing;
-    Py_DECREF(pykey);
+    if (PyErr_Occurred())
+        return -1;
+    PyObject* new_list = PyList_New(0);
+    if (!new_list)
+        return -1;
+    if (custom_memo_store(memo, key_ptr, new_list) < 0) {
+        Py_DECREF(new_list);
+        return -1;
+    }
+    Py_DECREF(new_list);
+    Py_INCREF(new_list);
+    *keep_list_ptr = new_list;
     return 0;
 }
 
@@ -1321,8 +1333,8 @@ static PyObject* deepcopy_fallback_c(PyObject* obj, MemoObject* mo, Py_ssize_t i
 
 /* === Python-dict memo specializations ====================================== */
 
-#define MEMO_LOOKUP_PY(id, h) dict_memo_lookup(memo_dict, (id))
-#define MEMO_STORE_PY(id, val, h) dict_memo_store(memo_dict, (id), (val))
+#define MEMO_LOOKUP_PY(id, h) custom_memo_lookup(memo_dict, (id))
+#define MEMO_STORE_PY(id, val, h) custom_memo_store(memo_dict, (id), (val))
 #define KEEP_APPEND_AFTER_COPY_PY(src)                                           \
     do {                                                                         \
         if ((copy) != (src)) {                                                   \
@@ -1373,7 +1385,9 @@ static inline PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject
     Py_ssize_t h = memo_hash_pointer(id);
     PyObject* hit = MEMO_LOOKUP_PY(id, h);
     if (hit)
-        return Py_NewRef(hit);
+        return hit;
+    if (PyErr_Occurred())
+        return NULL;
 
     PyTypeObject* tp = Py_TYPE(obj);
     if (tp == &PyList_Type)
@@ -1477,7 +1491,7 @@ static PyObject* deepcopy_tuple_py(
     PyObject* existing = MEMO_LOOKUP_PY((void*)obj, id_hash);
     if (existing) {
         Py_DECREF(copy);
-        return Py_NewRef(existing);
+        return existing;
     }
     if (PyErr_Occurred()) {
         Py_DECREF(copy);
@@ -2210,7 +2224,7 @@ have_args:
         return result;
     }
 
-    if (PyDict_Check(memo_arg)) {
+    else {
         Py_INCREF(memo_arg);
         PyObject* memo_dict = memo_arg;
         PyObject* keep_list = NULL; /* lazily created on first append */
@@ -2221,11 +2235,6 @@ have_args:
         Py_DECREF(memo_dict);
         return result;
     }
-
-    PyErr_Format(
-        PyExc_TypeError, "argument 'memo' must be dict, not %.200s", Py_TYPE(memo_arg)->tp_name
-    );
-    return NULL;
 }
 
 /* -------------------------------- Utilities -------------------------------- */
@@ -2826,6 +2835,7 @@ static void cleanup_on_init_failure(void) {
     Py_XDECREF(module_state.copyreg_newobj);
     Py_XDECREF(module_state.copyreg_newobj_ex);
     Py_XDECREF(module_state.create_precompiler_reconstructor);
+    Py_XDECREF(module_state.sentinel);
 
     if (PyThread_tss_is_created(&module_state.memo_tss)) {
         PyThread_tss_delete(&module_state.memo_tss);
@@ -2992,6 +3002,20 @@ int _copium_copying_init(PyObject* module) {
         return -1;
     }
     Py_DECREF(mod_copy);
+
+    module_state.sentinel = PyList_New(0);
+    if (!module_state.sentinel) {
+        PyErr_SetString(PyExc_ImportError, "copium: failed to create sentinel list");
+        Py_XDECREF(mod_types);
+        Py_XDECREF(mod_builtins);
+        Py_XDECREF(mod_weakref);
+        Py_XDECREF(mod_copyreg);
+        Py_XDECREF(mod_re);
+        Py_XDECREF(mod_decimal);
+        Py_XDECREF(mod_fractions);
+        cleanup_on_init_failure();
+        return -1;
+    }
 
     // Create thread-local recursion depth guard
     if (PyThread_tss_create(&module_state.recdepth_tss) != 0) {
