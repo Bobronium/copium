@@ -121,13 +121,13 @@ jobs:
       - name: Run stdlib pyperf benchmark
         env:
           PYTHONHASHSEED: "0"
-        run: uv run --python ${{ matrix.python.display }}  pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --python ${{ matrix.python.display }} --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Run copium pyperf benchmark
         env:
           PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
-        run: uv run --python ${{ matrix.python.display }}  ${{ steps.wheel.outputs.path }} --with pyperf pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --python ${{ matrix.python.display }} --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Upload pyperf jsons
         uses: actions/upload-artifact@v4
