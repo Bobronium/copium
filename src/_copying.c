@@ -50,6 +50,12 @@
 
 #include "_memo.h"
 
+#if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
+static Py_tss_t g_dictiter_tss = Py_tss_NEEDS_INIT;
+static int g_dict_watcher_id = -1;
+static int g_dict_watcher_registered = 0;
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -124,6 +130,106 @@ static inline int get_optional_attr(PyObject* obj, PyObject* name, PyObject** ou
    while ((ret = dict_iter_next(&di, &key, &value)) > 0) { ... }
    if (ret < 0) -> error set (mutation detected)
 */
+#if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
+/* Python 3.14+: use public dict watcher API to detect mutation without touching private fields. */
+
+typedef struct DictIterGuard {
+    PyObject* dict;
+    Py_ssize_t pos;
+    int watching;
+    int mutated;
+    int size_changed; /* added/removed/cleared/cloned vs value-only change */
+    int last_event;   /* PyDict_WatchEvent (for debugging/future use) */
+    struct DictIterGuard* prev;
+} DictIterGuard;
+
+/* Walk the TLS stack and flag the top-most guard matching `dict`. */
+static int _copium_dict_watcher_cb(
+    PyDict_WatchEvent event, PyObject* dict, PyObject* key, PyObject* new_value
+) {
+    (void)key;
+    (void)new_value;
+    DictIterGuard* g = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
+    for (; g; g = g->prev) {
+        if (g->dict == dict) {
+            g->mutated = 1;
+            g->last_event = (int)event;
+            /* Only actual size changes should map to the stdlib's "changed size" message. */
+            if (event == PyDict_EVENT_ADDED || event == PyDict_EVENT_DELETED ||
+                event == PyDict_EVENT_CLEARED) {
+                g->size_changed = 1;
+            }
+            /* CLONED, MODIFIED, etc. are treated as "keys changed" for parity. */
+            /* DO NOT break: mark all active guards for this dict (handles nested iterations). */
+        }
+    }
+    return 0; /* never raise; per docs this would become unraisable */
+}
+
+static inline void dict_iter_init(DictIterGuard* di, PyObject* dict) {
+    di->dict = dict;
+    di->pos = 0;
+    di->watching = 0;
+    di->mutated = 0;
+    di->size_changed = 0;
+    di->last_event = 0;
+    di->prev = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
+
+    if (g_dict_watcher_registered && PyDict_Watch(g_dict_watcher_id, dict) == 0) {
+        di->watching = 1;
+    }
+    /* Push onto TLS stack so the watcher callback can see us. */
+    PyThread_tss_set(&g_dictiter_tss, di);
+}
+
+static inline void dict_iter_cleanup(DictIterGuard* di) {
+    /* Pop from TLS stack (defensive unlink in case of nested/early exits). */
+    DictIterGuard* top = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
+    if (top == di) {
+        PyThread_tss_set(&g_dictiter_tss, di->prev);
+    } else {
+        DictIterGuard* cur = top;
+        while (cur && cur->prev != di)
+            cur = cur->prev;
+        if (cur && cur->prev == di)
+            cur->prev = di->prev;
+    }
+    if (di->watching) {
+        PyDict_Unwatch(g_dict_watcher_id, di->dict);
+        di->watching = 0;
+    }
+}
+
+static inline int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** value) {
+    if (PyDict_Next(di->dict, &di->pos, key, value)) {
+        if (UNLIKELY(di->mutated)) {
+            if (di->size_changed) {
+                PyErr_SetString(PyExc_RuntimeError, "dictionary changed size during iteration");
+            } else {
+                /* Maintain conservative behavior consistent with prior version-tag guard. */
+                PyErr_SetString(PyExc_RuntimeError, "dictionary keys changed during iteration");
+            }
+            dict_iter_cleanup(di);
+            return -1;
+        }
+        return 1;
+    }
+    /* End of iteration. If a mutation happened at any point, surface it now. */
+    if (UNLIKELY(di->mutated)) {
+        if (di->size_changed) {
+            PyErr_SetString(PyExc_RuntimeError, "dictionary changed size during iteration");
+        } else {
+            PyErr_SetString(PyExc_RuntimeError, "dictionary keys changed during iteration");
+        }
+        dict_iter_cleanup(di);
+        return -1;
+    }
+    dict_iter_cleanup(di);
+    return 0;
+}
+
+#else /* < 3.14: keep version-tag based guard (uses private fields, but gated) */
+
 typedef struct {
     PyObject* dict;
     Py_ssize_t pos;
@@ -154,6 +260,7 @@ static inline int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** v
     }
     return 0;
 }
+#endif
 
 /* ------------------------------ Module state --------------------------------
  * Cache frequently used objects/types. Pin-specific caches live in _pinning.c.
@@ -649,7 +756,7 @@ static PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_ha
         Py_DECREF(ckey);
         Py_DECREF(cvalue);
     }
-    if (ret < 0) {  /* mutation detected -> error already set */
+    if (ret < 0) { /* mutation detected -> error already set */
         Py_DECREF(copy);
         return NULL;
     }
@@ -1422,7 +1529,7 @@ static PyObject* deepcopy_dict_py(
         Py_DECREF(ckey);
         Py_DECREF(cvalue);
     }
-    if (ret < 0) {  /* mutation detected -> error already set */
+    if (ret < 0) { /* mutation detected -> error already set */
         Py_DECREF(copy);
         return NULL;
     }
@@ -2726,6 +2833,16 @@ static void cleanup_on_init_failure(void) {
     if (PyThread_tss_is_created(&module_state.recdepth_tss)) {
         PyThread_tss_delete(&module_state.recdepth_tss);
     }
+#if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
+    if (PyThread_tss_is_created(&g_dictiter_tss)) {
+        PyThread_tss_delete(&g_dictiter_tss);
+    }
+    if (g_dict_watcher_registered) {
+        PyDict_ClearWatcher(g_dict_watcher_id);
+        g_dict_watcher_registered = 0;
+        g_dict_watcher_id = -1;
+    }
+#endif
 }
 
 #define LOAD_TYPE(source_module, type_name, target_field)                              \
@@ -2904,6 +3021,21 @@ int _copium_copying_init(PyObject* module) {
         return -1;
     }
 
+#if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
+    // Create TLS for dict-iteration watcher stack
+    if (PyThread_tss_create(&g_dictiter_tss) != 0) {
+        PyErr_SetString(PyExc_ImportError, "copium: failed to create dict-iteration TSS");
+        cleanup_on_init_failure();
+        return -1;
+    }
+    g_dict_watcher_id = PyDict_AddWatcher(_copium_dict_watcher_cb);
+    if (g_dict_watcher_id < 0) {
+        PyErr_SetString(PyExc_ImportError, "copium: failed to register dict watcher");
+        cleanup_on_init_failure();
+        return -1;
+    }
+    g_dict_watcher_registered = 1;
+#endif
     Py_DECREF(mod_types);
     Py_DECREF(mod_builtins);
     Py_DECREF(mod_weakref);
