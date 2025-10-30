@@ -72,12 +72,12 @@ jobs:
         run: echo "path=$(ls wheelhouse/*.whl)" >> $GITHUB_OUTPUT
 
       - name: Run stdlib pyperf benchmark
-        run: uv run --with pyperf pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --with pyperf pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Run copium pyperf benchmark
         env:
           COPIUM_PATCH_DEEPCOPY: 1
-        run: uv run --with ${{ steps.wheel.outputs.path }} --with pyperf pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --with ${{ steps.wheel.outputs.path }} --with pyperf pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Upload pyperf jsons
         uses: actions/upload-artifact@v4
