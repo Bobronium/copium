@@ -55,7 +55,6 @@
 #include "pycore_setobject.h"
 #endif
 
-
 #include "_memo.h"
 
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
@@ -144,9 +143,10 @@ static inline int get_optional_attr(PyObject* obj, PyObject* name, PyObject** ou
 typedef struct DictIterGuard {
     PyObject* dict;
     Py_ssize_t pos;
+    Py_ssize_t size0; /* initial size snapshot (detect transient size changes like pop→add) */
     int watching;
     int mutated;
-    int size_changed; /* added/removed/cleared/cloned vs value-only change */
+    int size_changed; /* set if size ever differed from size0; else keys-only changes */
     int last_event;   /* PyDict_WatchEvent (for debugging/future use) */
     struct DictIterGuard* prev;
 } DictIterGuard;
@@ -162,12 +162,20 @@ static int _copium_dict_watcher_cb(
         if (g->dict == dict) {
             g->mutated = 1;
             g->last_event = (int)event;
-            /* Only actual size changes should map to the stdlib's "changed size" message. */
+
+            /* Treat as "changed size" if:
+               - the event is an add/delete/clear, OR
+               - the dict's current size differs from the initial snapshot (transient del→add). */
             if (event == PyDict_EVENT_ADDED || event == PyDict_EVENT_DELETED ||
-                event == PyDict_EVENT_CLEARED) {
+                event == PyDict_EVENT_CLEARED || event == PyDict_EVENT_CLONED) {
                 g->size_changed = 1;
+            } else {
+                Py_ssize_t cur = PyDict_Size(dict);
+                if (cur >= 0 && cur != g->size0) {
+                    g->size_changed = 1;
+                }
             }
-            /* CLONED, MODIFIED, etc. are treated as "keys changed" for parity. */
+            /* Other events (CLONED, MODIFIED, etc.) fall back to "keys changed". */
             /* DO NOT break: mark all active guards for this dict (handles nested iterations). */
         }
     }
@@ -177,6 +185,7 @@ static int _copium_dict_watcher_cb(
 static inline void dict_iter_init(DictIterGuard* di, PyObject* dict) {
     di->dict = dict;
     di->pos = 0;
+    di->size0 = PyDict_Size(dict); /* snapshot initial size (errors unlikely; -1 harmless) */
     di->watching = 0;
     di->mutated = 0;
     di->size_changed = 0;
@@ -212,12 +221,20 @@ static inline void dict_iter_cleanup(DictIterGuard* di) {
 static inline int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** value) {
     if (PyDict_Next(di->dict, &di->pos, key, value)) {
         if (UNLIKELY(di->mutated)) {
-            if (di->size_changed) {
-                PyErr_SetString(PyExc_RuntimeError, "dictionary changed size during iteration");
+            /* Decide message based on net size delta from start of iteration. */
+            int size_changed_now = 0;
+            Py_ssize_t cur = PyDict_Size(di->dict);
+            if (cur >= 0) {
+                size_changed_now = (cur != di->size0);
             } else {
-                /* Maintain conservative behavior consistent with prior version-tag guard. */
-                PyErr_SetString(PyExc_RuntimeError, "dictionary keys changed during iteration");
+                /* Fallback if PyDict_Size errored: use watcher heuristic. */
+                size_changed_now = di->size_changed;
             }
+            PyErr_SetString(
+                PyExc_RuntimeError,
+                size_changed_now ? "dictionary changed size during iteration"
+                                 : "dictionary keys changed during iteration"
+            );
             dict_iter_cleanup(di);
             return -1;
         }
@@ -225,11 +242,18 @@ static inline int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** v
     }
     /* End of iteration. If a mutation happened at any point, surface it now. */
     if (UNLIKELY(di->mutated)) {
-        if (di->size_changed) {
-            PyErr_SetString(PyExc_RuntimeError, "dictionary changed size during iteration");
+        int size_changed_now = 0;
+        Py_ssize_t cur = PyDict_Size(di->dict);
+        if (cur >= 0) {
+            size_changed_now = (cur != di->size0);
         } else {
-            PyErr_SetString(PyExc_RuntimeError, "dictionary keys changed during iteration");
+            size_changed_now = di->size_changed;
         }
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            size_changed_now ? "dictionary changed size during iteration"
+                             : "dictionary keys changed during iteration"
+        );
         dict_iter_cleanup(di);
         return -1;
     }
@@ -870,7 +894,7 @@ static PyObject* deepcopy_frozenset_c(PyObject* obj, MemoObject* mo, Py_ssize_t 
             Py_DECREF(temp);
             return NULL;
         }
-        PyTuple_SET_ITEM(temp, i, citem); // steals reference to citem
+        PyTuple_SET_ITEM(temp, i, citem);  // steals reference to citem
         i++;
     }
     if (PyErr_Occurred()) {
@@ -1669,7 +1693,7 @@ static PyObject* deepcopy_frozenset_py(
             Py_DECREF(temp);
             return NULL;
         }
-        PyTuple_SET_ITEM(temp, i, citem);  /* steals reference to citem */
+        PyTuple_SET_ITEM(temp, i, citem);  // steals reference to citem
         i++;
     }
     if (PyErr_Occurred()) {
