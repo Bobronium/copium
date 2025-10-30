@@ -511,6 +511,24 @@ static PyObject* deepcopy_list_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_ha
         Py_DECREF(Py_None);
         PyList_SET_ITEM(copy, i, copied_item);
     }
+
+    /* If the source list grew during the first pass, append the extra tail items. */
+    Py_ssize_t i2 = sz;
+    while (i2 < Py_SIZE(obj)) {
+        PyObject* item2 = PyList_GET_ITEM(obj, i2);
+        PyObject* copied2 = deepcopy_c(item2, mo);  // second-pass guard
+        if (!copied2) {
+            Py_DECREF(copy);
+            return NULL;
+        }
+        if (PyList_Append(copy, copied2) < 0) {
+            Py_DECREF(copied2);
+            Py_DECREF(copy);
+            return NULL;
+        }
+        Py_DECREF(copied2);
+        i2++;
+    }
     KEEP_APPEND_AFTER_COPY_C(obj);
     return copy;
 }
@@ -1253,6 +1271,24 @@ static PyObject* deepcopy_list_py(
         }
         Py_DECREF(Py_None);
         PyList_SET_ITEM(copy, i, copied_item);
+    }
+
+    // If the source list grew during the first pass, append extra tail items.
+    Py_ssize_t i2 = sz;
+    while (i2 < Py_SIZE(obj)) {
+        PyObject* item2 = PyList_GET_ITEM(obj, i2);
+        PyObject* copied2 = deepcopy_py(item2, memo_dict, keep_list_ptr);
+        if (!copied2) {
+            Py_DECREF(copy);
+            return NULL;
+        }
+        if (PyList_Append(copy, copied2) < 0) {
+            Py_DECREF(copied2);
+            Py_DECREF(copy);
+            return NULL;
+        }
+        Py_DECREF(copied2);
+        i2++;
     }
     KEEP_APPEND_AFTER_COPY_PY(obj);
     return copy;
