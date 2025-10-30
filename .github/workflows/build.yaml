@@ -65,6 +65,7 @@ jobs:
           path: ./wheelhouse/*.whl
 
       - name: Clone pyperformance
+        if: runner.os == 'Linux'
         run: git clone https://github.com/python/pyperformance.git --depth 1
 
       - name: Find wheel
@@ -119,11 +120,13 @@ jobs:
           sudo uv run pyperf system tune || echo unable to tune system
 
       - name: Run stdlib pyperf benchmark
+        if: runner.os == 'Linux'
         env:
           PYTHONHASHSEED: "0"
         run: uv run --python ${{ matrix.python.display }} --with pyperf --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Run copium pyperf benchmark
+        if: runner.os == 'Linux'
         env:
           PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
@@ -138,9 +141,11 @@ jobs:
             copium-*.json
 
       - name: Sync deps without project
+        if: runner.os == 'Linux'
         run: uv sync --python ${{ matrix.python.display }} --extra test --no-install-project
 
       - name: Run codspeed benchmarks
+        if: runner.os == 'Linux'
         uses: CodSpeedHQ/action@v4
         with:
           mode: instrumentation
