@@ -117,6 +117,44 @@ static inline int get_optional_attr(PyObject* obj, PyObject* name, PyObject** ou
 #define PyObject_GetOptionalAttr(obj, name, out) get_optional_attr((obj), (name), (out))
 #endif
 
+/* -------- Dict iteration with mutation check (fast path) -------- */
+/* Abstraction:
+   DictIterGuard di;
+   dict_iter_init(&di, dict);
+   while ((ret = dict_iter_next(&di, &key, &value)) > 0) { ... }
+   if (ret < 0) -> error set (mutation detected)
+*/
+typedef struct {
+    PyObject* dict;
+    Py_ssize_t pos;
+    uint64_t ver0;
+    Py_ssize_t used0;
+} DictIterGuard;
+
+static inline void dict_iter_init(DictIterGuard* di, PyObject* dict) {
+    di->dict = dict;
+    di->pos = 0;
+    di->ver0 = ((PyDictObject*)dict)->ma_version_tag;
+    di->used0 = ((PyDictObject*)dict)->ma_used;
+}
+
+static inline int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** value) {
+    if (PyDict_Next(di->dict, &di->pos, key, value)) {
+        uint64_t ver_now = ((PyDictObject*)di->dict)->ma_version_tag;
+        if (UNLIKELY(ver_now != di->ver0)) {
+            Py_ssize_t used_now = ((PyDictObject*)di->dict)->ma_used;
+            if (used_now != di->used0) {
+                PyErr_SetString(PyExc_RuntimeError, "dictionary changed size during iteration");
+            } else {
+                PyErr_SetString(PyExc_RuntimeError, "dictionary keys changed during iteration");
+            }
+            return -1;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 /* ------------------------------ Module state --------------------------------
  * Cache frequently used objects/types. Pin-specific caches live in _pinning.c.
  */
@@ -585,9 +623,12 @@ static PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_ha
         return NULL;
     }
 
-    Py_ssize_t pos = 0;
+    DictIterGuard di;
+    dict_iter_init(&di, obj);
+
     PyObject *key, *value;
-    while (PyDict_Next(obj, &pos, &key, &value)) {
+    int ret;
+    while ((ret = dict_iter_next(&di, &key, &value)) > 0) {
         PyObject* ckey = deepcopy_c(key, mo);
         if (!ckey) {
             Py_DECREF(copy);
@@ -608,6 +649,11 @@ static PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_ha
         Py_DECREF(ckey);
         Py_DECREF(cvalue);
     }
+    if (ret < 0) {  /* mutation detected -> error already set */
+        Py_DECREF(copy);
+        return NULL;
+    }
+
     KEEP_APPEND_AFTER_COPY_C(obj);
     return copy;
 }
@@ -1350,9 +1396,12 @@ static PyObject* deepcopy_dict_py(
         return NULL;
     }
 
-    Py_ssize_t pos = 0;
+    DictIterGuard di;
+    dict_iter_init(&di, obj);
+
     PyObject *key, *value;
-    while (PyDict_Next(obj, &pos, &key, &value)) {
+    int ret;
+    while ((ret = dict_iter_next(&di, &key, &value)) > 0) {
         PyObject* ckey = deepcopy_py(key, memo_dict, keep_list_ptr);
         if (!ckey) {
             Py_DECREF(copy);
@@ -1373,6 +1422,11 @@ static PyObject* deepcopy_dict_py(
         Py_DECREF(ckey);
         Py_DECREF(cvalue);
     }
+    if (ret < 0) {  /* mutation detected -> error already set */
+        Py_DECREF(copy);
+        return NULL;
+    }
+
     KEEP_APPEND_AFTER_COPY_PY(obj);
     return copy;
 }
