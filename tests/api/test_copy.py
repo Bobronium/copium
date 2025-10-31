@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: 2023-present Arseny Boykov (Bobronium) <mail@bobronium.me>
 #
 # SPDX-License-Identifier: MIT
+import re
 import sys
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 from typing import NamedTuple
 
@@ -42,7 +44,6 @@ def test_copy() -> None:
 
 @pytest.mark.typecheck
 def test_copy_errors() -> None:
-    # deepcopy: missing required argument
     if not TYPE_CHECKING:
         with pytest.raises(TypeError, match=r"missing 1 required positional argument: 'x'"):
             copium.deepcopy()
@@ -56,7 +57,6 @@ def test_copy_errors() -> None:
         ):
             copium.deepcopy([1, 2, 3], {}, "extra1", "extra2")
 
-        # deepcopy: keyword errors
         with pytest.raises(TypeError, match=r"got multiple values for argument 'memo'"):
             assert_never(copium.deepcopy([1, 2, 3], {}, memo={}))
         with pytest.raises(TypeError, match=r"got an unexpected keyword argument 'foo'"):
@@ -64,27 +64,35 @@ def test_copy_errors() -> None:
         with pytest.raises(TypeError, match=r"got an unexpected keyword argument 'bar'"):
             assert_never(copium.deepcopy([1, 2, 3], bar={}))
 
-        # deepcopy: memo type must be dict
-        with pytest.raises(TypeError, match=r"argument 'memo' must be dict, not list"):
-            assert_never(copium.deepcopy([1, 2, 3], memo=[]))
-        with pytest.raises(TypeError, match=r"argument 'memo' must be dict, not str"):
-            assert_never(copium.deepcopy([1, 2, 3], memo="string"))
-        with pytest.raises(TypeError, match=r"argument 'memo' must be dict, not int"):
-            assert_never(copium.deepcopy([1, 2, 3], memo=42))
-
         class CustomClass:
             pass
 
-        with pytest.raises(TypeError, match=r"argument 'memo' must be dict, not CustomClass"):
+        with pytest.raises(AttributeError, match=r"'list' object has no attribute 'get'"):
+            assert_never(copium.deepcopy([1, 2, 3], memo=[]))
+
+        with pytest.raises(AttributeError, match=r"'str' object has no attribute 'get'"):
+            assert_never(copium.deepcopy([1, 2, 3], memo="string"))
+
+        with pytest.raises(AttributeError, match=r"'int' object has no attribute 'get'"):
+            assert_never(copium.deepcopy([1, 2, 3], memo=42))
+
+        with pytest.raises(AttributeError, match=r"'CustomClass' object has no attribute 'get'"):
             assert_never(copium.deepcopy([1, 2, 3], memo=CustomClass()))
+
+        with pytest.raises(
+            TypeError, match=r"'mappingproxy' object does not support item assignment"
+        ):
+            assert_never(copium.deepcopy([1, 2, 3], memo=MappingProxyType({})))
 
         # copy: missing/too many arguments
         with pytest.raises(
             TypeError,
-            match=r"(takes exactly one argument.*0 given|missing.*required positional argument)",
+            match=re.escape(r"copium.copy() takes exactly one argument (0 given)"),
         ):
             assert_never(copium.copy())
-        with pytest.raises(TypeError, match=r"takes exactly one argument.*2 given"):
+        with pytest.raises(
+            TypeError, match=re.escape(r"copium.copy() takes exactly one argument (2 given)")
+        ):
             assert_never(copium.copy([1, 2, 3], "extra"))
 
         if sys.version_info >= (3, 13):
@@ -95,5 +103,6 @@ def test_copy_errors() -> None:
 
             with pytest.raises(TypeError, match=r"takes 1 positional argument but 2 were given"):
                 assert_never(copium.replace(SimpleNamespace(x=1), "extra"))
+
             with pytest.raises(TypeError, match=r"takes 1 positional argument but 3 were given"):
                 assert_never(copium.replace(SimpleNamespace(x=1), "a", "b"))
