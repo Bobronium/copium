@@ -25,6 +25,7 @@ def test_about() -> None:
     assert_type(copium.__about__.__version_tuple__.patch, int)
     assert_type(copium.__about__.__version_tuple__.prerelease, str | None)
     assert_type(copium.__about__.__version_tuple__.build, int | None)
+    assert_type(copium.__about__.__version_tuple__.build_hash, str)
     assert_type(copium.__about__.__commit_id__, str | None)
     assert_type(
         copium.__about__.__authors__[0],
