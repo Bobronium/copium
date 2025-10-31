@@ -2294,12 +2294,6 @@ have_args:
         if (is_atomic_immutable(tp)) {
             return Py_NewRef(obj);
         }
-    }
-
-    PyObject* result = NULL;
-
-    if (memo_arg == Py_None) {
-        /* Use TLS MemoObject and C-specialized path (no runtime checks inside). */
         PyObject* memo_local = get_thread_local_memo();
         if (!memo_local)
             return NULL;
@@ -2307,13 +2301,15 @@ have_args:
         memo_table_clear(mo->table);
         keepvector_clear(&mo->keep);
 
-        result = deepcopy_c(obj, mo);
+        PyObject* result = deepcopy_c(obj, mo);
 
         memo_table_reset(&mo->table);
         keepvector_shrink_if_large(&mo->keep);
         /* memo_local is owned by TLS; no DECREF */
         return result;
     }
+
+    PyObject* result = NULL;
 
     if (Py_TYPE(memo_arg) == &Memo_Type) {
         MemoObject* mo = (MemoObject*)memo_arg;
