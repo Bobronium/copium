@@ -5,7 +5,6 @@ import copy as stdlib_copy
 import sys
 
 import pytest
-from datamodelzoo import CASES
 
 import copium
 
@@ -15,7 +14,7 @@ def pytest_configure(config):
     config.option.snapshot_patch_pycharm_diff = True
 
 
-CASES = [pytest.param(case, id=case.name) for case in CASES]
+CASE_PARAMS = [pytest.param(case, id=case.name) for case in CASES]
 
 
 class CopyModule:  # just for typing
