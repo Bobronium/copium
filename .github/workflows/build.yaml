@@ -114,27 +114,33 @@ jobs:
 
           printf 'path=%s\n' "$wheel" >> "$GITHUB_OUTPUT"
 
+      - name: Setup venv
+        if: runner.os == 'Linux'
+        run: |
+          uv venv --python ${{ matrix.python.display }} --clear
+          uv sync --extra benchmark --no-install-project
+
       - name: Tune pyperf
         if: runner.os == 'Linux'
         run: |
-          sudo $(which uv) run pyperf system tune || echo unable to tune system
+          sudo ./venv/bin/pyperf system tune || echo unable to tune system
 
       - name: Run stdlib pyperf benchmark
         if: runner.os == 'Linux'
         env:
           PYTHONHASHSEED: "0"
-        run: uv run --python ${{ matrix.python.display }} --with pyperf --no-sync pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --with pyperf --no-sync pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Run copium pyperf benchmark
         if: runner.os == 'Linux'
         env:
           PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
-        run: uv run --python ${{ matrix.python.display }} --with pyperf --with ${{ steps.wheel.outputs.path }} --no-sync pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --with pyperf --no-sync --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Print comparison
         if: runner.os == 'Linux'
-        run: uv run --python ${{ matrix.python.display }} --with pyperf pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --with pyperf pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Upload pyperf jsons
         if: runner.os == 'Linux'
@@ -145,7 +151,7 @@ jobs:
             copy-*.json
             copium-*.json
 
-      - name: Sync deps without project
+      - name: Sync with test extra
         if: runner.os == 'Linux'
         run: uv sync --python ${{ matrix.python.display }} --extra test --no-install-project
 
@@ -154,7 +160,7 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: instrumentation
-          run: uv run --python ${{ matrix.python.display }} --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed
+          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed
   sdist:
     runs-on: ubuntu-latest
     steps:
