@@ -2294,18 +2294,6 @@ have_args:
         if (is_atomic_immutable(tp)) {
             return Py_NewRef(obj);
         }
-        if (tp == &PyList_Type && Py_SIZE(obj) == 0)
-            return PyList_New(0);
-        if (tp == &PyTuple_Type && Py_SIZE(obj) == 0)
-            return PyTuple_New(0);
-        if (tp == &PyDict_Type && PyDict_Size(obj) == 0)
-            return PyDict_New();
-        if (tp == &PySet_Type && PySet_Size(obj) == 0)
-            return PySet_New(NULL);
-        if (tp == &PyFrozenSet_Type && PyObject_Size(obj) == 0)
-            return PyFrozenSet_New(NULL);
-        if (tp == &PyByteArray_Type && PyByteArray_Size(obj) == 0)
-            return PyByteArray_FromStringAndSize(NULL, 0);
     }
 
     PyObject* result = NULL;
