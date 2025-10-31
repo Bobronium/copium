@@ -345,30 +345,41 @@ static inline int is_method_type_exact(PyTypeObject* tp) {
     return tp == module_state.MethodType;
 }
 
-static inline int is_atomic_immutable(PyObject* obj) {
-    PyTypeObject* t = Py_TYPE(obj);
+static inline int is_literal_immutable(PyTypeObject* tp) {
+    // first tier: the most popular literal immutables
+    unsigned long r = (tp == &_PyNone_Type) | (tp == &PyLong_Type) | (tp == &PyUnicode_Type) |
+        (tp == &PyBool_Type) | (tp == &PyFloat_Type) | (tp == &PyBytes_Type);
+    return (int)r;
+}
 
-    // Tier 1: very common, branchless
-    unsigned long r = (obj == Py_None) | (t == &PyLong_Type) | (t == &PyUnicode_Type) |
-        (t == &PyBool_Type) | (t == &PyFloat_Type) | (t == &PyBytes_Type) | (t == &PyComplex_Type);
-    if (r)
-        return 1;
+static inline int is_builtin_immutable(PyTypeObject* tp) {
+    /* second tier: less common than builtin containers */
+    unsigned long r = (tp == &PyRange_Type) | (tp == &PyFunction_Type) | (tp == &PyCFunction_Type) |
+        (tp == &PyProperty_Type) | (tp == &_PyWeakref_RefType) | (tp == &PyCode_Type) |
+        (tp == &PyModule_Type) | (tp == &_PyNotImplemented_Type) | (tp == &PyEllipsis_Type) |
+        (tp == &PyComplex_Type);
+    return (int)r;
+}
 
-    // Tier 2: still cheap, branchless; deduped PyCFunction_Type
-    r = (t == &PyRange_Type) | (t == &PyFunction_Type) | (t == &PyCFunction_Type) |
-        (t == &PyProperty_Type) | (t == &_PyWeakref_RefType) | (t == &PyCode_Type) |
-        (t == &PyModule_Type) | (t == &_PyNotImplemented_Type) | (t == &PyEllipsis_Type) |
-        (t == module_state.re_Pattern_type) | (t == module_state.Decimal_type) |
-        (t == module_state.Fraction_type);
-    if (r)
-        return 1;
+static inline int is_stdlib_immutable(PyTypeObject* tp) {
+    /* third tier: stdlib immutables cached at runtime */
+    unsigned long r = (tp == module_state.re_Pattern_type) | (tp == module_state.Decimal_type) |
+        (tp == module_state.Fraction_type);
+    return (int)r;
+}
 
-    // Tier 3: "type objects" (rare). Fast exact + rare subtype check.
-    if (t == &PyType_Type)
-        return 1;
 
-    // Fallback conservative check: is it a "type subclass"?
-    return (PyType_HasFeature(t, Py_TPFLAGS_TYPE_SUBCLASS));
+static inline int is_class(PyTypeObject* tp) {
+    /* type objects themselves and type-subclasses are immutable */
+    return PyType_HasFeature(tp, Py_TPFLAGS_TYPE_SUBCLASS);
+}
+
+static inline int is_atomic_immutable(PyTypeObject* tp) {
+    /* consolidated type-based predicate (no object needed) */
+    unsigned long r = (unsigned long)is_literal_immutable(tp) |
+        (unsigned long)is_builtin_immutable(tp) | (unsigned long)is_class(tp) |
+        (unsigned long)is_stdlib_immutable(tp);
+    return (int)r;
 }
 
 /* ------------------------ TLS memo & recursion guard ------------------------
@@ -644,31 +655,47 @@ static PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_
 static PyObject* deepcopy_fallback_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
 
 static inline PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
-    if (LIKELY(is_atomic_immutable(obj)))
+    PyTypeObject* tp = Py_TYPE(obj);
+    /* 1) Immortal or literal immutables → fastest return */
+    if (LIKELY(is_literal_immutable(tp))) {
         return Py_NewRef(obj);
+    }
 
+    /* 2) Memo hit */
     void* id = (void*)obj;
     Py_ssize_t h = memo_hash_pointer(id);
     PyObject* hit = MEMO_LOOKUP_C(id, h);
     if (hit)
         return Py_NewRef(hit);
 
-    PyTypeObject* tp = Py_TYPE(obj);
+    /* 3) Popular containers first (specialized, likely hot) */
+    if (tp == &PyDict_Type)
+        return deepcopy_dict_c(obj, mo, h);
     if (tp == &PyList_Type)
         return deepcopy_list_c(obj, mo, h);
     if (tp == &PyTuple_Type)
         return deepcopy_tuple_c(obj, mo, h);
-    if (tp == &PyDict_Type)
-        return deepcopy_dict_c(obj, mo, h);
     if (tp == &PySet_Type)
         return deepcopy_set_c(obj, mo, h);
+
+    /* 4) Other atomic immutables (builtin/class types) */
+    if (is_builtin_immutable(tp) || is_class(tp)) {
+        return Py_NewRef(obj);
+    }
+
     if (tp == &PyFrozenSet_Type)
         return deepcopy_frozenset_c(obj, mo, h);
+
     if (tp == &PyByteArray_Type)
         return deepcopy_bytearray_c(obj, mo, h);
-    if (is_method_type_exact(tp))
+
+    if (tp == &PyMethod_Type)
         return deepcopy_method_c(obj, mo, h);
 
+    if (is_stdlib_immutable(tp))  // touch non-static types last
+        return Py_NewRef(obj);
+
+    /* Fallback path */
     if (_copium_recdepth_enter() < 0)
         return NULL;
     PyObject* res = deepcopy_fallback_c(obj, mo, h);
@@ -1429,9 +1456,14 @@ static PyObject* deepcopy_fallback_py(
 );
 
 static inline PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr) {
-    if (LIKELY(is_atomic_immutable(obj)))
-        return Py_NewRef(obj);
+    PyTypeObject* tp = Py_TYPE(obj);
 
+    /* 1) Immortal or literal immutables → fastest return */
+    if (LIKELY(is_literal_immutable(tp))) {
+        return Py_NewRef(obj);
+    }
+
+    /* 2) Memo hit */
     void* id = (void*)obj;
     Py_ssize_t h = memo_hash_pointer(id);
     PyObject* hit = MEMO_LOOKUP_PY(id, h);
@@ -1440,7 +1472,7 @@ static inline PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject
     if (PyErr_Occurred())
         return NULL;
 
-    PyTypeObject* tp = Py_TYPE(obj);
+    /* 3) Popular containers first (specialized, likely hot) */
     if (tp == &PyList_Type)
         return deepcopy_list_py(obj, memo_dict, keep_list_ptr, h);
     if (tp == &PyTuple_Type)
@@ -1453,9 +1485,17 @@ static inline PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject
         return deepcopy_frozenset_py(obj, memo_dict, keep_list_ptr, h);
     if (tp == &PyByteArray_Type)
         return deepcopy_bytearray_py(obj, memo_dict, keep_list_ptr, h);
+
+    /* 4) Other atomic immutables (builtin/stdlib/class types) */
+    if (is_builtin_immutable(tp) || is_stdlib_immutable(tp) || is_class(tp)) {
+        return Py_NewRef(obj);
+    }
+
+    /* 5) Remaining specializations */
     if (is_method_type_exact(tp))
         return deepcopy_method_py(obj, memo_dict, keep_list_ptr, h);
 
+    /* Fallback path */
     if (_copium_recdepth_enter() < 0)
         return NULL;
     PyObject* res = deepcopy_fallback_py(obj, memo_dict, keep_list_ptr, h);
@@ -2250,10 +2290,10 @@ PyObject* py_deepcopy(PyObject* self, PyObject* const* args, Py_ssize_t nargs, P
 
 have_args:
     if (memo_arg == Py_None) {
-        if (is_atomic_immutable(obj)) {
+        PyTypeObject* tp = Py_TYPE(obj);
+        if (is_atomic_immutable(tp)) {
             return Py_NewRef(obj);
         }
-        PyTypeObject* tp = Py_TYPE(obj);
         if (tp == &PyList_Type && Py_SIZE(obj) == 0)
             return PyList_New(0);
         if (tp == &PyTuple_Type && Py_SIZE(obj) == 0)
@@ -2289,7 +2329,7 @@ have_args:
 
     if (Py_TYPE(memo_arg) == &Memo_Type) {
         MemoObject* mo = (MemoObject*)memo_arg;
-        Py_INCREF(memo_arg); /* match old ownership behavior */
+        Py_INCREF(memo_arg);
         result = deepcopy_c(obj, mo);
         Py_DECREF(memo_arg);
         return result;
@@ -2402,15 +2442,20 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
     if (n == 0)
         return PyList_New(0);
 
-    if (is_atomic_immutable(obj)) {
-        PyObject* out = PyList_New(n);
-        if (!out)
-            return NULL;
-        for (Py_ssize_t i = 0; i < n; i++) {
-            PyObject* copy_i = Py_NewRef(obj);
-            PyList_SET_ITEM(out, i, copy_i);
+    {
+        PyTypeObject* tp = Py_TYPE(obj);
+        if (is_atomic_immutable(tp)) {
+            PyObject* out = PyList_New(n);
+            if (!out)
+                return NULL;
+            for (Py_ssize_t i = 0; i < n; i++) {
+                {
+                    PyObject* copy_i = Py_NewRef(obj);
+                    PyList_SET_ITEM(out, i, copy_i);
+                }
+            }
+            return out;
         }
-        return out;
     }
 
     {
@@ -2709,8 +2754,12 @@ static PyObject* try_stdlib_mutable_copy(PyObject* obj) {
 PyObject* py_copy(PyObject* self, PyObject* obj) {
     (void)self;
 
-    if (is_atomic_immutable(obj))
-        return Py_NewRef(obj);
+    {
+        PyTypeObject* tp = Py_TYPE(obj);
+        if (is_atomic_immutable(tp)) {
+            return Py_NewRef(obj);
+        }
+    }
 
     if (PySlice_Check(obj))
         return Py_NewRef(obj);
