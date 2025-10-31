@@ -140,7 +140,7 @@ jobs:
 
       - name: Print comparison
         if: runner.os == 'Linux'
-        run: uv run --with pyperf pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: uv run --with pyperf pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json --table
 
       - name: Upload pyperf jsons
         if: runner.os == 'Linux'
