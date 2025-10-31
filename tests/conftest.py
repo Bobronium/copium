@@ -7,6 +7,7 @@ import sys
 import pytest
 
 import copium
+from datamodelzoo import CASES
 
 
 def pytest_configure(config):
