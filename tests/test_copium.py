@@ -126,7 +126,8 @@ def test_duper_deepcopy_parity(case: Any, copy, memo) -> None:
     else:
         if builtin_deepcopy_error is not None:
             raise AssertionError(
-                f"{candidate_name} expected to produce {builtin_deepcopy_error!r} exception, but didn't"
+                f"{candidate_name} expected to produce {builtin_deepcopy_error!r} exception,"
+                f" but didn't"
             ) from builtin_deepcopy_error
 
         assert_equivalent_transformations(
