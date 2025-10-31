@@ -132,7 +132,12 @@ jobs:
           COPIUM_PATCH_DEEPCOPY: 1
         run: uv run --python ${{ matrix.python.display }} --with pyperf --with ${{ steps.wheel.outputs.path }} --no-sync pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
+      - name: Print comparison
+        if: runner.os == 'Linux'
+        run: uv run --python ${{ matrix.python.display }} --with pyperf pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+
       - name: Upload pyperf jsons
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: pyperf-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.arch_label }}
