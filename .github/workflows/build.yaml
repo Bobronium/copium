@@ -161,7 +161,7 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: instrumentation
-          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed
+          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance
   sdist:
     runs-on: ubuntu-latest
     steps:
