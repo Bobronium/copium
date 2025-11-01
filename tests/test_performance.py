@@ -47,7 +47,7 @@ if not getattr(sys, "_is_gil_enabled", lambda: True)():
     python_version += "t"
 python_version += f"-{platform.machine()}"
 
-if python_version == "3.13-x86-64":
+if python_version == "3.13-x86_64":
     # backwards compatibility with previous benchmarks runs
 
     @pytest.mark.parametrize(
