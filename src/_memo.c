@@ -510,6 +510,11 @@ static PyTypeObject KeepList_Type = {
 /* --------------------------- Memo object impl ------------------------------ */
 
 static void Memo_dealloc(MemoObject* self) {
+    /* Ensure Python-level __del__ (if any) is honored. If it resurrects the object,
+       bail out of deallocation per CPython contract. */
+    if (PyObject_CallFinalizerFromDealloc((PyObject*)self)) {
+        return;
+    }
     memo_table_free(self->table);
     keepvector_free(&self->keep);
     Py_TYPE(self)->tp_free((PyObject*)self);
@@ -607,6 +612,17 @@ static PyObject* Memo_clear(MemoObject* self, PyObject* noargs) {
     Py_RETURN_NONE;
 }
 
+/* __del__: drop strong references held by the memo so user-retained memos
+   can clean up deterministically when collected. */
+static PyObject* Memo___del__(MemoObject* self, PyObject* noargs) {
+    (void)noargs;
+    if (self->table) {
+        memo_table_clear(self->table);
+    }
+    keepvector_clear(&self->keep);
+    Py_RETURN_NONE;
+}
+
 static PyObject* Memo_contains(MemoObject* self, PyObject* pykey) {
     if (!PyLong_Check(pykey)) {
         PyErr_SetString(PyExc_KeyError, "keys must be integers");
@@ -699,6 +715,7 @@ static PyMethodDef Memo_methods[] = {
     {"setdefault", (PyCFunction)Memo_setdefault, METH_FASTCALL, NULL},
     {"__contains__", (PyCFunction)Memo_contains, METH_O, NULL},
     {"keep", (PyCFunction)Memo_keep, METH_NOARGS, NULL}, /* expose keepalive proxy */
+    {"__del__", (PyCFunction)Memo___del__, METH_NOARGS, NULL},
     {NULL, NULL, 0, NULL}
 };
 
@@ -714,6 +731,11 @@ PyTypeObject Memo_Type = {
 
 
 /* --------------------------- Keepalive unification ------------------------- */
+
+/* Expose keep size for TLS lifecycle policy (used in _copying.c). */
+int memo_keep_size(MemoObject* self) {
+    return self ? self->keep.size : 0;
+}
 
 /* Ensure *keep_proxy_ptr contains a proxy sequence for appending:
  * - For C Memo: returns a new _KeepList bound to memo->keep

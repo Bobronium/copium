@@ -293,3 +293,41 @@ def test_memo_reference_passthrough():
         assert_equivalent_transformations(obj, stdlib_copy.deepcopy(obj), copium.deepcopy(obj))
 
     assert len(Chaotic.observations) == 1
+
+
+def test_no_extra_refs_post_deepcopy(copy):
+    original = [object(), object(), object()]
+    original_refcounts_before_copying = [sys.getrefcount(obj) for obj in original]
+
+    copied = copy.deepcopy(original)  # hold refs
+    original_refcounts_after_copying = [sys.getrefcount(obj) for obj in original]
+    copied_refcounts = [sys.getrefcount(obj) for obj in copied]
+
+    assert original_refcounts_before_copying == original_refcounts_after_copying
+    assert copied_refcounts == original_refcounts_before_copying
+
+
+def test_holding_extra_refs_post_deepcopy(copy):
+    memories = []
+
+    class Sneaky:
+        def __deepcopy__(self, memo):
+            memories.append(memo)
+            return Sneaky()
+
+    original = [Sneaky(), object(), object()]
+    original_refcounts_before_copying = [sys.getrefcount(obj) for obj in original]
+
+    copied = copy.deepcopy(original)  # hold refs
+    original_refcounts_after_copying = [sys.getrefcount(obj) for obj in original]
+    copied_refcounts = [sys.getrefcount(obj) for obj in copied]
+
+    assert sum(original_refcounts_after_copying) - sum(original_refcounts_before_copying) == 3
+    assert copied_refcounts == original_refcounts_after_copying
+
+    copied_again = copy.deepcopy(original)  # hold refs
+    copied_refcounts = [sys.getrefcount(obj) for obj in copied_again]
+    original_refcounts_after_copying = [sys.getrefcount(obj) for obj in original]
+
+    assert sum(original_refcounts_after_copying) - sum(original_refcounts_before_copying) == 6
+    assert sum(original_refcounts_after_copying) - sum(copied_refcounts) == 3

@@ -119,6 +119,8 @@ extern void keepvector_shrink_if_large(KeepVector* kv);
 extern void memo_table_clear(MemoTable* table);
 /* Ready both Memo and _KeepList types */
 extern int memo_ready_types(void);
+/* keep-size helper from _memo.c */
+extern int memo_keep_size(MemoObject* self);
 
 /* ------------------------------ Small helpers ------------------------------ */
 
@@ -2316,13 +2318,15 @@ have_args:
         if (!memo_local)
             return NULL;
         MemoObject* mo = (MemoObject*)memo_local;
-        memo_table_clear(mo->table);
-        keepvector_clear(&mo->keep);
 
+        /* Lagged-keep policy: observe keep size at entry. */
         PyObject* result = deepcopy_c(obj, mo);
 
-        memo_table_reset(&mo->table);
-        keepvector_shrink_if_large(&mo->keep);
+        if ((int)Py_REFCNT(memo_local) == 1) {
+            keepvector_clear(&mo->keep);
+            keepvector_shrink_if_large(&mo->keep);
+            memo_table_reset(&mo->table);
+        }
         /* memo_local is owned by TLS; no DECREF */
         return result;
     }
