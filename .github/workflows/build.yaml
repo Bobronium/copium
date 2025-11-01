@@ -157,7 +157,7 @@ jobs:
         run: uv sync --python ${{ matrix.python.display }} --extra test --no-install-project
 
       - name: Run codspeed benchmarks
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
         uses: CodSpeedHQ/action@v4
         with:
           mode: instrumentation
