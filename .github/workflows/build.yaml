@@ -123,8 +123,8 @@ jobs:
       - name: Tune pyperf
         if: runner.os == 'Linux'
         run: |
-          sudo ./.venv/bin/pyperf system tune || echo unable to tune system
-          sudo rm -rf */**/__pycache__
+          sudo PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -B -m pyperf system tune || echo unable to tune system
+          find . -path './.venv' -prune -o -type d -name '__pycache__' -exec rm -rf {} +
 
       - name: Run stdlib pyperf benchmark
         if: runner.os == 'Linux'
