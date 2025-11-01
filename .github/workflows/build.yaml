@@ -122,10 +122,9 @@ jobs:
 
       - name: Tune pyperf
         if: runner.os == 'Linux'
-        env:
-          PYTHONDONTWRITEBYTECODE: 1  # prevent creating __pycache__ owned by root
         run: |
           sudo ./.venv/bin/pyperf system tune || echo unable to tune system
+          sudo rm -rf */**/__pycache__
 
       - name: Run stdlib pyperf benchmark
         if: runner.os == 'Linux'
