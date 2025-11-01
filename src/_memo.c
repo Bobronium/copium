@@ -23,18 +23,15 @@
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define ALWAYS_INLINE inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define LIKELY(x) (x)
+#define UNLIKELY(x) (x)
+#define ALWAYS_INLINE __forceinline
 #else
 #define LIKELY(x) (x)
 #define UNLIKELY(x) (x)
-#endif
-
-/* _memo.h (top) */
-#if defined(_MSC_VER)
-#  define COPIUM_ALWAYS_INLINE __forceinline
-#elif defined(__GNUC__) || defined(__clang__)
-#  define COPIUM_ALWAYS_INLINE __attribute__((always_inline)) inline
-#else
-#  define COPIUM_ALWAYS_INLINE inline
+#define ALWAYS_INLINE inline
 #endif
 
 /* ------------------------------ Memo table -------------------------------- */
@@ -249,14 +246,14 @@ static int memo_table_resize(MemoTable** table_ptr, Py_ssize_t min_capacity_need
     return 0;
 }
 
-static inline int memo_table_ensure(MemoTable** table_ptr) {
+static ALWAYS_INLINE int memo_table_ensure(MemoTable** table_ptr) {
     if (*table_ptr)
         return 0;
     return memo_table_resize(table_ptr, 1);
 }
 
 /* Existing non-hash-parameterized APIs (kept for compatibility) */
-PyObject* memo_table_lookup(MemoTable* table, void* key) {
+ALWAYS_INLINE PyObject* memo_table_lookup(MemoTable* table, void* key) {
     if (!table)
         return NULL;
     Py_ssize_t mask = table->size - 1;
@@ -272,7 +269,7 @@ PyObject* memo_table_lookup(MemoTable* table, void* key) {
     }
 }
 
-int memo_table_insert(MemoTable** table_ptr, void* key, PyObject* value) {
+ALWAYS_INLINE int memo_table_insert(MemoTable** table_ptr, void* key, PyObject* value) {
     if (memo_table_ensure(table_ptr) < 0)
         return -1;
     MemoTable* table = *table_ptr;
@@ -313,7 +310,7 @@ int memo_table_insert(MemoTable** table_ptr, void* key, PyObject* value) {
 }
 
 /* New hash-parameterized hot-path APIs (avoid recomputing hash) */
-PyObject* memo_table_lookup_h(MemoTable* table, void* key, Py_ssize_t hash) {
+ALWAYS_INLINE PyObject* memo_table_lookup_h(MemoTable* table, void* key, Py_ssize_t hash) {
     if (!table)
         return NULL;
     Py_ssize_t mask = table->size - 1;

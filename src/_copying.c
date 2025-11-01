@@ -66,9 +66,15 @@ static int g_dict_watcher_registered = 0;
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define ALWAYS_INLINE inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define LIKELY(x) (x)
+#define UNLIKELY(x) (x)
+#define ALWAYS_INLINE __forceinline
 #else
 #define LIKELY(x) (x)
 #define UNLIKELY(x) (x)
+#define ALWAYS_INLINE inline
 #endif
 
 /* ---------------- Pin integration surface (provided by _pinning.c) ---------
@@ -341,18 +347,15 @@ static ModuleState module_state = {0};
 /* ------------------------------ Atomic checks ------------------------------
  */
 
-static inline int is_method_type_exact(PyTypeObject* tp) {
-    return tp == module_state.MethodType;
-}
 
-static inline int is_literal_immutable(PyTypeObject* tp) {
+static ALWAYS_INLINE int is_literal_immutable(PyTypeObject* tp) {
     // first tier: the most popular literal immutables
     unsigned long r = (tp == &_PyNone_Type) | (tp == &PyLong_Type) | (tp == &PyUnicode_Type) |
         (tp == &PyBool_Type) | (tp == &PyFloat_Type) | (tp == &PyBytes_Type);
     return (int)r;
 }
 
-static inline int is_builtin_immutable(PyTypeObject* tp) {
+static ALWAYS_INLINE int is_builtin_immutable(PyTypeObject* tp) {
     /* second tier: less common than builtin containers */
     unsigned long r = (tp == &PyRange_Type) | (tp == &PyFunction_Type) | (tp == &PyCFunction_Type) |
         (tp == &PyProperty_Type) | (tp == &_PyWeakref_RefType) | (tp == &PyCode_Type) |
@@ -361,7 +364,7 @@ static inline int is_builtin_immutable(PyTypeObject* tp) {
     return (int)r;
 }
 
-static inline int is_stdlib_immutable(PyTypeObject* tp) {
+static ALWAYS_INLINE int is_stdlib_immutable(PyTypeObject* tp) {
     /* third tier: stdlib immutables cached at runtime */
     unsigned long r = (tp == module_state.re_Pattern_type) | (tp == module_state.Decimal_type) |
         (tp == module_state.Fraction_type);
@@ -369,12 +372,12 @@ static inline int is_stdlib_immutable(PyTypeObject* tp) {
 }
 
 
-static inline int is_class(PyTypeObject* tp) {
+static ALWAYS_INLINE int is_class(PyTypeObject* tp) {
     /* type objects themselves and type-subclasses are immutable */
     return PyType_HasFeature(tp, Py_TPFLAGS_TYPE_SUBCLASS);
 }
 
-static inline int is_atomic_immutable(PyTypeObject* tp) {
+static ALWAYS_INLINE int is_atomic_immutable(PyTypeObject* tp) {
     /* consolidated type-based predicate (no object needed) */
     unsigned long r = (unsigned long)is_literal_immutable(tp) |
         (unsigned long)is_builtin_immutable(tp) | (unsigned long)is_class(tp) |
@@ -460,9 +463,14 @@ static inline void _copium_stack_init_if_needed(void) {
 #endif
 }
 
-static inline int _copium_recdepth_enter(void) {
+static ALWAYS_INLINE int _copium_recdepth_enter(void) {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+    /* Fast warmup: for shallow recursion, avoid any stack/limit checks. */
     unsigned int d = ++_copium_tls_depth;
+    if (LIKELY(d < 16u)) {
+        return 0;
+    }
+    /* Existing logic for deeper recursion (sampled by stride). */
     if (UNLIKELY((d & (COPIUM_STACKCHECK_STRIDE - 1u)) == 0u)) {
         _copium_stack_init_if_needed();
         if (_copium_tls_stack_low) {
@@ -550,7 +558,7 @@ static inline int _copium_recdepth_enter(void) {
 #endif
 }
 
-static inline void _copium_recdepth_leave(void) {
+static ALWAYS_INLINE void _copium_recdepth_leave(void) {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
     if (_copium_tls_depth > 0)
         _copium_tls_depth--;
@@ -666,13 +674,13 @@ static inline PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject
 static PyObject* deepcopy_list_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
 static PyObject* deepcopy_tuple_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
 static PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static PyObject* deepcopy_frozenset_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static PyObject* deepcopy_bytearray_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static PyObject* deepcopy_fallback_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static ALWAYS_INLINE PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static ALWAYS_INLINE PyObject* deepcopy_frozenset_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static ALWAYS_INLINE PyObject* deepcopy_bytearray_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static ALWAYS_INLINE PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static ALWAYS_INLINE PyObject* deepcopy_fallback_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
 
-static inline PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
+static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
     PyTypeObject* tp = Py_TYPE(obj);
     /* 1) Immortal or literal immutables → fastest return */
     if (LIKELY(is_literal_immutable(tp))) {
@@ -850,7 +858,7 @@ static PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_ha
     return copy;
 }
 
-static PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
+static ALWAYS_INLINE PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     PyObject* copy = PySet_New(NULL);
     if (!copy)
         return NULL;
@@ -914,7 +922,7 @@ static PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_has
     return copy;
 }
 
-static PyObject* deepcopy_frozenset_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
+static ALWAYS_INLINE PyObject* deepcopy_frozenset_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     /* Pre-size snapshot: frozenset is immutable, so size won't change mid-loop. */
     Py_ssize_t n = PySet_Size(obj);
     if (n == -1)
@@ -955,7 +963,7 @@ static PyObject* deepcopy_frozenset_c(PyObject* obj, MemoObject* mo, Py_ssize_t 
     return copy;
 }
 
-static PyObject* deepcopy_bytearray_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
+static ALWAYS_INLINE PyObject* deepcopy_bytearray_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     Py_ssize_t sz = PyByteArray_Size(obj);
     PyObject* copy = PyByteArray_FromStringAndSize(NULL, sz);
     if (!copy)
@@ -970,7 +978,7 @@ static PyObject* deepcopy_bytearray_c(PyObject* obj, MemoObject* mo, Py_ssize_t 
     return copy;
 }
 
-static PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
+static ALWAYS_INLINE PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     PyObject* func = PyMethod_GET_FUNCTION(obj);
     PyObject* self = PyMethod_GET_SELF(obj);
     if (!func || !self)
@@ -1072,7 +1080,7 @@ static int unpack_reduce_result_tuple(
     return 0;
 }
 
-static PyObject* deepcopy_fallback_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
+static ALWAYS_INLINE PyObject* deepcopy_fallback_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     PyObject* deepcopy_meth = NULL;
     int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
     if (has_deepcopy < 0)
@@ -1453,23 +1461,23 @@ static PyObject* deepcopy_tuple_py(
 static PyObject* deepcopy_dict_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static PyObject* deepcopy_set_py(
+static ALWAYS_INLINE PyObject* deepcopy_set_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static PyObject* deepcopy_frozenset_py(
+static ALWAYS_INLINE PyObject* deepcopy_frozenset_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static PyObject* deepcopy_bytearray_py(
+static ALWAYS_INLINE PyObject* deepcopy_bytearray_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
 static PyObject* deepcopy_method_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static PyObject* deepcopy_fallback_py(
+static ALWAYS_INLINE PyObject* deepcopy_fallback_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
 
-static inline PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr) {
+static ALWAYS_INLINE PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr) {
     PyTypeObject* tp = Py_TYPE(obj);
 
     /* 1) Immortal or literal immutables → fastest return */
@@ -1488,11 +1496,11 @@ static inline PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject
 
     /* 3) Popular containers first (specialized, likely hot) */
     if (tp == &PyList_Type)
-        return deepcopy_list_py(obj, memo_dict, keep_list_ptr, h);
+        RETURN_GUARDED_PY(deepcopy_list_py(obj, memo_dict, keep_list_ptr, h));
     if (tp == &PyTuple_Type)
-        return deepcopy_tuple_py(obj, memo_dict, keep_list_ptr, h);
+        RETURN_GUARDED_PY(deepcopy_tuple_py(obj, memo_dict, keep_list_ptr, h));
     if (tp == &PyDict_Type)
-        return deepcopy_dict_py(obj, memo_dict, keep_list_ptr, h);
+        RETURN_GUARDED_PY(deepcopy_dict_py(obj, memo_dict, keep_list_ptr, h));
     if (tp == &PySet_Type)
         return deepcopy_set_py(obj, memo_dict, keep_list_ptr, h);
     if (tp == &PyFrozenSet_Type)
@@ -1506,14 +1514,10 @@ static inline PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject
     }
 
     /* 5) Remaining specializations */
-    if (is_method_type_exact(tp))
+    if (tp == &PyMethod_Type)
         return deepcopy_method_py(obj, memo_dict, keep_list_ptr, h);
 
-    /* Fallback path */
-    if (_copium_recdepth_enter() < 0)
-        return NULL;
     PyObject* res = deepcopy_fallback_py(obj, memo_dict, keep_list_ptr, h);
-    _copium_recdepth_leave();
     return res;
 }
 
