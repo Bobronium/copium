@@ -497,6 +497,12 @@ static inline int _copium_recdepth_enter(void) {
     uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
     uintptr_t next = depth_u + 1;
 
+    /* Fast warmup for shallow recursion on non-C11 builds as well. */
+    if (LIKELY(next < 16u)) {
+        (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)next);
+        return 0;
+    }
+
 #ifdef _WIN32
     if (UNLIKELY((next & (COPIUM_STACKCHECK_STRIDE - 1u)) == 0u)) {
         typedef VOID(WINAPI * GetStackLimitsFn)(PULONG_PTR, PULONG_PTR);
@@ -554,6 +560,18 @@ static inline void _copium_recdepth_leave(void) {
         (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)(depth_u - 1));
 #endif
 }
+
+/* -------------------- Guarded return macros for recursion ------------------- */
+#define RETURN_GUARDED(expr)                                      \
+    do {                                                          \
+        if (UNLIKELY(_copium_recdepth_enter() < 0))               \
+            return NULL;                                          \
+        PyObject* _ret = (expr);                                  \
+        _copium_recdepth_leave();                                 \
+        return _ret;                                              \
+    } while (0)
+
+#define RETURN_GUARDED_PY(expr) RETURN_GUARDED(expr)
 
 /* ----------------------- Python-dict memo helpers (inline) ------------------ */
 
@@ -670,11 +688,11 @@ static inline PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
 
     /* 3) Popular containers first (specialized, likely hot) */
     if (tp == &PyDict_Type)
-        return deepcopy_dict_c(obj, mo, h);
+        RETURN_GUARDED(deepcopy_dict_c(obj, mo, h));
     if (tp == &PyList_Type)
-        return deepcopy_list_c(obj, mo, h);
+        RETURN_GUARDED(deepcopy_list_c(obj, mo, h));
     if (tp == &PyTuple_Type)
-        return deepcopy_tuple_c(obj, mo, h);
+        RETURN_GUARDED(deepcopy_tuple_c(obj, mo, h));
     if (tp == &PySet_Type)
         return deepcopy_set_c(obj, mo, h);
 
@@ -695,11 +713,7 @@ static inline PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
     if (is_stdlib_immutable(tp))  // touch non-static types last
         return Py_NewRef(obj);
 
-    /* Fallback path */
-    if (_copium_recdepth_enter() < 0)
-        return NULL;
     PyObject* res = deepcopy_fallback_c(obj, mo, h);
-    _copium_recdepth_leave();
     return res;
 }
 
