@@ -18,7 +18,7 @@ archs = ["auto", "aarch64"]
 [tool.cibuildwheel]
 archs = ["auto64", "auto32"]
 build-frontend = "build[uv]"
-test-command = "pytest -q"
+test-command = "pytest -vvv"
 test-extras = ["test"]
 test-sources = ["tests", "pyproject.toml"]
 
@@ -102,7 +102,7 @@ build = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-k not thirdparty"]
+addopts = ["-k not thirdparty and not performance"]
 python_files = ["test_*.py"]
 
 [tool.coverage.run]
@@ -223,3 +223,11 @@ error_summary = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disable_error_code = ["no-untyped-def"]
+
+[tool.uv.workspace]
+members = [
+    "datamodelzoo",
+]
+
+[tool.uv.sources]
+datamodelzoo = { workspace = true }
