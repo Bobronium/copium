@@ -2483,20 +2483,25 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
         PyObject* out = PyList_New(n);
         if (!out)
             return NULL;
-        for (Py_ssize_t i = 0; i < n; i++) {
-            PyObject* memo_local = get_thread_local_memo();
-            if (!memo_local) {
-                Py_DECREF(out);
-                return NULL;
-            }
-            MemoObject* mo = (MemoObject*)memo_local;
-            memo_table_clear(mo->table);
-            keepvector_clear(&mo->keep);
 
+        PyObject* memo_local = get_thread_local_memo();
+        if (!memo_local)
+            return NULL;
+        MemoObject* mo = (MemoObject*)memo_local;
+
+        for (Py_ssize_t i = 0; i < n; i++) {
             PyObject* copy_i = deepcopy_c(obj, mo);
 
-            memo_table_reset(&mo->table);
-            keepvector_shrink_if_large(&mo->keep);
+            if ((int)Py_REFCNT(memo_local) == 1) {
+                keepvector_clear(&mo->keep);
+                keepvector_shrink_if_large(&mo->keep);
+                memo_table_reset(&mo->table);
+            } else {
+                PyObject* memo_local = get_thread_local_memo();
+                if (!memo_local)
+                    return NULL;
+                MemoObject* mo = (MemoObject*)memo_local;
+            }
 
             if (!copy_i) {
                 Py_DECREF(out);
