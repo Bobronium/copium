@@ -6,8 +6,6 @@
  * - Memo type (internal hash table for deepcopy memo)
  * - Implements MutableMapping protocol with views
  * - Keepalive vector with a Python-facing proxy implementing a MutableSequence
- * - C hooks used by _copying.c:
- *     - memo_keepalive_ensure, memo_keepalive_append, memo_ready_types
  */
 #define PY_SSIZE_T_CLEAN
 #define Py_BUILD_CORE_MODULE
@@ -730,92 +728,6 @@ PyTypeObject Memo_Type = {
 };
 
 
-/* --------------------------- Keepalive unification ------------------------- */
-
-/* Expose keep size for TLS lifecycle policy (used in _copying.c). */
-int memo_keep_size(MemoObject* self) {
-    return self ? self->keep.size : 0;
-}
-
-/* Ensure *keep_proxy_ptr contains a proxy sequence for appending:
- * - For C Memo: returns a new _KeepList bound to memo->keep
- * - For dict memo: returns a Python list under memo[id(memo)]
- */
-int memo_keepalive_ensure(PyObject** memo_ptr, PyObject** keep_proxy_ptr) {
-    if (*keep_proxy_ptr)
-        return 0;
-
-    if (*memo_ptr == NULL) {
-        /* Lazily create a Memo if none was provided yet */
-        PyObject* m = Memo_New();
-        if (!m)
-            return -1;
-        *memo_ptr = m;
-    }
-
-    PyObject* memo = *memo_ptr;
-    if (Py_TYPE(memo) == &Memo_Type) {
-        MemoObject* mo = (MemoObject*)memo;
-        PyObject* proxy = KeepList_New(mo);
-        if (!proxy)
-            return -1;
-        *keep_proxy_ptr = proxy; /* owned */
-        return 0;
-    } else {
-        /* Python dict path: use memo[id(memo)] list */
-        void* memo_id = (void*)memo;
-        PyObject* pykey = PyLong_FromVoidPtr(memo_id);
-        if (!pykey)
-            return -1;
-
-        PyObject* existing = PyDict_GetItemWithError(memo, pykey); /* borrowed */
-        if (!existing) {
-            if (PyErr_Occurred()) {
-                Py_DECREF(pykey);
-                return -1;
-            }
-            PyObject* new_list = PyList_New(0);
-            if (!new_list) {
-                Py_DECREF(pykey);
-                return -1;
-            }
-            if (PyDict_SetItem(memo, pykey, new_list) < 0) {
-                Py_DECREF(pykey);
-                Py_DECREF(new_list);
-                return -1;
-            }
-            existing = new_list; /* still owned below after INCREF */
-            Py_DECREF(new_list); /* Dict now owns the reference */
-            /* Reborrow below; we INCREF a new handle for caller */
-            existing = PyDict_GetItemWithError(memo, pykey);
-            if (!existing) {
-                Py_DECREF(pykey);
-                return -1;
-            }
-        }
-        Py_INCREF(existing);
-        *keep_proxy_ptr = existing;
-        Py_DECREF(pykey);
-        return 0;
-    }
-}
-
-/* Append obj to keepalive, creating storage if needed. */
-int memo_keepalive_append(PyObject** memo_ptr, PyObject** keep_proxy_ptr, PyObject* obj) {
-    if (memo_keepalive_ensure(memo_ptr, keep_proxy_ptr) < 0)
-        return -1;
-    PyObject* memo = *memo_ptr;
-
-    if (Py_TYPE(memo) == &Memo_Type) {
-        MemoObject* mo = (MemoObject*)memo;
-        if (keepvector_append(&mo->keep, obj) < 0)
-            return -1;
-        return 0;
-    } else {
-        /* Python list */
-        return PyList_Append(*keep_proxy_ptr, obj);
-    }
-}
 
 /* --------------------------- Type readiness helper ------------------------- */
 
