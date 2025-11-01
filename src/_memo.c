@@ -431,6 +431,7 @@ static PyObject* KeepList_getitem(KeepListObject* self, Py_ssize_t index) {
 static PyObject* KeepList_iter(KeepListObject* self) {
     if (!self->owner) {
         PyErr_SetString(PyExc_SystemError, "_KeepList has no owner");
+        return NULL;
     }
     KeepVector* kv = &self->owner->keep;
     Py_ssize_t n = kv->size;
