@@ -80,7 +80,7 @@ def test_mutable_keys(copy):
     assert original_key not in copied
 
 
-memo_options = ["absent", "dict", "None", "mutable_mapping", "mapping"]
+memo_options = ["absent", "dict", "None", "mutable_mapping", "mapping", "invalid"]
 
 
 @pytest.mark.parametrize("memo", memo_options, ids=[f"memo_{option}" for option in memo_options])
@@ -97,8 +97,10 @@ def test_duper_deepcopy_parity(case: Any, copy, memo) -> None:
             kwargs = {"memo": None}
         elif memo == "mapping":
             kwargs = {"memo": collections.UserDict()}
-        elif memo == "mapping":
+        elif memo == "mutable_mapping":
             kwargs = {"memo": MappingProxyType({})}  # expected to throw
+        elif memo == "invalid":
+            kwargs = {"memo": "not a memo"}
         else:
             kwargs = {}
         return kwargs

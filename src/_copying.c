@@ -1480,12 +1480,14 @@ static ALWAYS_INLINE PyObject* deepcopy_py(
 ) {
     PyTypeObject* tp = Py_TYPE(obj);
 
-    /* 1) Immortal or literal immutables → fastest return */
-    if (LIKELY(is_literal_immutable(tp))) {
+#if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
+    /* Python 3.14+: Check ALL atomic immutables before memo lookup */
+    if (LIKELY(is_literal_immutable(tp) || is_builtin_immutable(tp) || is_class(tp))) {
         return Py_NewRef(obj);
     }
+#endif
 
-    /* 2) Memo hit */
+    /* Memo lookup (Python < 3.14: this happens before immutable check) */
     void* id = (void*)obj;
     Py_ssize_t h = memo_hash_pointer(id);
     PyObject* hit = MEMO_LOOKUP_PY(id, h);
@@ -1493,6 +1495,13 @@ static ALWAYS_INLINE PyObject* deepcopy_py(
         return hit;
     if (PyErr_Occurred())
         return NULL;
+
+#if PY_VERSION_HEX < PY_VERSION_3_14_HEX
+    /* Python < 3.14: Check immutables after memo lookup */
+    if (LIKELY(is_literal_immutable(tp))) {
+        return Py_NewRef(obj);
+    }
+#endif
 
     /* 3) Popular containers first (specialized, likely hot) */
     if (tp == &PyList_Type)
@@ -2346,6 +2355,7 @@ have_args:
     }
 
     else {
+        /* deepcopy_py handles version-specific ordering of immutable check vs memo lookup */
         Py_INCREF(memo_arg);
         PyObject* memo_dict = memo_arg;
         PyObject* keep_list = NULL; /* lazily created on first append */
