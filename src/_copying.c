@@ -1467,7 +1467,7 @@ static ALWAYS_INLINE PyObject* deepcopy_bytearray_py(
 static MAYBE_INLINE PyObject* deepcopy_method_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static ALWAYS_INLINE PyObject* deepcopy_via_reduce_py(
+static MAYBE_INLINE PyObject* deepcopy_via_reduce_py(
     PyObject* obj, PyTypeObject* tp, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
 
@@ -1845,7 +1845,7 @@ static MAYBE_INLINE PyObject* deepcopy_method_py(
     return copy;
 }
 
-static PyObject* deepcopy_via_reduce_py(
+static MAYBE_INLINE PyObject* deepcopy_via_reduce_py(
     PyObject* obj, PyTypeObject* tp, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
     PyObject* reduce_res = try_reduce_via_registry(obj, tp);
