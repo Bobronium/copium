@@ -688,7 +688,7 @@ static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
     if (tp == &PyTuple_Type)
         RETURN_GUARDED(deepcopy_tuple_c(obj, mo, h));
     if (tp == &PySet_Type)
-        return deepcopy_set_c(obj, mo, h);
+        RETURN_GUARDED(deepcopy_set_c(obj, mo, h));
 
     /* 4) Other atomic immutables (builtin/class types) */
     if (is_builtin_immutable(tp) || is_class(tp)) {
@@ -707,27 +707,31 @@ static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
     if (is_stdlib_immutable(tp))  // touch non-static types last
         return Py_NewRef(obj);
 
-    PyObject* deepcopy_meth = NULL;
-    
-    int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
-    if (has_deepcopy < 0)
-        return NULL;
-    if (has_deepcopy) {
-        PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_C);
-        Py_DECREF(deepcopy_meth);
-        if (!res)
+    /* Robustly detect a user-defined __deepcopy__ and propagate its exceptions exactly. */
+    {
+        int has_deepcopy = PyObject_HasAttr(obj, module_state.str_deepcopy);
+        if (has_deepcopy < 0)
             return NULL;
-        if (res != obj) {
-            if (MEMO_STORE_C((void*)obj, res, h) < 0) {
-                Py_DECREF(res);
+        if (has_deepcopy) {
+            PyObject* deepcopy_meth = PyObject_GetAttr(obj, module_state.str_deepcopy);
+            if (!deepcopy_meth)
                 return NULL;
-            }
-            if (keepvector_append(&mo->keep, obj) < 0) {
-                Py_DECREF(res);
+            PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_C);
+            Py_DECREF(deepcopy_meth);
+            if (!res)
                 return NULL;
+            if (res != obj) {
+                if (MEMO_STORE_C((void*)obj, res, h) < 0) {
+                    Py_DECREF(res);
+                    return NULL;
+                }
+                if (keepvector_append(&mo->keep, obj) < 0) {
+                    Py_DECREF(res);
+                    return NULL;
+                }
             }
+            return res;
         }
-        return res;
     }
 
     PyObject* res = deepcopy_via_reduce_c(obj, tp, mo, h);
@@ -1498,7 +1502,7 @@ static ALWAYS_INLINE PyObject* deepcopy_py(
     if (tp == &PyDict_Type)
         RETURN_GUARDED_PY(deepcopy_dict_py(obj, memo_dict, keep_list_ptr, h));
     if (tp == &PySet_Type)
-        return deepcopy_set_py(obj, memo_dict, keep_list_ptr, h);
+        RETURN_GUARDED_PY(deepcopy_set_py(obj, memo_dict, keep_list_ptr, h));
 
     if (is_builtin_immutable(tp) || is_class(tp)) {
         return Py_NewRef(obj);
@@ -1510,37 +1514,42 @@ static ALWAYS_INLINE PyObject* deepcopy_py(
         return deepcopy_bytearray_py(obj, memo_dict, keep_list_ptr, h);
     if (tp == &PyMethod_Type)
         return deepcopy_method_py(obj, memo_dict, keep_list_ptr, h);
-    PyObject* deepcopy_meth = NULL;
 
     if (is_stdlib_immutable(tp)) {
         return Py_NewRef(obj);
     }
 
-    int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
-    if (has_deepcopy < 0)
-        return NULL;
-    if (has_deepcopy) {
-        PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_PY);
-        Py_DECREF(deepcopy_meth);
-        if (!res)
+    /* Robustly detect a user-defined __deepcopy__ and propagate its exceptions exactly. */
+    {
+        int has_deepcopy = PyObject_HasAttr(obj, module_state.str_deepcopy);
+        if (has_deepcopy < 0)
             return NULL;
-        if (res != obj) {
-            if (MEMO_STORE_PY((void*)obj, res, id_hash) < 0) {
-                Py_DECREF(res);
+        if (has_deepcopy) {
+            PyObject* deepcopy_meth = PyObject_GetAttr(obj, module_state.str_deepcopy);
+            if (!deepcopy_meth)
                 return NULL;
-            }
-            if (*keep_list_ptr == NULL) {
-                if (ensure_keep_list_for_pymemo(memo_dict, keep_list_ptr) < 0) {
+            PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_PY);
+            Py_DECREF(deepcopy_meth);
+            if (!res)
+                return NULL;
+            if (res != obj) {
+                if (MEMO_STORE_PY((void*)obj, res, id_hash) < 0) {
+                    Py_DECREF(res);
+                    return NULL;
+                }
+                if (*keep_list_ptr == NULL) {
+                    if (ensure_keep_list_for_pymemo(memo_dict, keep_list_ptr) < 0) {
+                        Py_DECREF(res);
+                        return NULL;
+                    }
+                }
+                if (PyList_Append(*keep_list_ptr, obj) < 0) {
                     Py_DECREF(res);
                     return NULL;
                 }
             }
-            if (PyList_Append(*keep_list_ptr, obj) < 0) {
-                Py_DECREF(res);
-                return NULL;
-            }
+            return res;
         }
-        return res;
     }
 
     PyObject* res = deepcopy_via_reduce_py(obj, tp, memo_dict, keep_list_ptr, h);
