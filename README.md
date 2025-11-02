@@ -3,7 +3,7 @@
 [![image](https://img.shields.io/pypi/v/copium.svg)](https://pypi.python.org/pypi/copium)
 [![image](https://img.shields.io/pypi/l/copium.svg)](https://pypi.python.org/pypi/copium)
 [![image](https://img.shields.io/pypi/pyversions/copium.svg)](https://pypi.python.org/pypi/copium)
-[![Actions status](https://github.com/Bobronium/copium/actions/workflows/build.yml/badge.svg)](https://github.com/Bobronium/copium/actions)
+[![Actions status](https://github.com/Bobronium/copium/actions/workflows/build.yaml/badge.svg)](https://github.com/Bobronium/copium/actions)
 
 An extremely fast Python copy/deepcopy implementation, written in C.
 
