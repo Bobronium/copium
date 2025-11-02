@@ -43,6 +43,58 @@
 #include "pycore_setobject.h"
 #endif
 
+/* -----------------------------------------------------------------------------
+ * Inlining policy
+ *
+ * Goal:
+ *   - Make ALWAYS_INLINE truly "always inline" (force) everywhere it appears.
+ *   - Avoid forced inlining on recursive dispatchers to prevent GCC/Clang errors.
+ *   - Provide MAYBE_INLINE as a strong hint so PGO can choose profitable expansion.
+ *
+ * Policy:
+ *   - MSVC: ALWAYS_INLINE = __forceinline; MAYBE_INLINE = __inline.
+ *   - GCC/Clang: ALWAYS_INLINE = inline + always_inline (+hot); MAYBE_INLINE = inline (+hot).
+ * ---------------------------------------------------------------------------*/
+#ifdef ALWAYS_INLINE
+#undef ALWAYS_INLINE
+#endif
+#ifdef MAYBE_INLINE
+#undef MAYBE_INLINE
+#endif
+
+/* Feature-gated attributes for portability */
+#if defined(__has_attribute)
+  #if __has_attribute(hot)
+    #define COPIUM_ATTR_HOT __attribute__((hot))
+  #else
+    #define COPIUM_ATTR_HOT
+  #endif
+  #if __has_attribute(gnu_inline)
+    #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
+  #else
+    #define COPIUM_ATTR_GNU_INLINE
+  #endif
+#else
+  #if defined(__GNUC__) || defined(__clang__)
+    #define COPIUM_ATTR_HOT __attribute__((hot))
+    #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
+  #else
+    #define COPIUM_ATTR_HOT
+    #define COPIUM_ATTR_GNU_INLINE
+  #endif
+#endif
+
+#if defined(_MSC_VER)
+  #define ALWAYS_INLINE __forceinline
+  #define MAYBE_INLINE __inline
+#elif defined(__GNUC__) || defined(__clang__)
+  #define ALWAYS_INLINE inline __attribute__((always_inline)) COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
+  #define MAYBE_INLINE inline COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
+#else
+  #define ALWAYS_INLINE inline
+  #define MAYBE_INLINE inline
+#endif
+
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
 static Py_tss_t g_dictiter_tss = Py_tss_NEEDS_INIT;
 static int g_dict_watcher_id = -1;
@@ -599,18 +651,18 @@ static ALWAYS_INLINE PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, P
     } while (0)
 #define MEMO_OBJ_C ((PyObject*)mo)
 
-static PyObject* deepcopy_list_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static PyObject* deepcopy_tuple_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static ALWAYS_INLINE PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static ALWAYS_INLINE PyObject* deepcopy_frozenset_c(
+static MAYBE_INLINE PyObject* deepcopy_list_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_tuple_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_frozenset_c(
     PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
 );
-static ALWAYS_INLINE PyObject* deepcopy_bytearray_c(
+static MAYBE_INLINE PyObject* deepcopy_bytearray_c(
     PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
 );
-static ALWAYS_INLINE PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
-static ALWAYS_INLINE PyObject* deepcopy_fallback_c(
+static MAYBE_INLINE PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
     PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
 );
 
@@ -655,11 +707,34 @@ static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
     if (is_stdlib_immutable(tp))  // touch non-static types last
         return Py_NewRef(obj);
 
-    PyObject* res = deepcopy_fallback_c(obj, mo, h);
+        PyObject* deepcopy_meth = NULL;
+    
+    int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
+    if (has_deepcopy < 0)
+        return NULL;
+    if (has_deepcopy) {
+        PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_C);
+        Py_DECREF(deepcopy_meth);
+        if (!res)
+            return NULL;
+        if (res != obj) {
+            if (MEMO_STORE_C((void*)obj, res, id_hash) < 0) {
+                Py_DECREF(res);
+                return NULL;
+            }
+            if (keepvector_append(&mo->keep, obj) < 0) {
+                Py_DECREF(res);
+                return NULL;
+            }
+        }
+        return res;
+    }
+
+    PyObject* res = deepcopy_via_reduce_c(obj, tp, mo, h);
     return res;
 }
 
-static PyObject* deepcopy_list_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_list_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     Py_ssize_t sz = Py_SIZE(obj);
     PyObject* copy = PyList_New(sz);
     if (!copy)
@@ -705,7 +780,7 @@ static PyObject* deepcopy_list_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_ha
     return copy;
 }
 
-static PyObject* deepcopy_tuple_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_tuple_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     Py_ssize_t sz = Py_SIZE(obj);
     PyObject* copy = PyTuple_New(sz);
     if (!copy)
@@ -748,7 +823,7 @@ static PyObject* deepcopy_tuple_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_h
     return copy;
 }
 
-static PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     PyObject* copy = PyDict_New();
     if (!copy)
         return NULL;
@@ -792,7 +867,7 @@ static PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_ha
     return copy;
 }
 
-static ALWAYS_INLINE PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     PyObject* copy = PySet_New(NULL);
     if (!copy)
         return NULL;
@@ -856,7 +931,7 @@ static ALWAYS_INLINE PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_
     return copy;
 }
 
-static ALWAYS_INLINE PyObject* deepcopy_frozenset_c(
+static MAYBE_INLINE PyObject* deepcopy_frozenset_c(
     PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
 ) {
     /* Pre-size snapshot: frozenset is immutable, so size won't change mid-loop. */
@@ -916,7 +991,7 @@ static ALWAYS_INLINE PyObject* deepcopy_bytearray_c(
     return copy;
 }
 
-static ALWAYS_INLINE PyObject* deepcopy_method_c(
+static MAYBE_INLINE PyObject* deepcopy_method_c(
     PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
 ) {
     PyObject* func = PyMethod_GET_FUNCTION(obj);
@@ -947,7 +1022,7 @@ static ALWAYS_INLINE PyObject* deepcopy_method_c(
     return copy;
 }
 
-static PyObject* try_reduce_via_registry(PyObject* obj, PyTypeObject* tp) {
+static MAYBE_INLINE PyObject* try_reduce_via_registry(PyObject* obj, PyTypeObject* tp) {
     PyObject* reducer = PyDict_GetItemWithError(module_state.copyreg_dispatch, (PyObject*)tp);
     if (!reducer) {
         if (PyErr_Occurred())
@@ -961,7 +1036,7 @@ static PyObject* try_reduce_via_registry(PyObject* obj, PyTypeObject* tp) {
     return PyObject_CallOneArg(reducer, obj);
 }
 
-static PyObject* call_reduce_method_preferring_ex(PyObject* obj) {
+static MAYBE_INLINE PyObject* call_reduce_method_preferring_ex(PyObject* obj) {
     PyObject* reduce_ex = PyObject_GetAttr(obj, module_state.str_reduce_ex);
     if (reduce_ex) {
         PyObject* res = PyObject_CallFunction(reduce_ex, "i", 4);
@@ -1020,32 +1095,9 @@ static int unpack_reduce_result_tuple(
     return 0;
 }
 
-static ALWAYS_INLINE PyObject* deepcopy_fallback_c(
-    PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
+static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
+    PyObject* obj, PyTypeObject* tp, MemoObject* mo, Py_ssize_t id_hash
 ) {
-    PyObject* deepcopy_meth = NULL;
-    int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
-    if (has_deepcopy < 0)
-        return NULL;
-    if (has_deepcopy) {
-        PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_C);
-        Py_DECREF(deepcopy_meth);
-        if (!res)
-            return NULL;
-        if (res != obj) {
-            if (MEMO_STORE_C((void*)obj, res, id_hash) < 0) {
-                Py_DECREF(res);
-                return NULL;
-            }
-            if (keepvector_append(&mo->keep, obj) < 0) {
-                Py_DECREF(res);
-                return NULL;
-            }
-        }
-        return res;
-    }
-
-    PyTypeObject* tp = Py_TYPE(obj);
     PyObject* reduce_res = try_reduce_via_registry(obj, tp);
     if (!reduce_res) {
         if (PyErr_Occurred())
@@ -1394,13 +1446,13 @@ static ALWAYS_INLINE PyObject* deepcopy_fallback_c(
     } while (0)
 #define MEMO_OBJ_PY (memo_dict)
 
-static PyObject* deepcopy_list_py(
+static MAYBE_INLINE PyObject* deepcopy_list_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static PyObject* deepcopy_tuple_py(
+static MAYBE_INLINE PyObject* deepcopy_tuple_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static PyObject* deepcopy_dict_py(
+static MAYBE_INLINE PyObject* deepcopy_dict_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
 static ALWAYS_INLINE PyObject* deepcopy_set_py(
@@ -1412,10 +1464,10 @@ static ALWAYS_INLINE PyObject* deepcopy_frozenset_py(
 static ALWAYS_INLINE PyObject* deepcopy_bytearray_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static PyObject* deepcopy_method_py(
+static MAYBE_INLINE PyObject* deepcopy_method_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static ALWAYS_INLINE PyObject* deepcopy_fallback_py(
+static ALWAYS_INLINE PyObject* deepcopy_via_reduce_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
 
@@ -1447,25 +1499,55 @@ static ALWAYS_INLINE PyObject* deepcopy_py(
         RETURN_GUARDED_PY(deepcopy_dict_py(obj, memo_dict, keep_list_ptr, h));
     if (tp == &PySet_Type)
         return deepcopy_set_py(obj, memo_dict, keep_list_ptr, h);
+
+    if (is_builtin_immutable(tp) || is_class(tp)) {
+        return Py_NewRef(obj);
+    }
+
     if (tp == &PyFrozenSet_Type)
         return deepcopy_frozenset_py(obj, memo_dict, keep_list_ptr, h);
     if (tp == &PyByteArray_Type)
         return deepcopy_bytearray_py(obj, memo_dict, keep_list_ptr, h);
+    if (tp == &PyMethod_Type)
+        return deepcopy_method_py(obj, memo_dict, keep_list_ptr, h);
+        PyObject* deepcopy_meth = NULL;
 
-    /* 4) Other atomic immutables (builtin/stdlib/class types) */
-    if (is_builtin_immutable(tp) || is_stdlib_immutable(tp) || is_class(tp)) {
+    if (is_stdlib_immutable(tp)) {
         return Py_NewRef(obj);
     }
 
-    /* 5) Remaining specializations */
-    if (tp == &PyMethod_Type)
-        return deepcopy_method_py(obj, memo_dict, keep_list_ptr, h);
+    int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
+    if (has_deepcopy < 0)
+        return NULL;
+    if (has_deepcopy) {
+        PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_PY);
+        Py_DECREF(deepcopy_meth);
+        if (!res)
+            return NULL;
+        if (res != obj) {
+            if (MEMO_STORE_PY((void*)obj, res, id_hash) < 0) {
+                Py_DECREF(res);
+                return NULL;
+            }
+            if (*keep_list_ptr == NULL) {
+                if (ensure_keep_list_for_pymemo(memo_dict, keep_list_ptr) < 0) {
+                    Py_DECREF(res);
+                    return NULL;
+                }
+            }
+            if (PyList_Append(*keep_list_ptr, obj) < 0) {
+                Py_DECREF(res);
+                return NULL;
+            }
+        }
+        return res;
+    }
 
-    PyObject* res = deepcopy_fallback_py(obj, memo_dict, keep_list_ptr, h);
+    PyObject* res = deepcopy_via_reduce_py(obj, tp, memo_dict, keep_list_ptr, h);
     return res;
 }
 
-static PyObject* deepcopy_list_py(
+static MAYBE_INLINE PyObject* deepcopy_list_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
     Py_ssize_t sz = Py_SIZE(obj);
@@ -1514,7 +1596,7 @@ static PyObject* deepcopy_list_py(
     return copy;
 }
 
-static PyObject* deepcopy_tuple_py(
+static MAYBE_INLINE PyObject* deepcopy_tuple_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
     Py_ssize_t sz = Py_SIZE(obj);
@@ -1559,7 +1641,7 @@ static PyObject* deepcopy_tuple_py(
     return copy;
 }
 
-static PyObject* deepcopy_dict_py(
+static MAYBE_INLINE PyObject* deepcopy_dict_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
     PyObject* copy = PyDict_New();
@@ -1605,7 +1687,7 @@ static PyObject* deepcopy_dict_py(
     return copy;
 }
 
-static PyObject* deepcopy_set_py(
+static MAYBE_INLINE PyObject* deepcopy_set_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
     PyObject* copy = PySet_New(NULL);
@@ -1672,7 +1754,7 @@ static PyObject* deepcopy_set_py(
     return copy;
 }
 
-static PyObject* deepcopy_frozenset_py(
+static MAYBE_INLINE PyObject* deepcopy_frozenset_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
     /* Pre-size snapshot: frozenset is immutable, so size won't change mid-loop. */
@@ -1715,7 +1797,7 @@ static PyObject* deepcopy_frozenset_py(
     return copy;
 }
 
-static PyObject* deepcopy_bytearray_py(
+static MAYBE_INLINE PyObject* deepcopy_bytearray_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
     Py_ssize_t sz = PyByteArray_Size(obj);
@@ -1732,7 +1814,7 @@ static PyObject* deepcopy_bytearray_py(
     return copy;
 }
 
-static PyObject* deepcopy_method_py(
+static MAYBE_INLINE PyObject* deepcopy_method_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
     PyObject* func = PyMethod_GET_FUNCTION(obj);
@@ -1763,38 +1845,9 @@ static PyObject* deepcopy_method_py(
     return copy;
 }
 
-static PyObject* deepcopy_fallback_py(
-    PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
+static PyObject* deepcopy_via_reduce_py(
+    PyObject* obj, PyTypeObject* tp, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
-    PyObject* deepcopy_meth = NULL;
-    int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
-    if (has_deepcopy < 0)
-        return NULL;
-    if (has_deepcopy) {
-        PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_PY);
-        Py_DECREF(deepcopy_meth);
-        if (!res)
-            return NULL;
-        if (res != obj) {
-            if (MEMO_STORE_PY((void*)obj, res, id_hash) < 0) {
-                Py_DECREF(res);
-                return NULL;
-            }
-            if (*keep_list_ptr == NULL) {
-                if (ensure_keep_list_for_pymemo(memo_dict, keep_list_ptr) < 0) {
-                    Py_DECREF(res);
-                    return NULL;
-                }
-            }
-            if (PyList_Append(*keep_list_ptr, obj) < 0) {
-                Py_DECREF(res);
-                return NULL;
-            }
-        }
-        return res;
-    }
-
-    PyTypeObject* tp = Py_TYPE(obj);
     PyObject* reduce_res = try_reduce_via_registry(obj, tp);
     if (!reduce_res) {
         if (PyErr_Occurred())
