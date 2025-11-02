@@ -105,15 +105,9 @@ static int g_dict_watcher_registered = 0;
 /* ------------------------------ Small helpers ------------------------------ */
 
 #if PY_VERSION_HEX < PY_VERSION_3_13_HEX
+/* Use internal non-raising lookup that does not clobber unrelated exceptions. */
 static ALWAYS_INLINE int get_optional_attr(PyObject* obj, PyObject* name, PyObject** out) {
-    *out = PyObject_GetAttr(obj, name);
-    if (*out)
-        return 1;  // found
-    if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-        PyErr_Clear();
-        return 0;  // not found (and error cleared)
-    }
-    return -1;  // real error (still set)
+    return _PyObject_LookupAttr(obj, name, out);
 }
 #define PyObject_GetOptionalAttr(obj, name, out) get_optional_attr((obj), (name), (out))
 #endif
@@ -707,15 +701,13 @@ static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
     if (is_stdlib_immutable(tp))  // touch non-static types last
         return Py_NewRef(obj);
 
-    /* Robustly detect a user-defined __deepcopy__ and propagate its exceptions exactly. */
+    /* Robustly detect a user-defined __deepcopy__ via optional lookup (single step, non-raising on miss). */
     {
-        int has_deepcopy = PyObject_HasAttr(obj, module_state.str_deepcopy);
+        PyObject* deepcopy_meth = NULL;
+        int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
         if (has_deepcopy < 0)
             return NULL;
         if (has_deepcopy) {
-            PyObject* deepcopy_meth = PyObject_GetAttr(obj, module_state.str_deepcopy);
-            if (!deepcopy_meth)
-                return NULL;
             PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_C);
             Py_DECREF(deepcopy_meth);
             if (!res)
@@ -1528,15 +1520,13 @@ static ALWAYS_INLINE PyObject* deepcopy_py(
         return Py_NewRef(obj);
     }
 
-    /* Robustly detect a user-defined __deepcopy__ and propagate its exceptions exactly. */
+    /* Robustly detect a user-defined __deepcopy__ via optional lookup (single step, non-raising on miss). */
     {
-        int has_deepcopy = PyObject_HasAttr(obj, module_state.str_deepcopy);
+        PyObject* deepcopy_meth = NULL;
+        int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
         if (has_deepcopy < 0)
             return NULL;
         if (has_deepcopy) {
-            PyObject* deepcopy_meth = PyObject_GetAttr(obj, module_state.str_deepcopy);
-            if (!deepcopy_meth)
-                return NULL;
             PyObject* res = PyObject_CallOneArg(deepcopy_meth, MEMO_OBJ_PY);
             Py_DECREF(deepcopy_meth);
             if (!res)
