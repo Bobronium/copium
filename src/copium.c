@@ -22,40 +22,47 @@
  *     - clear_pins()
  *     - get_pins()
  */
+#define Py_BUILD_CORE_MODULE
+
+#define PY_VERSION_3_11_HEX 0x030B0000
+#define PY_VERSION_3_12_HEX 0x030C0000
+#define PY_VERSION_3_13_HEX 0x030D0000
+#define PY_VERSION_3_14_HEX 0x030E0000
+
+#define PY_SSIZE_T_CLEAN
+
+/* Enable GNU extensions so pthread_getattr_np is declared on Linux */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
-/* ======== Externs from _copying.c (implementations) ======================= */
-PyObject* py_deepcopy(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames);
-PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames);
-PyObject* py_repeatcall(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames);
-PyObject* py_copy(PyObject* self, PyObject* obj);
-#if PY_VERSION_HEX >= 0x030D0000
-PyObject* py_replace(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames);
+#ifndef LIKELY
+#if defined(__GNUC__) || defined(__clang__)
+#define LIKELY(x) __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define LIKELY(x) (x)
+#define UNLIKELY(x) (x)
+#endif
 #endif
 
-/* Initializer + availability accessor from _copying.c */
-int _copium_copying_init(PyObject* module);
-int _copium_copying_duper_available(void);
+#ifndef ALWAYS_INLINE
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__OPTIMIZE__)
+#define ALWAYS_INLINE inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define ALWAYS_INLINE __forceinline
+#else
+#define ALWAYS_INLINE inline
+#endif
+#endif
 
-/* ======== Externs from _pinning.c (optional API) ========================== */
-typedef struct {
-    PyObject_HEAD PyObject* snapshot;
-    PyObject* factory;
-    uint64_t hits;
-} PinObject;
-
-extern PyObject* py_pin(PyObject* self, PyObject* obj);
-extern PyObject* py_unpin(
-    PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames
-);
-extern PyObject* py_pinned(PyObject* self, PyObject* obj);
-extern PyObject* py_clear_pins(PyObject* self, PyObject* noargs);
-extern PyObject* py_get_pins(PyObject* self, PyObject* noargs);
-
-/* ======== Extern from _patching.c: adds patch/unpatch/patched/... ========== */
-int _copium_patching_add_api(PyObject* module);
+#include "_memo.c"
+#include "_pinning.c"
+#include "_copying.c"
+#include "_patching.c"
 
 /* ===================== Utilities shared locally =========================== */
 
@@ -248,22 +255,18 @@ static PyMethodDef main_methods[] = {
     {"copy",
      (PyCFunction)py_copy,
      METH_O,
-     PyDoc_STR(
-         "copy(obj, /)\n--\n\n"
-         "Return a shallow copy of obj.\n\n"
-         ":param x: object to copy.\n"
-         ":return: shallow copy of the `x`."
-     )},
+     PyDoc_STR("copy(obj, /)\n--\n\n"
+               "Return a shallow copy of obj.\n\n"
+               ":param x: object to copy.\n"
+               ":return: shallow copy of the `x`.")},
     {"deepcopy",
      (PyCFunction)(void*)py_deepcopy,
      METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR(
-         "deepcopy(x, memo=None, /)\n--\n\n"
-         "Return a deep copy of obj.\n\n"
-         ":param x: object to deepcopy\n"
-         ":param memo: treat as opaque.\n"
-         ":return: deep copy of the `x`."
-     )},
+     PyDoc_STR("deepcopy(x, memo=None, /)\n--\n\n"
+               "Return a deep copy of obj.\n\n"
+               ":param x: object to deepcopy\n"
+               ":param memo: treat as opaque.\n"
+               ":return: deep copy of the `x`.")},
 #if PY_VERSION_HEX >= 0x030D0000
     {"replace",
      (PyCFunction)(void*)py_replace,
@@ -281,19 +284,15 @@ static PyMethodDef extra_methods[] = {
     {"replicate",
      (PyCFunction)(void*)py_replicate,
      METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR(
-         "replicate(obj, n, /, *, compile_after=20)\n--\n\n"
-         "Returns n copies of the object in a list.\n\n"
-         "Equivalent of [deepcopy(obj) for _ in range(n)], but faster."
-     )},
+     PyDoc_STR("replicate(obj, n, /, *, compile_after=20)\n--\n\n"
+               "Returns n copies of the object in a list.\n\n"
+               "Equivalent of [deepcopy(obj) for _ in range(n)], but faster.")},
     {"repeatcall",
      (PyCFunction)(void*)py_repeatcall,
      METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR(
-         "repeatcall(function, size, /)\n--\n\n"
-         "Call function repeatedly size times and return the list of results.\n\n"
-         "Equivalent of [function() for _ in range(size)], but faster."
-     )},
+     PyDoc_STR("repeatcall(function, size, /)\n--\n\n"
+               "Call function repeatedly size times and return the list of results.\n\n"
+               "Equivalent of [function() for _ in range(size)], but faster.")},
     {NULL, NULL, 0, NULL}
 };
 
@@ -302,27 +301,21 @@ static PyMethodDef patch_methods[] = {
     {"enable",
      (PyCFunction)py_enable,
      METH_NOARGS,
-     PyDoc_STR(
-         "enable()\n--\n\n"
-         "Patch copy.deepcopy to forward to copium.deepcopy.\n\n"
-         ":return: True if copium was enabled, False if it was already enabled."
-     )},
+     PyDoc_STR("enable()\n--\n\n"
+               "Patch copy.deepcopy to forward to copium.deepcopy.\n\n"
+               ":return: True if copium was enabled, False if it was already enabled.")},
     {"disable",
      (PyCFunction)py_disable,
      METH_NOARGS,
-     PyDoc_STR(
-         "disable()\n--\n\n"
-         "Undo enable(): restore original copy.deepcopy if applied.\n\n"
-         ":return: True if copium was disabled, False if it was already disabled."
-     )},
+     PyDoc_STR("disable()\n--\n\n"
+               "Undo enable(): restore original copy.deepcopy if applied.\n\n"
+               ":return: True if copium was disabled, False if it was already disabled.")},
     {"enabled",
      (PyCFunction)py_enabled,
      METH_NOARGS,
-     PyDoc_STR(
-         "enabled()\n--\n\n"
-         "Return True if copy.deepcopy is currently applied to copium.\n\n"
-         ":return: Whether copium is currently enabled."
-     )},
+     PyDoc_STR("enabled()\n--\n\n"
+               "Return True if copy.deepcopy is currently applied to copium.\n\n"
+               ":return: Whether copium is currently enabled.")},
     {NULL, NULL, 0, NULL}
 };
 
@@ -332,10 +325,8 @@ static PyMethodDef experimental_methods[] = {
     {"unpin",
      (PyCFunction)(void*)py_unpin,
      METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR(
-         "unpin(obj, /, *, strict=False)\n--\n\n"
-         "Remove the pin for obj. If strict is True, raise if obj is not pinned."
-     )},
+     PyDoc_STR("unpin(obj, /, *, strict=False)\n--\n\n"
+               "Remove the pin for obj. If strict is True, raise if obj is not pinned.")},
     {"pinned",
      (PyCFunction)py_pinned,
      METH_O,

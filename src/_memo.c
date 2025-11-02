@@ -16,7 +16,7 @@
 #include "Python.h"
 #include "pycore_object.h"
 
-#include "_memo.h"
+//#include "_memo.h"
 
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
@@ -34,13 +34,39 @@
 
 /* ------------------------------ Memo table -------------------------------- */
 
+
+typedef struct {
+    void* key;
+    PyObject* value; /* stored with a strong reference inside the table */
+} MemoEntry;
+
+typedef struct {
+    MemoEntry* slots;
+    Py_ssize_t size;   /* power-of-two capacity */
+    Py_ssize_t used;   /* number of live entries */
+    Py_ssize_t filled; /* live + tombstones */
+} MemoTable;
+
+typedef struct {
+    PyObject** items;
+    Py_ssize_t size;
+    Py_ssize_t capacity;
+} KeepVector;
+
+/* Exact runtime layout of the memo object (must begin with PyObject_HEAD). */
+typedef struct _MemoObject {
+    PyObject_HEAD MemoTable* table;
+    KeepVector keep;
+} MemoObject;
+
+
 /* Forward decl to refer to Memo_Type in helpers */
 typedef struct _MemoObject MemoObject;
 
 #define MEMO_TOMBSTONE ((void*)(uintptr_t)(-1))
 
 /* SplitMix64-style pointer hasher, stable across the process. */
-static inline Py_ssize_t hash_pointer(void* ptr) {
+static ALWAYS_INLINE Py_ssize_t hash_pointer(void* ptr) {
     uintptr_t h = (uintptr_t)ptr;
     h ^= h >> 33;
     h *= (uintptr_t)0xff51afd7ed558ccdULL;
@@ -51,7 +77,7 @@ static inline Py_ssize_t hash_pointer(void* ptr) {
 }
 
 /* Exported so _copying.c can compute the exact same hash once per object */
-Py_ssize_t memo_hash_pointer(void* ptr) {
+static ALWAYS_INLINE Py_ssize_t memo_hash_pointer(void* ptr) {
     return hash_pointer(ptr);
 }
 
@@ -251,7 +277,7 @@ static ALWAYS_INLINE int memo_table_ensure(MemoTable** table_ptr) {
 }
 
 /* Existing non-hash-parameterized APIs (kept for compatibility) */
-ALWAYS_INLINE PyObject* memo_table_lookup(MemoTable* table, void* key) {
+static ALWAYS_INLINE PyObject* memo_table_lookup(MemoTable* table, void* key) {
     if (!table)
         return NULL;
     Py_ssize_t mask = table->size - 1;
@@ -267,7 +293,7 @@ ALWAYS_INLINE PyObject* memo_table_lookup(MemoTable* table, void* key) {
     }
 }
 
-ALWAYS_INLINE int memo_table_insert(MemoTable** table_ptr, void* key, PyObject* value) {
+static ALWAYS_INLINE int memo_table_insert(MemoTable** table_ptr, void* key, PyObject* value) {
     if (memo_table_ensure(table_ptr) < 0)
         return -1;
     MemoTable* table = *table_ptr;
@@ -308,7 +334,7 @@ ALWAYS_INLINE int memo_table_insert(MemoTable** table_ptr, void* key, PyObject* 
 }
 
 /* New hash-parameterized hot-path APIs (avoid recomputing hash) */
-ALWAYS_INLINE PyObject* memo_table_lookup_h(MemoTable* table, void* key, Py_ssize_t hash) {
+static ALWAYS_INLINE PyObject* memo_table_lookup_h(MemoTable* table, void* key, Py_ssize_t hash) {
     if (!table)
         return NULL;
     Py_ssize_t mask = table->size - 1;
@@ -324,7 +350,7 @@ ALWAYS_INLINE PyObject* memo_table_lookup_h(MemoTable* table, void* key, Py_ssiz
     }
 }
 
-int memo_table_insert_h(MemoTable** table_ptr, void* key, PyObject* value, Py_ssize_t hash) {
+static ALWAYS_INLINE int memo_table_insert_h(MemoTable** table_ptr, void* key, PyObject* value, Py_ssize_t hash) {
     if (memo_table_ensure(table_ptr) < 0)
         return -1;
     MemoTable* table = *table_ptr;

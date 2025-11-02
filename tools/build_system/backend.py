@@ -347,13 +347,7 @@ def _get_c_extensions(
     return [
         Extension(
             "copium",
-            sources=[
-                "src/copium.c",
-                "src/_copying.c",
-                "src/_memo.c",
-                "src/_pinning.c",
-                "src/_patching.c",
-            ],
+            sources=["src/copium.c"],
             include_dirs=[str(python_include), str(python_include / "internal")],
             define_macros=define_macros,
         )

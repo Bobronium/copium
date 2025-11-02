@@ -94,15 +94,6 @@ typedef struct {
 
 static PinTable* global_pin_table = NULL; /* owned here */
 
-static inline Py_ssize_t hash_pointer(void* ptr) {
-    uintptr_t h = (uintptr_t)ptr;
-    h ^= h >> 33;
-    h *= (uintptr_t)0xff51afd7ed558ccdULL;
-    h ^= h >> 33;
-    h *= (uintptr_t)0xc4ceb9fe1a85ec53ULL;
-    h ^= h >> 33;
-    return (Py_ssize_t)h;
-}
 
 static void pin_table_free(PinTable* table) {
     if (!table)

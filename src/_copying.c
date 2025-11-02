@@ -15,19 +15,7 @@
  * Python 3.10–3.14 compatible.
  */
 
-#define PY_VERSION_3_11_HEX 0x030B0000
-#define PY_VERSION_3_12_HEX 0x030C0000
-#define PY_VERSION_3_13_HEX 0x030D0000
-#define PY_VERSION_3_14_HEX 0x030E0000
 
-#define PY_SSIZE_T_CLEAN
-
-/* Enable GNU extensions so pthread_getattr_np is declared on Linux */
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE 1
-#endif
-
-#define Py_BUILD_CORE_MODULE
 #include <stddef.h>  // ptrdiff_t
 #include <stdint.h>
 #include <stdlib.h>
@@ -55,77 +43,17 @@
 #include "pycore_setobject.h"
 #endif
 
-#include "_memo.h"
-
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
 static Py_tss_t g_dictiter_tss = Py_tss_NEEDS_INIT;
 static int g_dict_watcher_id = -1;
 static int g_dict_watcher_registered = 0;
 #endif
 
-#if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#define ALWAYS_INLINE inline __attribute__((always_inline))
-#elif defined(_MSC_VER)
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#define ALWAYS_INLINE __forceinline
-#else
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#define ALWAYS_INLINE inline
-#endif
-
-/* ---------------- Pin integration surface (provided by _pinning.c) ---------
- */
-/* Forward declaration must match the layout used in _pinning.c */
-typedef struct {
-    PyObject_HEAD PyObject* snapshot;  // duper.snapshots.Snapshot
-    PyObject* factory;                 // callable reconstruct()
-    uint64_t hits;                     // native counter
-} PinObject;
-
-/* Lookup currently pinned object; returns borrowed PinObject* or NULL */
-extern PinObject* _duper_lookup_pin_for_object(PyObject* obj);
-
-/* Add Pin and PinsProxy types to the module (called during init) */
-extern int _duper_pinning_add_types(PyObject* module);
-
-/* Python-callable functions implemented in _pinning.c */
-extern PyObject* py_pin(PyObject* self, PyObject* obj);
-extern PyObject* py_unpin(
-    PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames
-);
-extern PyObject* py_pinned(PyObject* self, PyObject* obj);
-extern PyObject* py_clear_pins(PyObject* self, PyObject* noargs);
-extern PyObject* py_get_pins(PyObject* self, PyObject* noargs);
-
-/* ---------------- Memo integration surface (provided by _memo.c) -----------
- */
-typedef struct _MemoObject MemoObject;
-extern PyTypeObject Memo_Type;
-
-/* Create a new Memo object */
-extern PyObject* Memo_New(void);
-
-/* Exported pointer hasher (same as C memo table) */
-extern Py_ssize_t memo_hash_pointer(void* key);
-/* Reset/shrink memo table for TLS reuse */
-extern int memo_table_reset(MemoTable** table_ptr);
-/* Shrink keepalive vector if it ballooned */
-extern void keepvector_shrink_if_large(KeepVector* kv);
-/* Clear memo table in-place without freeing capacity (for TLS reuse) */
-extern void memo_table_clear(MemoTable* table);
-/* Ready both Memo and _KeepList types */
-extern int memo_ready_types(void);
-/* keep-size helper from _memo.c */
-extern int memo_keep_size(MemoObject* self);
 
 /* ------------------------------ Small helpers ------------------------------ */
 
 #if PY_VERSION_HEX < PY_VERSION_3_13_HEX
-static inline int get_optional_attr(PyObject* obj, PyObject* name, PyObject** out) {
+static ALWAYS_INLINE int get_optional_attr(PyObject* obj, PyObject* name, PyObject** out) {
     *out = PyObject_GetAttr(obj, name);
     if (*out)
         return 1;  // found
@@ -190,7 +118,7 @@ static int _copium_dict_watcher_cb(
     return 0; /* never raise; per docs this would become unraisable */
 }
 
-static inline void dict_iter_init(DictIterGuard* di, PyObject* dict) {
+static ALWAYS_INLINE void dict_iter_init(DictIterGuard* di, PyObject* dict) {
     di->dict = dict;
     di->pos = 0;
     di->size0 = PyDict_Size(dict); /* snapshot initial size (errors unlikely; -1 harmless) */
@@ -208,7 +136,7 @@ static inline void dict_iter_init(DictIterGuard* di, PyObject* dict) {
     }
 }
 
-static inline void dict_iter_cleanup(DictIterGuard* di) {
+static ALWAYS_INLINE void dict_iter_cleanup(DictIterGuard* di) {
     /* Pop from TLS stack (defensive unlink in case of nested/early exits). */
     DictIterGuard* top = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
     if (top == di) {
@@ -226,7 +154,7 @@ static inline void dict_iter_cleanup(DictIterGuard* di) {
     }
 }
 
-static inline int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** value) {
+static ALWAYS_INLINE int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** value) {
     if (PyDict_Next(di->dict, &di->pos, key, value)) {
         if (UNLIKELY(di->mutated)) {
             /* Decide message based on net size delta from start of iteration. */
@@ -278,14 +206,14 @@ typedef struct {
     Py_ssize_t used0;
 } DictIterGuard;
 
-static inline void dict_iter_init(DictIterGuard* di, PyObject* dict) {
+static ALWAYS_INLINE void dict_iter_init(DictIterGuard* di, PyObject* dict) {
     di->dict = dict;
     di->pos = 0;
     di->ver0 = ((PyDictObject*)dict)->ma_version_tag;
     di->used0 = ((PyDictObject*)dict)->ma_used;
 }
 
-static inline int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** value) {
+static ALWAYS_INLINE int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** value) {
     if (PyDict_Next(di->dict, &di->pos, key, value)) {
         uint64_t ver_now = ((PyDictObject*)di->dict)->ma_version_tag;
         if (UNLIKELY(ver_now != di->ver0)) {
@@ -422,7 +350,7 @@ static _Thread_local char* _copium_tls_stack_low = NULL;
 static _Thread_local char* _copium_tls_stack_high = NULL;
 #endif
 
-static inline void _copium_stack_init_if_needed(void) {
+static ALWAYS_INLINE void _copium_stack_init_if_needed(void) {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
     if (_copium_tls_stack_inited)
         return;
@@ -623,7 +551,7 @@ static int custom_memo_store(PyObject* memo, void* key_ptr, PyObject* value) {
     return rc;
 }
 
-static inline int ensure_keep_list_for_pymemo(PyObject* memo, PyObject** keep_list_ptr) {
+static ALWAYS_INLINE int ensure_keep_list_for_pymemo(PyObject* memo, PyObject** keep_list_ptr) {
     if (*keep_list_ptr)
         return 0;
     void* key_ptr = (void*)memo;
@@ -649,8 +577,8 @@ static inline int ensure_keep_list_for_pymemo(PyObject* memo, PyObject** keep_li
 
 /* ----------------------------- Predecl for c/py paths ---------------------- */
 
-static inline PyObject* deepcopy_c(PyObject* obj, MemoObject* mo);
-static inline PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr);
+static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo);
+static ALWAYS_INLINE PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr);
 
 /* ----------------------------- Type-special helpers ------------------------ */
 /* We define two sets of helpers: *_c operate with MemoObject*, *_py with dict. */
@@ -2370,7 +2298,7 @@ have_args:
 
 /* -------------------------------- Utilities -------------------------------- */
 
-static inline PyObject* build_list_by_calling_noargs(PyObject* callable, Py_ssize_t n) {
+static ALWAYS_INLINE PyObject* build_list_by_calling_noargs(PyObject* callable, Py_ssize_t n) {
     if (n < 0) {
         PyErr_SetString(PyExc_ValueError, "n must be >= 0");
         return NULL;
@@ -2514,7 +2442,7 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
                 PyObject* memo_local = get_thread_local_memo();
                 if (!memo_local)
                     return NULL;
-                MemoObject* mo = (MemoObject*)memo_local;
+                mo = (MemoObject*)memo_local;
             }
 
             if (!copy_i) {
@@ -2725,7 +2653,7 @@ static PyObject* reconstruct_state(
 
 /* -------------------------------- copy() ---------------------------------- */
 
-static inline int is_empty_initializable(PyObject* obj) {
+static ALWAYS_INLINE int is_empty_initializable(PyObject* obj) {
     PyTypeObject* tp = Py_TYPE(obj);
     if (tp == &PyList_Type)
         return Py_SIZE(obj) == 0;
