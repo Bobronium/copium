@@ -663,7 +663,7 @@ static MAYBE_INLINE PyObject* deepcopy_bytearray_c(
 );
 static MAYBE_INLINE PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
 static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
-    PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
+    PyObject* obj, PyTypeObject* tp, MemoObject* mo, Py_ssize_t id_hash
 );
 
 static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
@@ -707,7 +707,7 @@ static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
     if (is_stdlib_immutable(tp))  // touch non-static types last
         return Py_NewRef(obj);
 
-        PyObject* deepcopy_meth = NULL;
+    PyObject* deepcopy_meth = NULL;
     
     int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
     if (has_deepcopy < 0)
@@ -718,7 +718,7 @@ static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo) {
         if (!res)
             return NULL;
         if (res != obj) {
-            if (MEMO_STORE_C((void*)obj, res, id_hash) < 0) {
+            if (MEMO_STORE_C((void*)obj, res, h) < 0) {
                 Py_DECREF(res);
                 return NULL;
             }
@@ -1468,7 +1468,7 @@ static MAYBE_INLINE PyObject* deepcopy_method_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
 static ALWAYS_INLINE PyObject* deepcopy_via_reduce_py(
-    PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
+    PyObject* obj, PyTypeObject* tp, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
 
 static ALWAYS_INLINE PyObject* deepcopy_py(
@@ -1510,7 +1510,7 @@ static ALWAYS_INLINE PyObject* deepcopy_py(
         return deepcopy_bytearray_py(obj, memo_dict, keep_list_ptr, h);
     if (tp == &PyMethod_Type)
         return deepcopy_method_py(obj, memo_dict, keep_list_ptr, h);
-        PyObject* deepcopy_meth = NULL;
+    PyObject* deepcopy_meth = NULL;
 
     if (is_stdlib_immutable(tp)) {
         return Py_NewRef(obj);
