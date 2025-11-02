@@ -1455,10 +1455,10 @@ static MAYBE_INLINE PyObject* deepcopy_tuple_py(
 static MAYBE_INLINE PyObject* deepcopy_dict_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static ALWAYS_INLINE PyObject* deepcopy_set_py(
+static MAYBE_INLINE PyObject* deepcopy_set_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
-static ALWAYS_INLINE PyObject* deepcopy_frozenset_py(
+static MAYBE_INLINE PyObject* deepcopy_frozenset_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
 static ALWAYS_INLINE PyObject* deepcopy_bytearray_py(
