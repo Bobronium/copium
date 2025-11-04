@@ -138,7 +138,7 @@ jobs:
         env:
           PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
-        run: .venv/bin/python --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Print comparison
         if: runner.os == 'Linux'
