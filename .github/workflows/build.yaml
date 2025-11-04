@@ -119,6 +119,7 @@ jobs:
         run: |
           uv venv --python ${{ matrix.python.display }} --clear
           uv sync --extra benchmark --no-install-project
+          uv pip install ${{ steps.wheel.outputs.path }}
 
       - name: Tune pyperf
         if: runner.os == 'Linux'
@@ -126,22 +127,22 @@ jobs:
           sudo PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -B -m pyperf system tune || echo unable to tune system
           find . -path './.venv' -prune -o -type d -name '__pycache__' -exec rm -rf {} +
 
-      - name: Run stdlib pyperf benchmark
+      - name: Run pyperformance benchmark
         if: runner.os == 'Linux'
         env:
           PYTHONHASHSEED: "0"
-        run: uv run --with pyperf --no-sync pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: .venv/bin/pyperf pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
-      - name: Run copium pyperf benchmark
+      - name: Run pyperformance benchmark with copium
         if: runner.os == 'Linux'
         env:
           PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
-        run: uv run --with pyperf --no-sync --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: .venv/bin/pyperf --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Print comparison
         if: runner.os == 'Linux'
-        run: uv run --with pyperf pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json --table
+        run: .venv/bin/pyperf pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json --table
 
       - name: Upload pyperf jsons
         if: runner.os == 'Linux'
@@ -151,6 +152,36 @@ jobs:
           path: |
             copy-*.json
             copium-*.json
+
+      - name: Run readme benchmark
+        if: runner.os == 'Linux' && matrix.python.display == '3.14'
+        run: |
+          .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --fast
+          COPIUM_PATCH_DEEPCOPY=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
+          .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
+
+      - name: Generate readme graph
+        if: runner.os == 'Linux' && matrix.python.display == '3.14' && github.ref == 'refs/heads/main'
+        run: |
+          for theme in light dark; do
+            .venv/bin/python tools/generate_graph.py \
+              --name "readme_copium.json:copium.deepcopy({benchname})" \
+              --name "readme_stdlib.json:copy.deepcopy({benchname})" \
+              --aggregate geomean \
+              --group-sort min --group-order asc --within-order asc \
+              --save-svg assets/chart_$theme.svg \
+              --theme $theme
+          done
+
+      - name: Update assets
+        if: runner.os == 'Linux' && matrix.python.display == '3.14' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add assets/*.svg
+          git commit -m "Update benchmark assets and BENCHMARKS.md from CI" || echo "No changes to commit"
+          git push
+
 
       - name: Sync with test extra
         if: runner.os == 'Linux'
