@@ -235,7 +235,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: prepared-assets
-          path: .
+          path: downloaded-assets
 
       - name: Commit and push assets, then update README to current SHA
         run: |
@@ -243,15 +243,27 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
-          # Ensure charts are actually present
-          ls -la || true
-          if ! ls assets/*.svg >/dev/null 2>&1; then
-            echo "ERROR: No charts found at assets/*.svg — generation or artifact download failed."
+          # Ensure charts are actually present in downloaded artifact
+          echo "Contents of downloaded-assets:"
+          ls -R downloaded-assets/
+          if ! ls downloaded-assets/assets/*.svg >/dev/null 2>&1; then
+            echo "ERROR: No charts found in downloaded artifact — generation failed."
             exit 1
           fi
 
+          # Copy downloaded assets to the repo, overwriting existing ones
+          mkdir -p assets
+          cp -f downloaded-assets/assets/*.svg assets/
+          echo "Copied charts to assets directory"
+          ls -la assets/
+
           # -------- Commit 1: charts only --------
           git add assets/*.svg
+
+          echo "Git status after adding assets:"
+          git status
+          echo "Git diff --staged --stat:"
+          git diff --staged --stat
 
           if git diff --staged --quiet; then
             echo "No chart changes to commit"
