@@ -214,27 +214,12 @@ jobs:
               --theme $theme
           done
 
-      - name: Update README with versioned chart URLs
-        run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            CHART_REF="main"
-          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            CHART_REF="${{ github.ref_name }}"
-          else
-            CHART_REF="${{ github.sha }}"
-          fi
-          
-          sed -i "s|https://raw.githubusercontent.com/Bobronium/copium/[^/]*/assets/chart_|https://raw.githubusercontent.com/Bobronium/copium/${CHART_REF}/assets/chart_|g" README.md
-          
-          echo "Updated README.md to use charts from ref: ${CHART_REF}"
-
       - name: Upload prepared assets
         uses: actions/upload-artifact@v4
         with:
           name: prepared-assets
           path: |
             assets/*.svg
-            README.md
 
   sdist:
     runs-on: ubuntu-latest
@@ -271,23 +256,44 @@ jobs:
         with:
           name: prepared-assets
 
-      - name: Commit and push changes
+      - name: Commit and push assets, then update README to current SHA
         run: |
+          set -euo pipefail
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add assets/*.svg README.md
-          
-          # Only commit if there are changes
+
+          # -------- Commit 1: charts only --------
+          git add assets/*.svg
+
           if git diff --staged --quiet; then
-            echo "No changes to commit"
+            echo "No chart changes to commit"
           else
             if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-              git commit -m "Update benchmark assets and README from CI [skip ci]"
+              git commit -m "Update benchmark assets from CI [skip ci]"
               git push
             elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-              # For tags, we create a new commit but don't push back
-              # Charts are part of the tag and will be in the source distribution
-              git commit -m "Update benchmark assets and README for release ${{ github.ref_name }} [skip ci]"
-              echo "Charts generated for tag ${{ github.ref_name }}"
+              # For tags, create a local commit but don't push back.
+              # Charts are packaged in the release artifacts/sdist.
+              git commit -m "Update benchmark assets for release ${{ github.ref_name }} [skip ci]"
+              echo "Charts generated for tag ${{ github.ref_name }} (not pushed)"
+            fi
+          fi
+
+          CHARTS_SHA="$(git rev-parse HEAD)"
+          echo "Charts commit SHA: ${CHARTS_SHA}"
+
+          # -------- Commit 2: update README to point at the charts commit --------
+          sed -i "s|https://raw.githubusercontent.com/Bobronium/copium/[^/]*/assets/chart_|https://raw.githubusercontent.com/Bobronium/copium/${CHARTS_SHA}/assets/chart_|g" README.md
+          git add README.md
+
+          if git diff --staged --quiet; then
+            echo "README already points to ${CHARTS_SHA}; no update needed"
+          else
+            if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              git commit -m "Update README to reference charts @ ${CHARTS_SHA} [skip ci]"
+              git push
+            elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              git commit -m "Update README to reference charts @ ${CHARTS_SHA} for release ${{ github.ref_name }} [skip ci]"
+              echo "README updated locally for tag ${{ github.ref_name }} (not pushed)"
             fi
           fi
