@@ -286,6 +286,12 @@ jobs:
             fi
           fi
 
+      - name: Upload updated README
+        uses: actions/upload-artifact@v4
+        with:
+          name: updated-readme
+          path: README.md
+
   sdist:
     runs-on: ubuntu-latest
     needs: [ commit-assets ]
@@ -296,15 +302,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: prepared-assets
+          path: .
 
       - name: Download updated README
         uses: actions/download-artifact@v4
         with:
           name: updated-readme
-          path: updated-readme
-
-      - name: Overwrite README with updated one
-        run: cp -f updated-readme/README.md README.md
+          path: .
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
