@@ -142,7 +142,7 @@ jobs:
 
       - name: Print comparison
         if: runner.os == 'Linux'
-        run: .venv/bin/python pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json --table
+        run: .venv/bin/pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json --table
 
       - name: Upload pyperf jsons
         if: runner.os == 'Linux'
