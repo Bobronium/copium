@@ -131,18 +131,18 @@ jobs:
         if: runner.os == 'Linux'
         env:
           PYTHONHASHSEED: "0"
-        run: .venv/bin/pyperf pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Run pyperformance benchmark with copium
         if: runner.os == 'Linux'
         env:
           PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
-        run: .venv/bin/pyperf --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
+        run: .venv/bin/python --with ${{ steps.wheel.outputs.path }} pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Print comparison
         if: runner.os == 'Linux'
-        run: .venv/bin/pyperf pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json --table
+        run: .venv/bin/python pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json --table
 
       - name: Upload pyperf jsons
         if: runner.os == 'Linux'
