@@ -161,10 +161,10 @@ jobs:
           .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
 
       - name: Generate readme graph
-        if: runner.os == 'Linux' && matrix.python.display == '3.14' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.display == '3.14' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         run: |
           for theme in light dark; do
-            .venv/bin/python tools/generate_graph.py \
+            .venv/bin/python tools/generate_chart.py \
               --name "readme_copium.json:copium.deepcopy({benchname})" \
               --name "readme_stdlib.json:copy.deepcopy({benchname})" \
               --aggregate geomean \
