@@ -130,7 +130,7 @@ def benchmark_builtins(n):
     """
     value = get_data(lambda: 123456789, dict, lambda *args: tuple(args))
     total = 0
-    for _ in range(n * 20000):
+    for _ in range(n * 28000):
         t0 = pyperf.perf_counter()
         copy.deepcopy(value)
         total += pyperf.perf_counter() - t0
