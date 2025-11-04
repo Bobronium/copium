@@ -205,7 +205,7 @@ jobs:
         run: |
           mkdir -p assets
           for theme in light dark; do
-            .venv/bin/python tools/generate_chart.py \
+            uv run --with matplotlib tools/generate_chart.py \
               --name "readme_copium.json:copium.deepcopy({benchname})" \
               --name "readme_stdlib.json:copy.deepcopy({benchname})" \
               --aggregate geomean \
