@@ -161,7 +161,7 @@ jobs:
           .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
 
       - name: Generate readme graph
-        if: runner.os == 'Linux' && matrix.python.display == '3.14' && github.ref == 'refs/heads/main'
+        if: runner.os == 'Linux' && matrix.python.display == '3.14' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         run: |
           for theme in light dark; do
             .venv/bin/python tools/generate_graph.py \
@@ -173,15 +173,44 @@ jobs:
               --theme $theme
           done
 
+      - name: Update README with versioned chart URLs
+        if: runner.os == 'Linux' && matrix.python.display == '3.14' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        run: |
+          # Determine the ref to use in URLs (main branch or tag/commit)
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            CHART_REF="main"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            CHART_REF="${{ github.ref_name }}"
+          else
+            CHART_REF="${{ github.sha }}"
+          fi
+          
+          # Update README.md to use the correct ref in chart URLs
+          sed -i "s|https://raw.githubusercontent.com/Bobronium/copium/[^/]*/assets/chart_|https://raw.githubusercontent.com/Bobronium/copium/${CHART_REF}/assets/chart_|g" README.md
+          
+          echo "Updated README.md to use charts from ref: ${CHART_REF}"
+
       - name: Update assets
-        if: runner.os == 'Linux' && matrix.python.display == '3.14' && github.ref == 'refs/heads/main'
+        if: runner.os == 'Linux' && matrix.python.display == '3.14' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add assets/*.svg
-          git commit -m "Update benchmark assets and BENCHMARKS.md from CI" || echo "No changes to commit"
-          git push
-
+          git add assets/*.svg README.md
+          
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              git commit -m "Update benchmark assets and README from CI [skip ci]"
+              git push
+            elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              # For tags, we create a new commit but don't push back
+              # Charts are part of the tag and will be in the source distribution
+              git commit -m "Update benchmark assets and README for release ${{ github.ref_name }} [skip ci]"
+              echo "Charts generated for tag ${{ github.ref_name }}"
+            fi
+          fi
 
       - name: Sync with test extra
         if: runner.os == 'Linux'
