@@ -154,15 +154,56 @@ jobs:
             copium-*.json
 
       - name: Run readme benchmark
-        if: runner.os == 'Linux' && matrix.python.display == '3.14'
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.display == '3.14'
         run: |
           .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --fast
           COPIUM_PATCH_DEEPCOPY=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
           .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
 
-      - name: Generate readme graph
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.display == '3.14' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      - name: Upload readme benchmark results
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.display == '3.14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: readme-benchmarks
+          path: |
+            readme_stdlib.json
+            readme_copium.json
+
+      - name: Sync with test extra
+        if: runner.os == 'Linux'
+        run: uv sync --python ${{ matrix.python.display }} --extra test --no-install-project
+
+      - name: Run codspeed benchmarks
+        if: runner.os == 'Linux' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: instrumentation
+          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance
+
+  prepare-readme:
+    runs-on: ubuntu-latest
+    needs: [wheels]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download readme benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: readme-benchmarks
+
+      - name: Setup Python environment
         run: |
+          uv venv --python 3.14
+          uv sync --extra benchmark --no-install-project
+
+      - name: Generate charts
+        run: |
+          mkdir -p assets
           for theme in light dark; do
             .venv/bin/python tools/generate_chart.py \
               --name "readme_copium.json:copium.deepcopy({benchname})" \
@@ -174,9 +215,7 @@ jobs:
           done
 
       - name: Update README with versioned chart URLs
-        if: runner.os == 'Linux' && matrix.python.display == '3.14' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         run: |
-          # Determine the ref to use in URLs (main branch or tag/commit)
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             CHART_REF="main"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
@@ -185,13 +224,54 @@ jobs:
             CHART_REF="${{ github.sha }}"
           fi
           
-          # Update README.md to use the correct ref in chart URLs
           sed -i "s|https://raw.githubusercontent.com/Bobronium/copium/[^/]*/assets/chart_|https://raw.githubusercontent.com/Bobronium/copium/${CHART_REF}/assets/chart_|g" README.md
           
           echo "Updated README.md to use charts from ref: ${CHART_REF}"
 
-      - name: Update assets
-        if: runner.os == 'Linux' && matrix.python.display == '3.14' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      - name: Upload prepared assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-assets
+          path: |
+            assets/*.svg
+            README.md
+
+  sdist:
+    runs-on: ubuntu-latest
+    needs: [prepare-readme]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download prepared assets
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-assets
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Build sdist
+        run: uv build --sdist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  commit-assets:
+    runs-on: ubuntu-latest
+    needs: [prepare-readme]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download prepared assets
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-assets
+
+      - name: Commit and push changes
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
@@ -211,29 +291,3 @@ jobs:
               echo "Charts generated for tag ${{ github.ref_name }}"
             fi
           fi
-
-      - name: Sync with test extra
-        if: runner.os == 'Linux'
-        run: uv sync --python ${{ matrix.python.display }} --extra test --no-install-project
-
-      - name: Run codspeed benchmarks
-        if: runner.os == 'Linux' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
-        uses: CodSpeedHQ/action@v4
-        with:
-          mode: instrumentation
-          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance
-  sdist:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - name: Build sdist
-        run: uv build --sdist
-      - name: Upload sdist
-        uses: actions/upload-artifact@v4
-        with:
-          name: sdist
-          path: dist/*.tar.gz
