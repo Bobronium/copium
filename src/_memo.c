@@ -15,22 +15,9 @@
 #include <string.h>
 #include "Python.h"
 #include "pycore_object.h"
+#include "_common.h"
 
 //#include "_memo.h"
-
-#if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#define ALWAYS_INLINE inline __attribute__((always_inline))
-#elif defined(_MSC_VER)
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#define ALWAYS_INLINE __forceinline
-#else
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#define ALWAYS_INLINE inline
-#endif
 
 /* ------------------------------ Memo table -------------------------------- */
 
@@ -63,18 +50,7 @@ typedef struct _MemoObject {
 /* Forward decl to refer to Memo_Type in helpers */
 typedef struct _MemoObject MemoObject;
 
-#define MEMO_TOMBSTONE ((void*)(uintptr_t)(-1))
-
-/* SplitMix64-style pointer hasher, stable across the process. */
-static ALWAYS_INLINE Py_ssize_t hash_pointer(void* ptr) {
-    uintptr_t h = (uintptr_t)ptr;
-    h ^= h >> 33;
-    h *= (uintptr_t)0xff51afd7ed558ccdULL;
-    h ^= h >> 33;
-    h *= (uintptr_t)0xc4ceb9fe1a85ec53ULL;
-    h ^= h >> 33;
-    return (Py_ssize_t)h;
-}
+#define MEMO_TOMBSTONE HASH_TABLE_TOMBSTONE
 
 /* Exported so _copying.c can compute the exact same hash once per object */
 static ALWAYS_INLINE Py_ssize_t memo_hash_pointer(void* ptr) {
@@ -224,17 +200,9 @@ void memo_table_clear(MemoTable* table) {
 
 static int memo_table_resize(MemoTable** table_ptr, Py_ssize_t min_capacity_needed) {
     MemoTable* old = *table_ptr;
-    Py_ssize_t new_size = 8;
-    while (new_size < (min_capacity_needed * 2)) {
-        Py_ssize_t next = new_size << 1;
-        if (next <= 0 || next < new_size) { /* overflow clamp */
-            new_size = (Py_ssize_t)1 << (sizeof(void*) * 8 - 2);
-            break;
-        }
-        new_size = next;
-    }
+    Py_ssize_t new_size = HASH_TABLE_NEXT_SIZE(old ? old->size : 0, min_capacity_needed);
 
-    MemoEntry* new_slots = (MemoEntry*)calloc((size_t)new_size, sizeof(MemoEntry));
+    MemoEntry* new_slots = ALLOC_ZEROED(MemoEntry, new_size);
     if (!new_slots)
         return -1;
 
@@ -248,20 +216,21 @@ static int memo_table_resize(MemoTable** table_ptr, Py_ssize_t min_capacity_need
     nt->used = 0;
     nt->filled = 0;
 
+    /* Rehash existing entries */
     if (old) {
-        for (Py_ssize_t i = 0; i < old->size; i++) {
+        Py_ssize_t mask = nt->size - 1;
+        FOR_EACH_VALID_ENTRY(i, old->slots, old->size) {
             void* key = old->slots[i].key;
-            if (key && key != MEMO_TOMBSTONE) {
-                PyObject* value = old->slots[i].value; /* transfer */
-                Py_ssize_t mask = nt->size - 1;
-                Py_ssize_t idx = hash_pointer(key) & mask;
-                while (nt->slots[idx].key)
-                    idx = (idx + 1) & mask;
-                nt->slots[idx].key = key;
-                nt->slots[idx].value = value;
-                nt->used++;
-                nt->filled++;
-            }
+            PyObject* value = old->slots[i].value; /* transfer ownership */
+            Py_ssize_t idx = hash_pointer(key) & mask;
+
+            while (nt->slots[idx].key)
+                idx = HASH_TABLE_PROBE_NEXT(idx, mask);
+
+            nt->slots[idx].key = key;
+            nt->slots[idx].value = value;
+            nt->used++;
+            nt->filled++;
         }
         free(old->slots);
         free(old);
@@ -276,41 +245,66 @@ static ALWAYS_INLINE int memo_table_ensure(MemoTable** table_ptr) {
     return memo_table_resize(table_ptr, 1);
 }
 
-/* Existing non-hash-parameterized APIs (kept for compatibility) */
-static ALWAYS_INLINE PyObject* memo_table_lookup(MemoTable* table, void* key) {
+/* ======================== Core lookup implementation ========================
+ * Shared logic for hash table lookup with and without precomputed hash.
+ * Returns borrowed reference to value, or NULL if not found.
+ */
+static ALWAYS_INLINE PyObject* _memo_table_lookup_impl(
+    MemoTable* table,
+    void* key,
+    Py_ssize_t hash
+) {
     if (!table)
         return NULL;
+
     Py_ssize_t mask = table->size - 1;
-    Py_ssize_t idx = hash_pointer(key) & mask;
+    Py_ssize_t idx = hash & mask;
+
     for (;;) {
         void* slot_key = table->slots[idx].key;
-        if (!slot_key)
+        if (HASH_TABLE_IS_EMPTY(slot_key))
             return NULL;
-        if (slot_key != MEMO_TOMBSTONE && slot_key == key) {
+        if (HASH_TABLE_IS_VALID(slot_key) && slot_key == key)
             return table->slots[idx].value; /* borrowed */
-        }
-        idx = (idx + 1) & mask;
+        idx = HASH_TABLE_PROBE_NEXT(idx, mask);
     }
 }
 
-static ALWAYS_INLINE int memo_table_insert(MemoTable** table_ptr, void* key, PyObject* value) {
+/* Convenience wrappers */
+static ALWAYS_INLINE PyObject* memo_table_lookup(MemoTable* table, void* key) {
+    return _memo_table_lookup_impl(table, key, hash_pointer(key));
+}
+
+/* ======================== Core insert implementation ========================
+ * Shared logic for hash table insert with and without precomputed hash.
+ * Returns 0 on success, -1 on error.
+ */
+static ALWAYS_INLINE int _memo_table_insert_impl(
+    MemoTable** table_ptr,
+    void* key,
+    PyObject* value,
+    Py_ssize_t hash
+) {
     if (memo_table_ensure(table_ptr) < 0)
         return -1;
     MemoTable* table = *table_ptr;
 
-    if ((table->filled * 10) >= (table->size * 7)) {
+    /* Resize if load factor exceeded */
+    if (HASH_TABLE_SHOULD_RESIZE(table)) {
         if (memo_table_resize(table_ptr, table->used + 1) < 0)
             return -1;
         table = *table_ptr;
     }
 
     Py_ssize_t mask = table->size - 1;
-    Py_ssize_t idx = hash_pointer(key) & mask;
+    Py_ssize_t idx = hash & mask;
     Py_ssize_t first_tomb = -1;
 
     for (;;) {
         void* slot_key = table->slots[idx].key;
-        if (!slot_key) {
+
+        if (HASH_TABLE_IS_EMPTY(slot_key)) {
+            /* Found empty slot - insert here (or at first tombstone) */
             Py_ssize_t insert_at = (first_tomb >= 0) ? first_tomb : idx;
             table->slots[insert_at].key = key;
             Py_INCREF(value);
@@ -319,18 +313,27 @@ static ALWAYS_INLINE int memo_table_insert(MemoTable** table_ptr, void* key, PyO
             table->filled++;
             return 0;
         }
-        if (slot_key == MEMO_TOMBSTONE) {
+
+        if (HASH_TABLE_IS_TOMBSTONE(slot_key)) {
+            /* Remember first tombstone for potential insertion */
             if (first_tomb < 0)
                 first_tomb = idx;
         } else if (slot_key == key) {
+            /* Key exists - update value */
             PyObject* old_value = table->slots[idx].value;
             Py_INCREF(value);
             table->slots[idx].value = value;
             Py_XDECREF(old_value);
             return 0;
         }
-        idx = (idx + 1) & mask;
+
+        idx = HASH_TABLE_PROBE_NEXT(idx, mask);
     }
+}
+
+/* Convenience wrappers */
+static ALWAYS_INLINE int memo_table_insert(MemoTable** table_ptr, void* key, PyObject* value) {
+    return _memo_table_insert_impl(table_ptr, key, value, hash_pointer(key));
 }
 
 /* New hash-parameterized hot-path APIs (avoid recomputing hash) */
