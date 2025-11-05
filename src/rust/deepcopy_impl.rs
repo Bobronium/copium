@@ -120,6 +120,11 @@ pub fn copy_impl(obj: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let obj_ptr = obj.as_ptr();
 
     unsafe {
+        // Check for immutable types - return as-is
+        if ffi::is_immutable_literal(obj_ptr) {
+            return Ok(Py::from_borrowed_ptr(py, ffi::Py_NewRef(obj_ptr)));
+        }
+
         // Try __copy__ method first
         let copy_str = pyo3_ffi::PyUnicode_InternFromString(b"__copy__\0".as_ptr() as *const i8);
         if !copy_str.is_null() {
@@ -139,9 +144,300 @@ pub fn copy_impl(obj: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
             }
         }
 
-        // Fall back to just returning new ref (simplified)
-        Ok(Py::from_borrowed_ptr(py, ffi::Py_NewRef(obj_ptr)))
+        // Handle built-in containers with shallow copy
+        let tp = pyo3_ffi::Py_TYPE(obj_ptr);
+
+        // List
+        if tp == std::ptr::addr_of_mut!(pyo3_ffi::PyList_Type) {
+            let size = pyo3_ffi::PyList_Size(obj_ptr);
+            let new_list = pyo3_ffi::PyList_New(size);
+            if !new_list.is_null() {
+                for i in 0..size {
+                    let item = pyo3_ffi::PyList_GetItem(obj_ptr, i);
+                    pyo3_ffi::Py_IncRef(item);
+                    pyo3_ffi::PyList_SetItem(new_list, i, item);
+                }
+                return Ok(Py::from_owned_ptr(py, new_list));
+            }
+        }
+
+        // Dict
+        if tp == std::ptr::addr_of_mut!(pyo3_ffi::PyDict_Type) {
+            let new_dict = pyo3_ffi::PyDict_New();
+            if !new_dict.is_null() {
+                let mut pos: pyo3_ffi::Py_ssize_t = 0;
+                let mut key: *mut pyo3_ffi::PyObject = std::ptr::null_mut();
+                let mut value: *mut pyo3_ffi::PyObject = std::ptr::null_mut();
+
+                while pyo3_ffi::PyDict_Next(obj_ptr, &mut pos, &mut key, &mut value) != 0 {
+                    pyo3_ffi::PyDict_SetItem(new_dict, key, value);
+                }
+                return Ok(Py::from_owned_ptr(py, new_dict));
+            }
+        }
+
+        // Set
+        if tp == std::ptr::addr_of_mut!(pyo3_ffi::PySet_Type) {
+            let new_set = pyo3_ffi::PySet_New(std::ptr::null_mut());
+            if !new_set.is_null() {
+                let iter = pyo3_ffi::PyObject_GetIter(obj_ptr);
+                if !iter.is_null() {
+                    loop {
+                        let item = pyo3_ffi::PyIter_Next(iter);
+                        if item.is_null() {
+                            break;
+                        }
+                        pyo3_ffi::PySet_Add(new_set, item);
+                        pyo3_ffi::Py_DecRef(item);
+                    }
+                    pyo3_ffi::Py_DecRef(iter);
+                    pyo3_ffi::PyErr_Clear();
+                }
+                return Ok(Py::from_owned_ptr(py, new_set));
+            }
+        }
+
+        // Tuple - tuples are immutable, return same object
+        if tp == std::ptr::addr_of_mut!(pyo3_ffi::PyTuple_Type) {
+            return Ok(Py::from_borrowed_ptr(py, ffi::Py_NewRef(obj_ptr)));
+        }
+
+        // Bytearray
+        if tp == std::ptr::addr_of_mut!(pyo3_ffi::PyByteArray_Type) {
+            let bytes = PyBytes_FromObject(obj_ptr);
+            if !bytes.is_null() {
+                let new_ba = PyByteArray_FromObject(bytes);
+                pyo3_ffi::Py_DecRef(bytes);
+                if !new_ba.is_null() {
+                    return Ok(Py::from_owned_ptr(py, new_ba));
+                }
+            }
+            pyo3_ffi::PyErr_Clear();
+        }
+
+        // For everything else, try reduce protocol
+        copy_via_reduce(obj_ptr, py)
     }
+}
+
+/// Copy using reduce protocol
+unsafe fn copy_via_reduce(obj: *mut pyo3_ffi::PyObject, py: Python) -> PyResult<Py<PyAny>> {
+    // Try __reduce_ex__(1) for copy
+    let reduce_ex_str = pyo3_ffi::PyUnicode_InternFromString(b"__reduce_ex__\0".as_ptr() as *const i8);
+    if !reduce_ex_str.is_null() {
+        let method = pyo3_ffi::PyObject_GetAttr(obj, reduce_ex_str);
+        pyo3_ffi::Py_DecRef(reduce_ex_str);
+
+        if !method.is_null() {
+            let protocol = pyo3_ffi::PyLong_FromLong(1);
+            if !protocol.is_null() {
+                let reduced = ffi::call_one_arg(method, protocol);
+                pyo3_ffi::Py_DecRef(protocol);
+                pyo3_ffi::Py_DecRef(method);
+
+                if !reduced.is_null() {
+                    let result = reconstruct_from_reduce_copy(obj, reduced, py);
+                    pyo3_ffi::Py_DecRef(reduced);
+                    return result;
+                } else {
+                    // Check if it's a TypeError (e.g., from __slots__)
+                    if !pyo3_ffi::PyErr_Occurred().is_null() {
+                        let exc_type = pyo3_ffi::PyErr_Occurred();
+                        let type_error = std::ptr::addr_of_mut!(pyo3_ffi::PyExc_TypeError);
+                        if pyo3_ffi::PyErr_GivenExceptionMatches(exc_type, *type_error) != 0 {
+                            pyo3_ffi::PyErr_Clear();
+                            // Try manual copy for __slots__ or other special cases
+                            return copy_slots_object(obj, py);
+                        }
+                    }
+                }
+            }
+        }
+        pyo3_ffi::PyErr_Clear();
+    }
+
+    // Try __reduce__
+    let reduce_str = pyo3_ffi::PyUnicode_InternFromString(b"__reduce__\0".as_ptr() as *const i8);
+    if !reduce_str.is_null() {
+        let method = pyo3_ffi::PyObject_GetAttr(obj, reduce_str);
+        pyo3_ffi::Py_DecRef(reduce_str);
+
+        if !method.is_null() {
+            let reduced = ffi::call_no_args(method);
+            pyo3_ffi::Py_DecRef(method);
+
+            if !reduced.is_null() {
+                let result = reconstruct_from_reduce_copy(obj, reduced, py);
+                pyo3_ffi::Py_DecRef(reduced);
+                return result;
+            }
+        }
+        pyo3_ffi::PyErr_Clear();
+    }
+
+    // Try manual copy for __slots__
+    copy_slots_object(obj, py)
+}
+
+/// Copy object with __slots__ or __dict__ manually
+unsafe fn copy_slots_object(obj: *mut pyo3_ffi::PyObject, py: Python) -> PyResult<Py<PyAny>> {
+    // Create new instance using type(obj)()
+    let obj_type = pyo3_ffi::Py_TYPE(obj);
+    let new_obj = pyo3_ffi::PyObject_CallNoArgs(obj_type as *mut pyo3_ffi::PyObject);
+
+    if new_obj.is_null() {
+        pyo3_ffi::PyErr_Clear();
+        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            format!("cannot copy object of type '{}'",
+                std::ffi::CStr::from_ptr((*obj_type).tp_name).to_string_lossy())
+        ));
+    }
+
+    // Copy __dict__ if present
+    let dict_str = pyo3_ffi::PyUnicode_InternFromString(b"__dict__\0".as_ptr() as *const i8);
+    if !dict_str.is_null() {
+        let obj_dict = pyo3_ffi::PyObject_GetAttr(obj, dict_str);
+        if !obj_dict.is_null() {
+            let new_dict = pyo3_ffi::PyObject_GetAttr(new_obj, dict_str);
+            if !new_dict.is_null() {
+                pyo3_ffi::PyDict_Update(new_dict, obj_dict);
+                pyo3_ffi::Py_DecRef(new_dict);
+            }
+            pyo3_ffi::Py_DecRef(obj_dict);
+        }
+        pyo3_ffi::Py_DecRef(dict_str);
+        pyo3_ffi::PyErr_Clear();
+    }
+
+    // Copy __slots__ attributes
+    let slots_str = pyo3_ffi::PyUnicode_InternFromString(b"__slots__\0".as_ptr() as *const i8);
+    if !slots_str.is_null() {
+        // Get slots from the type
+        let slots = pyo3_ffi::PyObject_GetAttr(obj_type as *mut pyo3_ffi::PyObject, slots_str);
+        if !slots.is_null() {
+            // Iterate over slots
+            let iter = pyo3_ffi::PyObject_GetIter(slots);
+            if !iter.is_null() {
+                loop {
+                    let slot_name = pyo3_ffi::PyIter_Next(iter);
+                    if slot_name.is_null() {
+                        break;
+                    }
+
+                    // Try to get attribute from original object
+                    let value = pyo3_ffi::PyObject_GetAttr(obj, slot_name);
+                    if !value.is_null() {
+                        // Set on new object (shallow copy - same reference)
+                        pyo3_ffi::PyObject_SetAttr(new_obj, slot_name, value);
+                        pyo3_ffi::Py_DecRef(value);
+                    }
+                    pyo3_ffi::Py_DecRef(slot_name);
+                    pyo3_ffi::PyErr_Clear();
+                }
+                pyo3_ffi::Py_DecRef(iter);
+            }
+            pyo3_ffi::Py_DecRef(slots);
+        }
+        pyo3_ffi::Py_DecRef(slots_str);
+        pyo3_ffi::PyErr_Clear();
+    }
+
+    Ok(Py::from_owned_ptr(py, new_obj))
+}
+
+/// Reconstruct object from reduce for shallow copy
+unsafe fn reconstruct_from_reduce_copy(
+    _original: *mut pyo3_ffi::PyObject,
+    reduced: *mut pyo3_ffi::PyObject,
+    py: Python,
+) -> PyResult<Py<PyAny>> {
+    // Check if it's a string (return original unchanged)
+    if pyo3_ffi::Py_TYPE(reduced) == std::ptr::addr_of_mut!(pyo3_ffi::PyUnicode_Type) {
+        return Ok(Py::from_owned_ptr(py, ffi::Py_NewRef(_original)));
+    }
+
+    // Must be a tuple
+    if pyo3_ffi::Py_TYPE(reduced) != std::ptr::addr_of_mut!(pyo3_ffi::PyTuple_Type) {
+        return Ok(Py::from_owned_ptr(py, ffi::Py_NewRef(_original)));
+    }
+
+    let size = pyo3_ffi::PyTuple_Size(reduced);
+    if size < 2 {
+        return Ok(Py::from_owned_ptr(py, ffi::Py_NewRef(_original)));
+    }
+
+    let callable = pyo3_ffi::PyTuple_GetItem(reduced, 0);
+    let args = pyo3_ffi::PyTuple_GetItem(reduced, 1);
+
+    if callable.is_null() || args.is_null() {
+        return Ok(Py::from_owned_ptr(py, ffi::Py_NewRef(_original)));
+    }
+
+    // Call constructor (no deep copying of args for shallow copy)
+    let new_obj = pyo3_ffi::PyObject_CallObject(callable, args);
+    if new_obj.is_null() {
+        pyo3_ffi::PyErr_Clear();
+        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>("Failed to copy object"));
+    }
+
+    // Handle state if present (index 2) - shallow copy the state
+    if size > 2 {
+        let obj_state = pyo3_ffi::PyTuple_GetItem(reduced, 2);
+        if !obj_state.is_null() && obj_state != pyo3_ffi::Py_None() {
+            let _ = set_object_state_shallow(new_obj, obj_state);
+        }
+    }
+
+    Ok(Py::from_owned_ptr(py, new_obj))
+}
+
+/// Set object state for shallow copy (no deep copying)
+unsafe fn set_object_state_shallow(
+    obj: *mut pyo3_ffi::PyObject,
+    state: *mut pyo3_ffi::PyObject,
+) -> Result<(), ()> {
+    // Try __setstate__
+    let setstate_str = pyo3_ffi::PyUnicode_InternFromString(b"__setstate__\0".as_ptr() as *const i8);
+    if !setstate_str.is_null() {
+        let method = pyo3_ffi::PyObject_GetAttr(obj, setstate_str);
+        pyo3_ffi::Py_DecRef(setstate_str);
+
+        if !method.is_null() {
+            let result = ffi::call_one_arg(method, state);
+            pyo3_ffi::Py_DecRef(method);
+            if !result.is_null() {
+                pyo3_ffi::Py_DecRef(result);
+                return Ok(());
+            }
+            pyo3_ffi::PyErr_Clear();
+            return Ok(());
+        }
+        pyo3_ffi::PyErr_Clear();
+    }
+
+    // No __setstate__ - update __dict__ directly
+    if pyo3_ffi::Py_TYPE(state) == std::ptr::addr_of_mut!(pyo3_ffi::PyDict_Type) {
+        let dict_str = pyo3_ffi::PyUnicode_InternFromString(b"__dict__\0".as_ptr() as *const i8);
+        if !dict_str.is_null() {
+            let obj_dict = pyo3_ffi::PyObject_GetAttr(obj, dict_str);
+            pyo3_ffi::Py_DecRef(dict_str);
+
+            if !obj_dict.is_null() {
+                pyo3_ffi::PyDict_Update(obj_dict, state);
+                pyo3_ffi::Py_DecRef(obj_dict);
+                pyo3_ffi::PyErr_Clear();
+            } else {
+                pyo3_ffi::PyErr_Clear();
+            }
+        }
+    }
+
+    Ok(())
+}
+
+extern "C" {
+    fn PyBytes_FromObject(o: *mut pyo3_ffi::PyObject) -> *mut pyo3_ffi::PyObject;
+    fn PyByteArray_FromObject(o: *mut pyo3_ffi::PyObject) -> *mut pyo3_ffi::PyObject;
 }
 
 /// Batch replication with optimization
