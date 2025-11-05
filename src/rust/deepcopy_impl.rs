@@ -462,20 +462,47 @@ unsafe fn set_object_state_shallow(
         pyo3_ffi::PyErr_Clear();
     }
 
-    // No __setstate__ - update __dict__ directly
-    if pyo3_ffi::Py_TYPE(state) == std::ptr::addr_of_mut!(pyo3_ffi::PyDict_Type) {
+    // No __setstate__ - handle state manually
+    // State can be either a dict or a 2-tuple (dict_state, slot_state)
+    let mut dict_state = state;
+    let mut slot_state: *mut pyo3_ffi::PyObject = std::ptr::null_mut();
+
+    if pyo3_ffi::Py_TYPE(state) == std::ptr::addr_of_mut!(pyo3_ffi::PyTuple_Type) {
+        let size = pyo3_ffi::PyTuple_Size(state);
+        if size == 2 {
+            dict_state = pyo3_ffi::PyTuple_GetItem(state, 0);
+            slot_state = pyo3_ffi::PyTuple_GetItem(state, 1);
+        }
+    }
+
+    // Update __dict__ if present
+    if !dict_state.is_null() && dict_state != pyo3_ffi::Py_None()
+        && pyo3_ffi::Py_TYPE(dict_state) == std::ptr::addr_of_mut!(pyo3_ffi::PyDict_Type) {
         let dict_str = pyo3_ffi::PyUnicode_InternFromString(b"__dict__\0".as_ptr() as *const i8);
         if !dict_str.is_null() {
             let obj_dict = pyo3_ffi::PyObject_GetAttr(obj, dict_str);
             pyo3_ffi::Py_DecRef(dict_str);
 
             if !obj_dict.is_null() {
-                pyo3_ffi::PyDict_Update(obj_dict, state);
+                pyo3_ffi::PyDict_Update(obj_dict, dict_state);
                 pyo3_ffi::Py_DecRef(obj_dict);
                 pyo3_ffi::PyErr_Clear();
             } else {
                 pyo3_ffi::PyErr_Clear();
             }
+        }
+    }
+
+    // Update __slots__ if present
+    if !slot_state.is_null() && slot_state != pyo3_ffi::Py_None()
+        && pyo3_ffi::Py_TYPE(slot_state) == std::ptr::addr_of_mut!(pyo3_ffi::PyDict_Type) {
+        let mut pos: pyo3_ffi::Py_ssize_t = 0;
+        let mut key: *mut pyo3_ffi::PyObject = std::ptr::null_mut();
+        let mut value: *mut pyo3_ffi::PyObject = std::ptr::null_mut();
+
+        while pyo3_ffi::PyDict_Next(slot_state, &mut pos, &mut key, &mut value) != 0 {
+            pyo3_ffi::PyObject_SetAttr(obj, key, value);
+            pyo3_ffi::PyErr_Clear();
         }
     }
 
