@@ -38,4 +38,4 @@ htmlcov/
 .build-cache
 .task
 .pgo
-*.so
+*.sotarget/

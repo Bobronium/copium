@@ -1,0 +1,25 @@
+[package]
+name = "copium"
+version = "0.1.1"
+edition = "2021"
+rust-version = "1.70"
+
+[lib]
+name = "copium"
+crate-type = ["cdylib"]
+path = "src/rust/lib.rs"
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py310"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = true
+
+[profile.dev]
+opt-level = 2
+
+[build-dependencies]
+pyo3-build-config = "0.22"
