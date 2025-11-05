@@ -21,6 +21,9 @@ extern "C" {
 
     #[link_name = "PyCFunction_Type"]
     pub static mut PyCFunction_Type: PyTypeObject;
+
+    #[link_name = "PySlice_Type"]
+    pub static mut PySlice_Type: PyTypeObject;
 }
 
 /// Compute pointer hash using SplitMix64
@@ -52,6 +55,11 @@ pub unsafe fn is_immutable_literal(obj: *mut PyObject) -> bool {
         return true;
     }
 
+    // Check if it's a type object (includes subclasses of type like ABCMeta)
+    if PyType_Check(obj) != 0 {
+        return true;
+    }
+
     let tp = Py_TYPE(obj);
 
     // Immutable types that can be returned as-is
@@ -66,8 +74,8 @@ pub unsafe fn is_immutable_literal(obj: *mut PyObject) -> bool {
         || tp == addr_of_mut!(PyFunction_Type)
         || tp == addr_of_mut!(PyProperty_Type)
         || tp == addr_of_mut!(PyCFunction_Type)
-        || tp == addr_of_mut!(PyType_Type)
         || tp == addr_of_mut!(PyRange_Type)
+        || tp == addr_of_mut!(PySlice_Type)
 }
 
 /// Call a callable with one argument (PyO3 0.22 doesn't have PyObject_CallOneArg)

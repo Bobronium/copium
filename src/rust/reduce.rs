@@ -128,6 +128,12 @@ unsafe fn reconstruct_from_reduce<M: Memo>(
         return Ok(Py_NewRef(original));
     }
 
+    // Valid reduce formats are 2-5 tuples only
+    if size > 5 {
+        Py_DECREF(reduced);
+        return Err("pickle protocol expects at most 5-tuple".to_string());
+    }
+
     let callable = PyTuple_GetItem(reduced, 0);
     let args = PyTuple_GetItem(reduced, 1);
 
@@ -145,6 +151,16 @@ unsafe fn reconstruct_from_reduce<M: Memo>(
 
     if new_obj.is_null() {
         Py_DECREF(reduced);
+        // Check if there's a Python exception to propagate
+        if !PyErr_Occurred().is_null() {
+            // Get the exception info to create a better error message
+            let exc_type = PyErr_Occurred();
+            let type_error = std::ptr::addr_of_mut!(PyExc_TypeError);
+            if PyErr_GivenExceptionMatches(exc_type, *type_error) != 0 {
+                // Fetch the error message and propagate it
+                return Err("PYTHON_EXCEPTION:TypeError".to_string());
+            }
+        }
         return Err("Failed to reconstruct object".to_string());
     }
 

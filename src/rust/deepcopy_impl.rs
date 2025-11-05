@@ -33,7 +33,16 @@ pub fn deepcopy_impl(
             let mut memo_impl = UserProvidedMemo::new(user_memo.as_ptr());
             let result = match deepcopy_internal(obj_ptr, &mut memo_impl) {
                 Ok(result_ptr) => Ok(Py::from_owned_ptr(py, result_ptr)),
-                Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
+                Err(e) => {
+                    // Check for special error prefixes
+                    if e.starts_with("PYTHON_EXCEPTION:TypeError") {
+                        Err(PyErr::fetch(py))
+                    } else if e.contains("pickle protocol") {
+                        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(e))
+                    } else {
+                        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
+                    }
+                }
             };
             memo_impl.cleanup();
             result
@@ -45,7 +54,16 @@ pub fn deepcopy_impl(
         unsafe {
             let result = match deepcopy_internal(obj_ptr, &mut tl_memo) {
                 Ok(result_ptr) => Ok(Py::from_owned_ptr(py, result_ptr)),
-                Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
+                Err(e) => {
+                    // Check for special error prefixes
+                    if e.starts_with("PYTHON_EXCEPTION:TypeError") {
+                        Err(PyErr::fetch(py))
+                    } else if e.contains("pickle protocol") {
+                        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(e))
+                    } else {
+                        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
+                    }
+                }
             };
 
             // Return memo to thread-local storage
@@ -222,14 +240,14 @@ pub fn copy_impl(obj: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 
 /// Copy using reduce protocol
 unsafe fn copy_via_reduce(obj: *mut pyo3_ffi::PyObject, py: Python) -> PyResult<Py<PyAny>> {
-    // Try __reduce_ex__(1) for copy
+    // Try __reduce_ex__(4) for copy (same as stdlib)
     let reduce_ex_str = pyo3_ffi::PyUnicode_InternFromString(b"__reduce_ex__\0".as_ptr() as *const i8);
     if !reduce_ex_str.is_null() {
         let method = pyo3_ffi::PyObject_GetAttr(obj, reduce_ex_str);
         pyo3_ffi::Py_DecRef(reduce_ex_str);
 
         if !method.is_null() {
-            let protocol = pyo3_ffi::PyLong_FromLong(1);
+            let protocol = pyo3_ffi::PyLong_FromLong(4);
             if !protocol.is_null() {
                 let reduced = ffi::call_one_arg(method, protocol);
                 pyo3_ffi::Py_DecRef(protocol);
@@ -366,6 +384,13 @@ unsafe fn reconstruct_from_reduce_copy(
         return Ok(Py::from_owned_ptr(py, ffi::Py_NewRef(_original)));
     }
 
+    // Valid reduce formats are 2-5 tuples only
+    if size > 5 {
+        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "pickle protocol expects at most 5-tuple"
+        ));
+    }
+
     let callable = pyo3_ffi::PyTuple_GetItem(reduced, 0);
     let args = pyo3_ffi::PyTuple_GetItem(reduced, 1);
 
@@ -376,8 +401,8 @@ unsafe fn reconstruct_from_reduce_copy(
     // Call constructor (no deep copying of args for shallow copy)
     let new_obj = pyo3_ffi::PyObject_CallObject(callable, args);
     if new_obj.is_null() {
-        pyo3_ffi::PyErr_Clear();
-        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>("Failed to copy object"));
+        // Propagate the Python exception (don't clear it)
+        return Err(PyErr::fetch(py));
     }
 
     // Handle state if present (index 2) - shallow copy the state
@@ -385,6 +410,28 @@ unsafe fn reconstruct_from_reduce_copy(
         let obj_state = pyo3_ffi::PyTuple_GetItem(reduced, 2);
         if !obj_state.is_null() && obj_state != pyo3_ffi::Py_None() {
             let _ = set_object_state_shallow(new_obj, obj_state);
+        }
+    }
+
+    // Handle list items if present (index 3) - shallow copy
+    if size > 3 {
+        let list_items = pyo3_ffi::PyTuple_GetItem(reduced, 3);
+        if !list_items.is_null() && list_items != pyo3_ffi::Py_None() {
+            if let Err(_) = populate_list_items_shallow(new_obj, list_items) {
+                pyo3_ffi::Py_DecRef(new_obj);
+                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to populate list items"));
+            }
+        }
+    }
+
+    // Handle dict items if present (index 4) - shallow copy
+    if size > 4 {
+        let dict_items = pyo3_ffi::PyTuple_GetItem(reduced, 4);
+        if !dict_items.is_null() && dict_items != pyo3_ffi::Py_None() {
+            if let Err(_) = populate_dict_items_shallow(new_obj, dict_items) {
+                pyo3_ffi::Py_DecRef(new_obj);
+                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to populate dict items"));
+            }
         }
     }
 
@@ -431,6 +478,102 @@ unsafe fn set_object_state_shallow(
             }
         }
     }
+
+    Ok(())
+}
+
+/// Populate list items for shallow copy (no deep copying)
+unsafe fn populate_list_items_shallow(
+    obj: *mut pyo3_ffi::PyObject,
+    list_items: *mut pyo3_ffi::PyObject,
+) -> Result<(), ()> {
+    // Get iterator
+    let iter = pyo3_ffi::PyObject_GetIter(list_items);
+    if iter.is_null() {
+        pyo3_ffi::PyErr_Clear();
+        return Err(());
+    }
+
+    // Get append method
+    let append_str = pyo3_ffi::PyUnicode_InternFromString(b"append\0".as_ptr() as *const i8);
+    if append_str.is_null() {
+        pyo3_ffi::Py_DecRef(iter);
+        return Err(());
+    }
+
+    let append_method = pyo3_ffi::PyObject_GetAttr(obj, append_str);
+    pyo3_ffi::Py_DecRef(append_str);
+
+    if append_method.is_null() {
+        pyo3_ffi::Py_DecRef(iter);
+        pyo3_ffi::PyErr_Clear();
+        return Err(());
+    }
+
+    // Iterate and append items (shallow - no copying)
+    loop {
+        let item = pyo3_ffi::PyIter_Next(iter);
+        if item.is_null() {
+            break;
+        }
+
+        let result = ffi::call_one_arg(append_method, item);
+        pyo3_ffi::Py_DecRef(item);
+
+        if result.is_null() {
+            pyo3_ffi::Py_DecRef(append_method);
+            pyo3_ffi::Py_DecRef(iter);
+            pyo3_ffi::PyErr_Clear();
+            return Err(());
+        }
+        pyo3_ffi::Py_DecRef(result);
+    }
+
+    pyo3_ffi::Py_DecRef(append_method);
+    pyo3_ffi::Py_DecRef(iter);
+    pyo3_ffi::PyErr_Clear();
+
+    Ok(())
+}
+
+/// Populate dict items for shallow copy (no deep copying)
+unsafe fn populate_dict_items_shallow(
+    obj: *mut pyo3_ffi::PyObject,
+    dict_items: *mut pyo3_ffi::PyObject,
+) -> Result<(), ()> {
+    // Get iterator
+    let iter = pyo3_ffi::PyObject_GetIter(dict_items);
+    if iter.is_null() {
+        pyo3_ffi::PyErr_Clear();
+        return Err(());
+    }
+
+    // Iterate and setitem (shallow - no copying)
+    loop {
+        let item = pyo3_ffi::PyIter_Next(iter);
+        if item.is_null() {
+            break;
+        }
+
+        // Each item should be a (key, value) tuple
+        if pyo3_ffi::Py_TYPE(item) == std::ptr::addr_of_mut!(pyo3_ffi::PyTuple_Type) {
+            let size = pyo3_ffi::PyTuple_Size(item);
+            if size == 2 {
+                let key = pyo3_ffi::PyTuple_GetItem(item, 0);
+                let value = pyo3_ffi::PyTuple_GetItem(item, 1);
+
+                if !key.is_null() && !value.is_null() {
+                    pyo3_ffi::PyObject_SetItem(obj, key, value);
+                    pyo3_ffi::PyErr_Clear();
+                }
+            }
+        }
+
+        pyo3_ffi::Py_DecRef(item);
+    }
+
+    pyo3_ffi::Py_DecRef(iter);
+    pyo3_ffi::PyErr_Clear();
 
     Ok(())
 }
