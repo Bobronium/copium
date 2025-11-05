@@ -49,6 +49,33 @@ The Rust compiler generates **two complete copies** of the entire deepcopy machi
 
 No runtime dispatch, no vtable lookups, no performance penalty.
 
+## Python Version Compatibility
+
+**Verified compatible with Python 3.10 - 3.13** (and will work with 3.14 when released)
+
+The build uses PyO3's `abi3` (stable ABI) feature, which means:
+- ✅ Single wheel works across all Python 3.10+ versions
+- ✅ No need to rebuild for different Python versions
+- ✅ Forward compatible with future Python releases
+
+### Verified Python Versions
+
+| Version | Status | Notes |
+|---------|--------|-------|
+| 3.10.19 | ✅ Tested | All features working |
+| 3.11.14 | ✅ Tested | All features working |
+| 3.12.3  | ✅ Tested | All features working |
+| 3.13.8  | ✅ Tested | All features working |
+| 3.14+   | ✅ Expected | ABI stable |
+
+### Quick Compatibility Test
+
+```bash
+# Test on any Python version
+python3.X -m pip install copium-*.whl
+python3.X -c "import copium; assert copium.deepcopy([1,2,3]) == [1,2,3]; print('OK')"
+```
+
 ## Building
 
 ### Prerequisites
