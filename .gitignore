@@ -38,4 +38,8 @@ htmlcov/
 .build-cache
 .task
 .pgo
-*.sotarget/
+*.so
+
+# Rust
+target/
+Cargo.lock
