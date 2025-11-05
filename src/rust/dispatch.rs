@@ -1,4 +1,4 @@
-//! Type dispatch for deepcopy - simplified
+//! Type dispatch for deepcopy
 
 use crate::ffi::*;
 use crate::types::{TypeClass, has_deepcopy};
@@ -16,7 +16,6 @@ pub unsafe fn dispatch_deepcopy(
 ) -> Result<*mut PyObject, String> {
     match type_class {
         TypeClass::ImmutableLiteral => {
-            // Fast path: immutable literals
             Ok(Py_NewRef(obj))
         }
 
@@ -45,12 +44,10 @@ pub unsafe fn dispatch_deepcopy(
         }
 
         TypeClass::CustomDeepCopy => {
-            // Has __deepcopy__ method
             call_custom_deepcopy(obj, memo)
         }
 
         TypeClass::RequiresReduce => {
-            // Check for __deepcopy__ first
             if has_deepcopy(obj) {
                 call_custom_deepcopy(obj, memo)
             } else {
@@ -65,32 +62,31 @@ unsafe fn call_custom_deepcopy(
     obj: *mut PyObject,
     memo: &mut ThreadLocalMemo,
 ) -> Result<*mut PyObject, String> {
-    // Get __deepcopy__ attribute
     let deepcopy_str = PyUnicode_InternFromString(b"__deepcopy__\0".as_ptr() as *const i8);
     if deepcopy_str.is_null() {
         return Err("Failed to create __deepcopy__ string".to_string());
     }
 
     let method = PyObject_GetAttr(obj, deepcopy_str);
-    Py_DecRef(deepcopy_str);
+    Py_DECREF(deepcopy_str);
 
     if method.is_null() {
         return Err("Object has no __deepcopy__ method".to_string());
     }
 
-    // Create proxy if needed - for now use empty dict (simplified)
+    // For now use empty dict (TODO: proper proxy)
     let memo_arg = PyDict_New();
     if memo_arg.is_null() {
-        Py_DecRef(method);
+        Py_DECREF(method);
         return Err("Failed to create memo dict".to_string());
     }
 
-    // Call __deepcopy__(memo)
-    let result = PyObject_CallOneArg(method, memo_arg);
-    Py_DecRef(method);
-    Py_DecRef(memo_arg);
+    let result = crate::ffi::call_one_arg(method, memo_arg);
+    Py_DECREF(method);
+    Py_DECREF(memo_arg);
 
     if result.is_null() {
+        PyErr_Clear();
         Err("__deepcopy__ call failed".to_string())
     } else {
         // Save result to memo
@@ -101,8 +97,4 @@ unsafe fn call_custom_deepcopy(
 
         Ok(result)
     }
-}
-
-extern "C" {
-    fn PyUnicode_InternFromString(s: *const i8) -> *mut PyObject;
 }

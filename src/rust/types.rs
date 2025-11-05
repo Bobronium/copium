@@ -1,10 +1,8 @@
 //! Type checking and identification
-//!
-//! This module provides efficient type checking using cached type pointers.
-//! Type is computed ONCE and piped through the dispatch chain.
 
 use crate::ffi::*;
 use std::sync::OnceLock;
+use std::ptr::addr_of_mut;
 
 /// Cached type pointers for fast exact-type checks
 pub struct TypeCache {
@@ -19,7 +17,8 @@ pub struct TypeCache {
     pub unicode: *mut PyTypeObject,
     pub bytes: *mut PyTypeObject,
     pub bool_: *mut PyTypeObject,
-    pub none: *mut PyTypeObject,
+    pub complex: *mut PyTypeObject,
+    pub range: *mut PyTypeObject,
 }
 
 // SAFETY: We're just holding pointers to global Python type objects
@@ -30,20 +29,21 @@ static TYPE_CACHE: OnceLock<TypeCache> = OnceLock::new();
 
 /// Initialize type cache
 pub fn init_type_cache() {
-    TYPE_CACHE.get_or_init(|| unsafe {
+    TYPE_CACHE.get_or_init(|| {
         TypeCache {
-            dict: &mut PyDict_Type,
-            list: &mut PyList_Type,
-            tuple: &mut PyTuple_Type,
-            set: &mut PySet_Type,
-            frozenset: &mut PyFrozenSet_Type,
-            bytearray: &mut PyByteArray_Type,
-            long: &mut PyLong_Type,
-            float: &mut PyFloat_Type,
-            unicode: &mut PyUnicode_Type,
-            bytes: &mut PyBytes_Type,
-            bool_: &mut PyBool_Type,
-            none: &mut _PyNone_Type,
+            dict: addr_of_mut!(PyDict_Type),
+            list: addr_of_mut!(PyList_Type),
+            tuple: addr_of_mut!(PyTuple_Type),
+            set: addr_of_mut!(PySet_Type),
+            frozenset: addr_of_mut!(PyFrozenSet_Type),
+            bytearray: addr_of_mut!(PyByteArray_Type),
+            long: addr_of_mut!(PyLong_Type),
+            float: addr_of_mut!(PyFloat_Type),
+            unicode: addr_of_mut!(PyUnicode_Type),
+            bytes: addr_of_mut!(PyBytes_Type),
+            bool_: addr_of_mut!(PyBool_Type),
+            complex: addr_of_mut!(PyComplex_Type),
+            range: addr_of_mut!(PyRange_Type),
         }
     });
 }
@@ -57,23 +57,14 @@ pub fn get_type_cache() -> &'static TypeCache {
 /// Type classification for dispatch
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeClass {
-    /// Immutable literals (None, int, str, bytes, bool, float)
     ImmutableLiteral,
-    /// Dict (exact type)
     Dict,
-    /// List (exact type)
     List,
-    /// Tuple (exact type)
     Tuple,
-    /// Set (exact type)
     Set,
-    /// FrozenSet (exact type)
     FrozenSet,
-    /// ByteArray
     ByteArray,
-    /// Has __deepcopy__ method
     CustomDeepCopy,
-    /// Requires reduce protocol
     RequiresReduce,
 }
 
@@ -108,33 +99,30 @@ pub unsafe fn classify_type(obj: *mut PyObject) -> TypeClass {
     if tp == cache.bytearray {
         return TypeClass::ByteArray;
     }
+    
+    // Range is immutable
+    if tp == cache.range {
+        return TypeClass::ImmutableLiteral;
+    }
 
-    // Check for __deepcopy__ (would need attribute lookup)
-    // For now, fall back to reduce
     TypeClass::RequiresReduce
 }
 
 /// Check if type has __deepcopy__ method
 pub unsafe fn has_deepcopy(obj: *mut PyObject) -> bool {
-    // Create __deepcopy__ string
     let deepcopy_str = PyUnicode_InternFromString(b"__deepcopy__\0".as_ptr() as *const i8);
     if deepcopy_str.is_null() {
         return false;
     }
 
     let attr = PyObject_GetAttr(obj, deepcopy_str);
-    Py_DecRef(deepcopy_str);
+    Py_DECREF(deepcopy_str);
 
     if !attr.is_null() {
-        Py_DecRef(attr);
+        Py_DECREF(attr);
         true
     } else {
         PyErr_Clear();
         false
     }
-}
-
-// Additional FFI function needed
-extern "C" {
-    pub fn PyUnicode_InternFromString(s: *const i8) -> *mut PyObject;
 }

@@ -1,10 +1,4 @@
-//! Copium: Ultra-fast deepcopy implementation in Rust with thread-local state management
-//!
-//! Simplified to match C implementation pattern:
-//! - Thread-local memo reused across calls  
-//! - Detaches if Python holds reference (refcount > 1)
-//! - Single hash computation per object
-//! - Direct FFI for hot paths
+//! Copium: Ultra-fast deepcopy implementation in Rust
 
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
@@ -22,7 +16,7 @@ mod reduce;
 mod types;
 
 use pyo3::prelude::*;
-use pyo3::types::PyModule as PyModuleType;
+use pyo3::types::PyModule;
 
 /// Main entry point for deepcopy
 #[pyfunction]
@@ -50,15 +44,16 @@ fn replicate(
 
 /// Python module initialization
 #[pymodule]
-fn copium(m: &Bound<'_, PyModuleType>) -> PyResult<()> {
+fn copium(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(deepcopy, m)?)?;
     m.add_function(wrap_pyfunction!(copy, m)?)?;
     m.add_function(wrap_pyfunction!(replicate, m)?)?;
 
-    // Add submodules
-    let extra = PyModuleType::new(m.py(), "extra")?;
-    extra.add_function(wrap_pyfunction!(replicate, m)?)?;
-    m.add_submodule(&extra)?;
+    // Import copy.Error and add it to our module
+    let py = m.py();
+    let copy_module = PyModule::import_bound(py, "copy")?;
+    let error = copy_module.getattr("Error")?;
+    m.add("Error", error)?;
 
     Ok(())
 }
