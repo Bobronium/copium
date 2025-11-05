@@ -10,9 +10,9 @@ An extremely fast Python copy/deepcopy implementation, written in C.
 
 <div align="center">
   <picture>
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/5cb7754431ce27be4510545962aaab76422d8d85/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/5cb7754431ce27be4510545962aaab76422d8d85/assets/chart_light.svg" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/5cb7754431ce27be4510545962aaab76422d8d85/assets/chart_light.svg" alt="Benchmark results bar chart">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/102eb4a2ad26f0d6f22af6765c9f5b305ad24abb/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/102eb4a2ad26f0d6f22af6765c9f5b305ad24abb/assets/chart_light.svg" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/102eb4a2ad26f0d6f22af6765c9f5b305ad24abb/assets/chart_light.svg" alt="Benchmark results bar chart">
   </picture>
 </div>
 
