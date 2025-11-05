@@ -1,14 +1,16 @@
-//! Main deepcopy implementation - simplified to match C pattern
+//! Main deepcopy implementation with generic memo support
 //!
-//! Pattern from C:
-//! 1. Get thread-local memo (creates new if refcount > 1)
-//! 2. Do deepcopy with that memo
-//! 3. Clear memo for reuse
-//! 4. Return memo to thread-local storage
+//! Uses Rust's type system to encode different code paths at compile time:
+//! - ThreadLocalMemo: Fast path with native hash table
+//! - UserProvidedMemo: Conservative path using Python dict API
+//!
+//! Zero runtime cost - monomorphization generates specialized code for each path.
 
 use crate::ffi;
+use crate::memo_trait::Memo;
 use crate::state::{get_thread_local_memo, return_thread_local_memo, ThreadLocalMemo};
-use crate::types::{classify_type, init_type_cache, TypeClass};
+use crate::user_memo::UserProvidedMemo;
+use crate::types::{classify_type, init_type_cache};
 use crate::dispatch::dispatch_deepcopy;
 use pyo3::prelude::*;
 use pyo3::ffi as pyo3_ffi;
@@ -21,40 +23,47 @@ pub fn deepcopy_impl(
     // Initialize type cache if needed
     init_type_cache();
 
-    // Get raw pointer
     let obj_ptr = obj.as_ptr();
+    let py = obj.py();
 
-    // Handle user-provided memo (conservative path)
-    if let Some(_user_memo) = memo {
-        return Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-            "User-provided memo not yet implemented in Rust version",
-        ));
-    }
+    // Dispatch based on memo type
+    if let Some(user_memo) = memo {
+        // Conservative path: user-provided memo
+        unsafe {
+            let mut memo_impl = UserProvidedMemo::new(user_memo.as_ptr());
+            let result = match deepcopy_internal(obj_ptr, &mut memo_impl) {
+                Ok(result_ptr) => Ok(Py::from_owned_ptr(py, result_ptr)),
+                Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
+            };
+            memo_impl.cleanup();
+            result
+        }
+    } else {
+        // Fast path: thread-local memo
+        let mut tl_memo = get_thread_local_memo();
 
-    // Get thread-local memo
-    let mut tl_memo = get_thread_local_memo();
+        unsafe {
+            let result = match deepcopy_internal(obj_ptr, &mut tl_memo) {
+                Ok(result_ptr) => Ok(Py::from_owned_ptr(py, result_ptr)),
+                Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
+            };
 
-    // Fast path: native memo
-    unsafe {
-        let result = match deepcopy_internal(obj_ptr, &mut tl_memo) {
-            Ok(result_ptr) => {
-                let py = obj.py();
-                Ok(Py::from_owned_ptr(py, result_ptr))
-            }
-            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
-        };
+            // Return memo to thread-local storage
+            return_thread_local_memo(tl_memo);
 
-        // Return memo to thread-local storage
-        return_thread_local_memo(tl_memo);
-
-        result
+            result
+        }
     }
 }
 
-/// Internal deepcopy with thread-local memo
-unsafe fn deepcopy_internal(
+/// Internal deepcopy implementation - generic over Memo type
+///
+/// This function is monomorphized at compile time for each Memo implementation,
+/// generating specialized code with zero runtime overhead.
+#[inline]
+unsafe fn deepcopy_internal<M: Memo>(
     obj: *mut ffi::PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut ffi::PyObject, String> {
     // Fast path: check for immutable literals
     if ffi::is_immutable_literal(obj) {
@@ -66,7 +75,7 @@ unsafe fn deepcopy_internal(
     let hash = ffi::hash_pointer(key as *mut std::os::raw::c_void);
 
     // Check memo first
-    if let Some(cached) = memo.table.lookup(key, hash) {
+    if let Some(cached) = memo.lookup(key, hash) {
         return Ok(ffi::Py_NewRef(cached));
     }
 
@@ -77,11 +86,14 @@ unsafe fn deepcopy_internal(
     dispatch_deepcopy(obj, type_class, hash, memo)
 }
 
-/// Recursive deepcopy (used by container handlers)
+/// Recursive deepcopy - generic over Memo type
+///
+/// Used by container handlers and reduce protocol.
+/// Monomorphized at compile time for each Memo implementation.
 #[inline]
-pub unsafe fn deepcopy_recursive(
+pub unsafe fn deepcopy_recursive<M: Memo>(
     obj: *mut ffi::PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut ffi::PyObject, String> {
     // Fast path: immutable literals
     if ffi::is_immutable_literal(obj) {
@@ -93,7 +105,7 @@ pub unsafe fn deepcopy_recursive(
     let hash = ffi::hash_pointer(key as *mut std::os::raw::c_void);
 
     // Check memo
-    if let Some(cached) = memo.table.lookup(key, hash) {
+    if let Some(cached) = memo.lookup(key, hash) {
         return Ok(ffi::Py_NewRef(cached));
     }
 

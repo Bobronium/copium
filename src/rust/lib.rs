@@ -6,9 +6,11 @@
 
 mod ffi;
 mod memo;
+mod memo_trait;
 mod keepalive;
 mod proxy;
 mod state;
+mod user_memo;
 mod deepcopy_impl;
 mod dispatch;
 mod containers;

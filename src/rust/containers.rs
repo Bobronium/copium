@@ -1,14 +1,14 @@
-//! Specialized handlers for container types
+//! Specialized handlers for container types - generic over Memo
 
 use crate::ffi::*;
-use crate::state::ThreadLocalMemo;
+use crate::memo_trait::Memo;
 use crate::deepcopy_impl::deepcopy_recursive;
 use std::ptr;
 
-/// Deepcopy dict with mutation detection
-pub unsafe fn deepcopy_dict(
+/// Deepcopy dict with mutation detection - generic over Memo
+pub unsafe fn deepcopy_dict<M: Memo>(
     dict: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     // Create new dict
     let new_dict = PyDict_New();
@@ -19,7 +19,7 @@ pub unsafe fn deepcopy_dict(
     // Save to memo before recursing
     let key = dict as *const std::os::raw::c_void;
     let hash = hash_pointer(key as *mut std::os::raw::c_void);
-    memo.table.insert(key, new_dict, hash);
+    memo.insert(key, new_dict, hash);
 
     // Iterate and copy key-value pairs
     let mut pos: Py_ssize_t = 0;
@@ -46,10 +46,10 @@ pub unsafe fn deepcopy_dict(
     Ok(new_dict)
 }
 
-/// Deepcopy list with dynamic sizing
-pub unsafe fn deepcopy_list(
+/// Deepcopy list with dynamic sizing - generic over Memo
+pub unsafe fn deepcopy_list<M: Memo>(
     list: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     let size = PyList_Size(list);
     if size < 0 {
@@ -65,7 +65,7 @@ pub unsafe fn deepcopy_list(
     // Save to memo before recursing
     let key = list as *const std::os::raw::c_void;
     let hash = hash_pointer(key as *mut std::os::raw::c_void);
-    memo.table.insert(key, new_list, hash);
+    memo.insert(key, new_list, hash);
 
     // Copy elements
     for i in 0..size {
@@ -82,11 +82,11 @@ pub unsafe fn deepcopy_list(
     Ok(new_list)
 }
 
-/// Deepcopy tuple with immutability optimization
-pub unsafe fn deepcopy_tuple(
+/// Deepcopy tuple with immutability optimization - generic over Memo
+pub unsafe fn deepcopy_tuple<M: Memo>(
     tuple: *mut PyObject,
     hash: Py_ssize_t,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     let size = PyTuple_Size(tuple);
     if size < 0 {
@@ -127,21 +127,21 @@ pub unsafe fn deepcopy_tuple(
 
     // Check if tuple was copied recursively (self-referential)
     let key = tuple as *const std::os::raw::c_void;
-    if let Some(cached) = memo.table.lookup(key, hash) {
+    if let Some(cached) = memo.lookup(key, hash) {
         Py_DecRef(new_tuple);
         return Ok(Py_NewRef(cached));
     }
 
     // Save to memo
-    memo.table.insert(key, new_tuple, hash);
+    memo.insert(key, new_tuple, hash);
 
     Ok(new_tuple)
 }
 
-/// Deepcopy set with snapshot
-pub unsafe fn deepcopy_set(
+/// Deepcopy set with snapshot - generic over Memo
+pub unsafe fn deepcopy_set<M: Memo>(
     set: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     // Create snapshot as tuple to avoid concurrent modification
     let snapshot = PySequence_Tuple(set);
@@ -159,7 +159,7 @@ pub unsafe fn deepcopy_set(
     // Save to memo before recursing
     let key = set as *const std::os::raw::c_void;
     let hash = hash_pointer(key as *mut std::os::raw::c_void);
-    memo.table.insert(key, new_set, hash);
+    memo.insert(key, new_set, hash);
 
     // Copy elements from snapshot
     let size = PyTuple_Size(snapshot);
@@ -187,10 +187,10 @@ pub unsafe fn deepcopy_set(
     Ok(new_set)
 }
 
-/// Deepcopy frozenset
-pub unsafe fn deepcopy_frozenset(
+/// Deepcopy frozenset - generic over Memo
+pub unsafe fn deepcopy_frozenset<M: Memo>(
     fset: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     // Similar to set but creates frozenset
     let snapshot = PySequence_Tuple(fset);
@@ -239,15 +239,15 @@ pub unsafe fn deepcopy_frozenset(
     // Save to memo
     let key = fset as *const std::os::raw::c_void;
     let hash = hash_pointer(key as *mut std::os::raw::c_void);
-    memo.table.insert(key, new_fset, hash);
+    memo.insert(key, new_fset, hash);
 
     Ok(new_fset)
 }
 
-/// Deepcopy bytearray
-pub unsafe fn deepcopy_bytearray(
+/// Deepcopy bytearray - generic over Memo
+pub unsafe fn deepcopy_bytearray<M: Memo>(
     ba: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     // Bytearray is mutable, so we create a new one
     let bytes = PyBytes_FromObject(ba);
@@ -265,7 +265,7 @@ pub unsafe fn deepcopy_bytearray(
     // Save to memo
     let key = ba as *const std::os::raw::c_void;
     let hash = hash_pointer(key as *mut std::os::raw::c_void);
-    memo.table.insert(key, new_ba, hash);
+    memo.insert(key, new_ba, hash);
 
     Ok(new_ba)
 }

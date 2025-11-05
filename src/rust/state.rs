@@ -8,7 +8,10 @@
 
 use crate::memo::MemoTable;
 use crate::keepalive::KeepAlive;
+use crate::memo_trait::Memo;
+use crate::ffi::*;
 use std::cell::RefCell;
+use std::os::raw::c_void;
 
 /// Thread-local memo that can be reused or detached
 pub struct ThreadLocalMemo {
@@ -24,17 +27,45 @@ impl ThreadLocalMemo {
         }
     }
 
-    /// Clear for reuse (doesn't deallocate)
-    pub fn clear(&mut self) {
+    fn clear_internal(&mut self) {
         self.table.clear();
         self.keepalive.clear();
     }
 
-    /// Cleanup after call
-    pub fn cleanup(&mut self) {
-        self.clear();
+    fn cleanup_internal(&mut self) {
+        self.clear_internal();
         self.table.shrink_if_large();
         self.keepalive.shrink_if_large();
+    }
+}
+
+impl Memo for ThreadLocalMemo {
+    #[inline(always)]
+    unsafe fn lookup(&mut self, key: *const c_void, hash: Py_hash_t) -> Option<*mut PyObject> {
+        self.table.lookup(key, hash)
+    }
+
+    #[inline(always)]
+    unsafe fn insert(&mut self, key: *const c_void, value: *mut PyObject, hash: Py_hash_t) {
+        self.table.insert(key, value, hash);
+    }
+
+    #[inline(always)]
+    unsafe fn keepalive(&mut self, obj: *mut PyObject) {
+        self.keepalive.append(obj);
+    }
+
+    unsafe fn clear(&mut self) {
+        self.clear_internal();
+    }
+
+    unsafe fn cleanup(&mut self) {
+        self.cleanup_internal();
+    }
+
+    #[inline(always)]
+    fn is_user_provided(&self) -> bool {
+        false
     }
 }
 
@@ -53,7 +84,7 @@ pub fn get_thread_local_memo() -> ThreadLocalMemo {
         match memo_ref.take() {
             Some(mut existing) => {
                 // Reuse existing, after clearing
-                existing.clear();
+                unsafe { existing.clear(); }
                 existing
             }
             None => {
@@ -66,7 +97,7 @@ pub fn get_thread_local_memo() -> ThreadLocalMemo {
 
 /// Return memo to thread-local storage after cleanup
 pub fn return_thread_local_memo(mut memo: ThreadLocalMemo) {
-    memo.cleanup();
+    unsafe { memo.cleanup(); }
 
     THREAD_MEMO.with(|storage| {
         *storage.borrow_mut() = Some(memo);

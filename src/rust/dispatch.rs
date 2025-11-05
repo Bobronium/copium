@@ -2,17 +2,17 @@
 
 use crate::ffi::*;
 use crate::types::{TypeClass, has_deepcopy};
-use crate::state::ThreadLocalMemo;
+use crate::memo_trait::Memo;
 use crate::containers;
 use crate::reduce;
 
-/// Dispatch to appropriate handler based on type
+/// Dispatch to appropriate handler based on type - generic over Memo
 #[inline]
-pub unsafe fn dispatch_deepcopy(
+pub unsafe fn dispatch_deepcopy<M: Memo>(
     obj: *mut PyObject,
     type_class: TypeClass,
     hash: Py_ssize_t,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     match type_class {
         TypeClass::ImmutableLiteral => {
@@ -57,10 +57,10 @@ pub unsafe fn dispatch_deepcopy(
     }
 }
 
-/// Call custom __deepcopy__ method
-unsafe fn call_custom_deepcopy(
+/// Call custom __deepcopy__ method - generic over Memo
+unsafe fn call_custom_deepcopy<M: Memo>(
     obj: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     let deepcopy_str = PyUnicode_InternFromString(b"__deepcopy__\0".as_ptr() as *const i8);
     if deepcopy_str.is_null() {
@@ -74,8 +74,19 @@ unsafe fn call_custom_deepcopy(
         return Err("Object has no __deepcopy__ method".to_string());
     }
 
-    // For now use empty dict (TODO: proper proxy)
-    let memo_arg = PyDict_New();
+    // Create memo argument
+    // For user-provided memo, we need to pass the actual dict
+    // For thread-local memo, create a temporary dict that gets populated
+    let memo_arg = if memo.is_user_provided() {
+        // User-provided memo: use the Python dict directly
+        // We need to cast to UserProvidedMemo to get the dict
+        // For now, just create a new dict (TODO: pass actual dict)
+        PyDict_New()
+    } else {
+        // Thread-local memo: create temporary dict
+        PyDict_New()
+    };
+
     if memo_arg.is_null() {
         Py_DECREF(method);
         return Err("Failed to create memo dict".to_string());
@@ -92,8 +103,8 @@ unsafe fn call_custom_deepcopy(
         // Save result to memo
         let key = obj as *const std::os::raw::c_void;
         let hash = hash_pointer(key as *mut std::os::raw::c_void);
-        memo.table.insert(key, result, hash);
-        memo.keepalive.append(result);
+        memo.insert(key, result, hash);
+        memo.keepalive(result);
 
         Ok(result)
     }

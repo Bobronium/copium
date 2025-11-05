@@ -1,13 +1,13 @@
 //! Reduce protocol handling for generic object deepcopy
 
 use crate::ffi::*;
-use crate::state::ThreadLocalMemo;
+use crate::memo_trait::Memo;
 use crate::deepcopy_impl::deepcopy_recursive;
 
 /// Deepcopy via reduce protocol
-pub unsafe fn deepcopy_via_reduce(
+pub unsafe fn deepcopy_via_reduce<M: Memo>(
     obj: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     // Try __reduce_ex__(4) first
     let reduce_ex_result = try_reduce_ex(obj, memo);
@@ -19,9 +19,9 @@ pub unsafe fn deepcopy_via_reduce(
     try_reduce(obj, memo)
 }
 
-unsafe fn try_reduce_ex(
+unsafe fn try_reduce_ex<M: Memo>(
     obj: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     let reduce_ex_str = PyUnicode_InternFromString(b"__reduce_ex__\0".as_ptr() as *const i8);
     if reduce_ex_str.is_null() {
@@ -76,9 +76,9 @@ unsafe fn try_reduce_ex(
     reconstruct_from_reduce(obj, reduced, memo)
 }
 
-unsafe fn try_reduce(
+unsafe fn try_reduce<M: Memo>(
     obj: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     let reduce_str = PyUnicode_InternFromString(b"__reduce__\0".as_ptr() as *const i8);
     if reduce_str.is_null() {
@@ -110,10 +110,10 @@ unsafe fn try_reduce(
     reconstruct_from_reduce(obj, reduced, memo)
 }
 
-unsafe fn reconstruct_from_reduce(
+unsafe fn reconstruct_from_reduce<M: Memo>(
     original: *mut PyObject,
     reduced: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<*mut PyObject, String> {
     // Check if it's a tuple
     if Py_TYPE(reduced) != std::ptr::addr_of_mut!(PyTuple_Type) {
@@ -151,15 +151,15 @@ unsafe fn reconstruct_from_reduce(
     // Save to memo before setting state
     let key = original as *const std::os::raw::c_void;
     let hash = hash_pointer(key as *mut std::os::raw::c_void);
-    memo.table.insert(key, new_obj, hash);
-    memo.keepalive.append(new_obj);
+    memo.insert(key, new_obj, hash);
+    memo.keepalive(new_obj);
 
     // Handle state if present (index 2)
     if size > 2 {
         let obj_state = PyTuple_GetItem(reduced, 2);
         if !obj_state.is_null() && obj_state != Py_None() {
             let new_state = deepcopy_recursive(obj_state, memo)?;
-            let _ = set_object_state(new_obj, new_state);
+            let _ = set_object_state::<M>(new_obj, new_state);
             Py_DECREF(new_state);
         }
     }
@@ -168,7 +168,7 @@ unsafe fn reconstruct_from_reduce(
     if size > 3 {
         let list_items = PyTuple_GetItem(reduced, 3);
         if !list_items.is_null() && list_items != Py_None() {
-            let _ = populate_list_items(new_obj, list_items, memo);
+            let _ = populate_list_items::<M>(new_obj, list_items, memo);
         }
     }
 
@@ -176,7 +176,7 @@ unsafe fn reconstruct_from_reduce(
     if size > 4 {
         let dict_items = PyTuple_GetItem(reduced, 4);
         if !dict_items.is_null() && dict_items != Py_None() {
-            let _ = populate_dict_items(new_obj, dict_items, memo);
+            let _ = populate_dict_items::<M>(new_obj, dict_items, memo);
         }
     }
 
@@ -184,7 +184,7 @@ unsafe fn reconstruct_from_reduce(
     Ok(new_obj)
 }
 
-unsafe fn set_object_state(
+unsafe fn set_object_state<M: Memo>(
     obj: *mut PyObject,
     state: *mut PyObject,
 ) -> Result<(), String> {
@@ -281,10 +281,10 @@ unsafe fn set_object_state(
     Ok(())
 }
 
-unsafe fn populate_list_items(
+unsafe fn populate_list_items<M: Memo>(
     obj: *mut PyObject,
     list_items: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<(), String> {
     // Get iterator from list_items
     let iterator = PyObject_GetIter(list_items);
@@ -343,10 +343,10 @@ unsafe fn populate_list_items(
     Ok(())
 }
 
-unsafe fn populate_dict_items(
+unsafe fn populate_dict_items<M: Memo>(
     obj: *mut PyObject,
     dict_items: *mut PyObject,
-    memo: &mut ThreadLocalMemo,
+    memo: &mut M,
 ) -> Result<(), String> {
     // Get iterator from dict_items
     let iterator = PyObject_GetIter(dict_items);
