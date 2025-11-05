@@ -16,14 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "Python.h"
-
-#if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#endif
+#include "_common.h"
 
 /* ------------------------------ Pin type ---------------------------------- */
 
@@ -90,7 +83,7 @@ typedef struct {
     Py_ssize_t filled; /* non-empty + tombstones */
 } PinTable;
 
-#define PIN_TOMBSTONE ((void*)(uintptr_t)(-1))
+#define PIN_TOMBSTONE HASH_TABLE_TOMBSTONE
 
 static PinTable* global_pin_table = NULL; /* owned here */
 
@@ -107,17 +100,14 @@ static void pin_table_free(PinTable* table) {
     free(table);
 }
 
+/* ======================== Pin table resize ==================================
+ * Grow the pin table to accommodate more entries.
+ */
 static int pin_table_resize(PinTable** table_ptr, Py_ssize_t min_capacity_needed) {
     PinTable* old = *table_ptr;
-    Py_ssize_t new_size = 8;
-    while (new_size < (min_capacity_needed * 2)) {
-        new_size <<= 1;
-        if (new_size <= 0) {
-            new_size = (Py_ssize_t)1 << (sizeof(void*) * 8 - 2);
-            break;
-        }
-    }
-    PinEntry* new_slots = (PinEntry*)calloc((size_t)new_size, sizeof(PinEntry));
+    Py_ssize_t new_size = HASH_TABLE_NEXT_SIZE(old ? old->size : 0, min_capacity_needed);
+
+    PinEntry* new_slots = ALLOC_ZEROED(PinEntry, new_size);
     if (!new_slots)
         return -1;
 
@@ -131,20 +121,21 @@ static int pin_table_resize(PinTable** table_ptr, Py_ssize_t min_capacity_needed
     nt->used = 0;
     nt->filled = 0;
 
+    /* Rehash existing entries */
     if (old) {
-        for (Py_ssize_t i = 0; i < old->size; i++) {
+        Py_ssize_t mask = nt->size - 1;
+        FOR_EACH_VALID_ENTRY(i, old->slots, old->size) {
             void* key = old->slots[i].key;
-            if (key && key != PIN_TOMBSTONE) {
-                PinObject* pin = old->slots[i].pin; /* transfer */
-                Py_ssize_t mask = nt->size - 1;
-                Py_ssize_t idx = hash_pointer(key) & mask;
-                while (nt->slots[idx].key)
-                    idx = (idx + 1) & mask;
-                nt->slots[idx].key = key;
-                nt->slots[idx].pin = pin;
-                nt->used++;
-                nt->filled++;
-            }
+            PinObject* pin = old->slots[i].pin; /* transfer ownership */
+            Py_ssize_t idx = hash_pointer(key) & mask;
+
+            while (nt->slots[idx].key)
+                idx = HASH_TABLE_PROBE_NEXT(idx, mask);
+
+            nt->slots[idx].key = key;
+            nt->slots[idx].pin = pin;
+            nt->used++;
+            nt->filled++;
         }
         free(old->slots);
         free(old);
@@ -159,28 +150,39 @@ static inline int pin_table_ensure(PinTable** table_ptr) {
     return pin_table_resize(table_ptr, 1);
 }
 
+/* ======================== Pin table lookup ==================================
+ * Look up a pin by object address. Returns borrowed reference or NULL.
+ */
 static inline PinObject* pin_table_lookup(PinTable* table, void* key) {
     if (!table)
         return NULL;
+
     Py_ssize_t mask = table->size - 1;
     Py_ssize_t idx = hash_pointer(key) & mask;
+
     for (;;) {
         void* slot_key = table->slots[idx].key;
-        if (!slot_key)
+
+        if (HASH_TABLE_IS_EMPTY(slot_key))
             return NULL;
-        if (slot_key != PIN_TOMBSTONE && slot_key == key) {
+
+        if (HASH_TABLE_IS_VALID(slot_key) && slot_key == key)
             return table->slots[idx].pin; /* borrowed */
-        }
-        idx = (idx + 1) & mask;
+
+        idx = HASH_TABLE_PROBE_NEXT(idx, mask);
     }
 }
 
+/* ======================== Pin table insert ==================================
+ * Insert or update a pin in the table.
+ */
 static int pin_table_insert(PinTable** table_ptr, void* key, PinObject* pin) {
     if (pin_table_ensure(table_ptr) < 0)
         return -1;
     PinTable* table = *table_ptr;
 
-    if ((table->filled * 10) >= (table->size * 7)) {
+    /* Resize if load factor exceeded */
+    if (HASH_TABLE_SHOULD_RESIZE(table)) {
         if (pin_table_resize(table_ptr, table->used + 1) < 0)
             return -1;
         table = *table_ptr;
@@ -192,7 +194,9 @@ static int pin_table_insert(PinTable** table_ptr, void* key, PinObject* pin) {
 
     for (;;) {
         void* slot_key = table->slots[idx].key;
-        if (!slot_key) {
+
+        if (HASH_TABLE_IS_EMPTY(slot_key)) {
+            /* Found empty slot - insert here (or at first tombstone) */
             Py_ssize_t insert_at = (first_tomb >= 0) ? first_tomb : idx;
             table->slots[insert_at].key = key;
             Py_INCREF(pin);
@@ -201,34 +205,47 @@ static int pin_table_insert(PinTable** table_ptr, void* key, PinObject* pin) {
             table->filled++;
             return 0;
         }
-        if (slot_key == PIN_TOMBSTONE) {
+
+        if (HASH_TABLE_IS_TOMBSTONE(slot_key)) {
+            /* Remember first tombstone for potential insertion */
             if (first_tomb < 0)
                 first_tomb = idx;
         } else if (slot_key == key) {
+            /* Key exists - update pin */
             Py_SETREF(table->slots[idx].pin, (PinObject*)Py_NewRef(pin));
             return 0;
         }
-        idx = (idx + 1) & mask;
+
+        idx = HASH_TABLE_PROBE_NEXT(idx, mask);
     }
 }
 
+/* ======================== Pin table remove ==================================
+ * Remove a pin from the table, marking its slot as a tombstone.
+ */
 static int pin_table_remove(PinTable* table, void* key) {
     if (!table)
         return -1;
+
     Py_ssize_t mask = table->size - 1;
     Py_ssize_t idx = hash_pointer(key) & mask;
+
     for (;;) {
         void* slot_key = table->slots[idx].key;
-        if (!slot_key)
+
+        if (HASH_TABLE_IS_EMPTY(slot_key))
             return -1; /* not found */
-        if (slot_key != PIN_TOMBSTONE && slot_key == key) {
-            table->slots[idx].key = PIN_TOMBSTONE;
+
+        if (HASH_TABLE_IS_VALID(slot_key) && slot_key == key) {
+            /* Found the key - mark as tombstone and clean up */
+            table->slots[idx].key = HASH_TABLE_TOMBSTONE;
             Py_XDECREF(table->slots[idx].pin);
             table->slots[idx].pin = NULL;
             table->used--;
             return 0;
         }
-        idx = (idx + 1) & mask;
+
+        idx = HASH_TABLE_PROBE_NEXT(idx, mask);
     }
 }
 

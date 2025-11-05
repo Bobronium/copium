@@ -336,80 +336,41 @@ static ALWAYS_INLINE int memo_table_insert(MemoTable** table_ptr, void* key, PyO
     return _memo_table_insert_impl(table_ptr, key, value, hash_pointer(key));
 }
 
-/* New hash-parameterized hot-path APIs (avoid recomputing hash) */
+/* Hash-parameterized hot-path APIs (avoid recomputing hash) */
 static ALWAYS_INLINE PyObject* memo_table_lookup_h(MemoTable* table, void* key, Py_ssize_t hash) {
-    if (!table)
-        return NULL;
-    Py_ssize_t mask = table->size - 1;
-    Py_ssize_t idx = hash & mask;
-    for (;;) {
-        void* slot_key = table->slots[idx].key;
-        if (!slot_key)
-            return NULL;
-        if (slot_key != MEMO_TOMBSTONE && slot_key == key) {
-            return table->slots[idx].value; /* borrowed */
-        }
-        idx = (idx + 1) & mask;
-    }
+    return _memo_table_lookup_impl(table, key, hash);
 }
 
 static ALWAYS_INLINE int memo_table_insert_h(MemoTable** table_ptr, void* key, PyObject* value, Py_ssize_t hash) {
-    if (memo_table_ensure(table_ptr) < 0)
-        return -1;
-    MemoTable* table = *table_ptr;
-
-    if ((table->filled * 10) >= (table->size * 7)) {
-        if (memo_table_resize(table_ptr, table->used + 1) < 0)
-            return -1;
-        table = *table_ptr;
-    }
-
-    Py_ssize_t mask = table->size - 1;
-    Py_ssize_t idx = hash & mask;
-    Py_ssize_t first_tomb = -1;
-
-    for (;;) {
-        void* slot_key = table->slots[idx].key;
-        if (!slot_key) {
-            Py_ssize_t insert_at = (first_tomb >= 0) ? first_tomb : idx;
-            table->slots[insert_at].key = key;
-            Py_INCREF(value);
-            table->slots[insert_at].value = value;
-            table->used++;
-            table->filled++;
-            return 0;
-        }
-        if (slot_key == MEMO_TOMBSTONE) {
-            if (first_tomb < 0)
-                first_tomb = idx;
-        } else if (slot_key == key) {
-            PyObject* old_value = table->slots[idx].value;
-            Py_INCREF(value);
-            table->slots[idx].value = value;
-            Py_XDECREF(old_value);
-            return 0;
-        }
-        idx = (idx + 1) & mask;
-    }
+    return _memo_table_insert_impl(table_ptr, key, value, hash);
 }
 
+/* ======================== Remove operation ==================================
+ * Remove a key from the hash table, marking its slot as a tombstone.
+ */
 int memo_table_remove(MemoTable* table, void* key) {
     if (!table)
         return -1;
+
     Py_ssize_t mask = table->size - 1;
     Py_ssize_t idx = hash_pointer(key) & mask;
+
     for (;;) {
         void* slot_key = table->slots[idx].key;
-        if (!slot_key)
+
+        if (HASH_TABLE_IS_EMPTY(slot_key))
             return -1; /* not found */
-        if (slot_key != MEMO_TOMBSTONE && slot_key == key) {
-            table->slots[idx].key = MEMO_TOMBSTONE;
+
+        if (HASH_TABLE_IS_VALID(slot_key) && slot_key == key) {
+            /* Found the key - mark as tombstone and clean up */
+            table->slots[idx].key = HASH_TABLE_TOMBSTONE;
             Py_XDECREF(table->slots[idx].value);
             table->slots[idx].value = NULL;
             table->used--;
             return 0;
         }
-        idx = (idx + 1) & mask;
+
+        idx = HASH_TABLE_PROBE_NEXT(idx, mask);
     }
 }
 

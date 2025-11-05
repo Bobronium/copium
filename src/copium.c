@@ -38,113 +38,115 @@
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-
-#ifndef LIKELY
-#if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#endif
-#endif
-
-#ifndef ALWAYS_INLINE
-#if (defined(__GNUC__) || defined(__clang__)) && defined(__OPTIMIZE__)
-#define ALWAYS_INLINE inline __attribute__((always_inline))
-#elif defined(_MSC_VER)
-#define ALWAYS_INLINE __forceinline
-#else
-#define ALWAYS_INLINE inline
-#endif
-#endif
+#include "_common.h"
 
 #include "_memo.c"
 #include "_pinning.c"
 #include "_copying.c"
 #include "_patching.c"
 
-/* ===================== Utilities shared locally =========================== */
+/* ===================== Module-level utilities ============================= */
 
-static PyObject* _get_attr_str(PyObject* obj, const char* name) {
-    return PyObject_GetAttrString(obj, name);
+/**
+ * Get copy.deepcopy function with validation.
+ * Returns new reference or NULL on error.
+ */
+static PyObject* _get_copy_deepcopy(void) {
+    PyObject* module_copy = PyImport_ImportModule("copy");
+    if (!module_copy)
+        return NULL;
+
+    PyObject* deepcopy = PyObject_GetAttrString(module_copy, "deepcopy");
+    Py_DECREF(module_copy);
+
+    if (deepcopy && !PyFunction_Check(deepcopy)) {
+        Py_DECREF(deepcopy);
+        PyErr_SetString(PyExc_TypeError, "copy.deepcopy is not a Python function");
+        return NULL;
+    }
+
+    return deepcopy;
 }
 
-static int _truthy(PyObject* obj) {
-    int result = PyObject_IsTrue(obj);
-    Py_DECREF(obj);
-    return result;
+/**
+ * Get function from this module with error checking.
+ * Returns new reference or NULL on error.
+ */
+static PyObject* _get_module_func(PyObject* module, const char* func_name) {
+    PyObject* func = PyObject_GetAttrString(module, func_name);
+    if (!func) {
+        PyErr_Format(PyExc_AttributeError, "module has no attribute '%s'", func_name);
+    }
+    return func;
+}
+
+/**
+ * Check if function is currently applied.
+ * Returns 1 if applied, 0 if not, -1 on error.
+ */
+static int _is_applied(PyObject* patch_module, PyObject* func) {
+    PyObject* applied_func = _get_module_func(patch_module, "applied");
+    if (!applied_func)
+        return -1;
+
+    PyObject* result = PyObject_CallOneArg(applied_func, func);
+    Py_DECREF(applied_func);
+
+    if (!result)
+        return -1;
+
+    int is_applied = PyObject_IsTrue(result);
+    Py_DECREF(result);
+    return is_applied;
 }
 
 /* ===================== Patch module: enable/disable/enabled ================ */
 
 static PyObject* py_enable(PyObject* self, PyObject* noargs) {
     (void)noargs;
-    PyObject* module_copy = PyImport_ImportModule("copy");
-    if (!module_copy)
+
+    /* Get copy.deepcopy function */
+    PyObject* py_deepcopy = _get_copy_deepcopy();
+    if (!py_deepcopy)
         return NULL;
 
-    PyObject* py_deepcopy_object = PyObject_GetAttrString(module_copy, "deepcopy");
-    Py_DECREF(module_copy);
-    if (!py_deepcopy_object)
-        return NULL;
-
-    if (!PyFunction_Check(py_deepcopy_object)) {
-        Py_DECREF(py_deepcopy_object);
-        PyErr_SetString(PyExc_TypeError, "copy.deepcopy is not a Python function");
-        return NULL;
-    }
-
-    /* Get applied() from this module (copium.patch) */
-    PyObject* function_applied = _get_attr_str(self, "applied");
-    if (!function_applied) {
-        Py_DECREF(py_deepcopy_object);
-        return NULL;
-    }
-
-    PyObject* is_applied = PyObject_CallOneArg(function_applied, py_deepcopy_object);
-    Py_DECREF(function_applied);
-    if (!is_applied) {
-        Py_DECREF(py_deepcopy_object);
-        return NULL;
-    }
-
-    int already = _truthy(is_applied);
+    /* Check if already applied */
+    int already = _is_applied(self, py_deepcopy);
     if (already < 0) {
-        Py_DECREF(py_deepcopy_object);
+        Py_DECREF(py_deepcopy);
         return NULL;
     }
     if (already) {
-        Py_DECREF(py_deepcopy_object);
+        Py_DECREF(py_deepcopy);
         Py_RETURN_FALSE;
     }
 
-    /* Get native deepcopy from main copium module */
+    /* Get copium.deepcopy (native implementation) */
     PyObject* copium_main = PyImport_ImportModule("copium");
     if (!copium_main) {
-        Py_DECREF(py_deepcopy_object);
+        Py_DECREF(py_deepcopy);
         return NULL;
     }
-    PyObject* native_deepcopy = _get_attr_str(copium_main, "deepcopy");
+    PyObject* native_deepcopy = PyObject_GetAttrString(copium_main, "deepcopy");
     Py_DECREF(copium_main);
     if (!native_deepcopy) {
-        Py_DECREF(py_deepcopy_object);
+        Py_DECREF(py_deepcopy);
         return NULL;
     }
 
-    /* Get apply() from this module */
-    PyObject* function_apply = _get_attr_str(self, "apply");
-    if (!function_apply) {
-        Py_DECREF(py_deepcopy_object);
+    /* Apply the patch */
+    PyObject* apply_func = _get_module_func(self, "apply");
+    if (!apply_func) {
+        Py_DECREF(py_deepcopy);
         Py_DECREF(native_deepcopy);
         return NULL;
     }
 
-    PyObject* result =
-        PyObject_CallFunction(function_apply, "OO", py_deepcopy_object, native_deepcopy);
-    Py_DECREF(function_apply);
-    Py_DECREF(py_deepcopy_object);
+    PyObject* result = PyObject_CallFunction(apply_func, "OO", py_deepcopy, native_deepcopy);
+    Py_DECREF(apply_func);
+    Py_DECREF(py_deepcopy);
     Py_DECREF(native_deepcopy);
+
     if (!result)
         return NULL;
     Py_DECREF(result);
@@ -154,55 +156,34 @@ static PyObject* py_enable(PyObject* self, PyObject* noargs) {
 
 static PyObject* py_disable(PyObject* self, PyObject* noargs) {
     (void)noargs;
-    PyObject* module_copy = PyImport_ImportModule("copy");
-    if (!module_copy)
+
+    /* Get copy.deepcopy function */
+    PyObject* py_deepcopy = _get_copy_deepcopy();
+    if (!py_deepcopy)
         return NULL;
 
-    PyObject* py_deepcopy_object = PyObject_GetAttrString(module_copy, "deepcopy");
-    Py_DECREF(module_copy);
-    if (!py_deepcopy_object)
-        return NULL;
-
-    if (!PyFunction_Check(py_deepcopy_object)) {
-        Py_DECREF(py_deepcopy_object);
-        PyErr_SetString(PyExc_TypeError, "copy.deepcopy is not a Python function");
-        return NULL;
-    }
-
-    /* Get applied() from this module */
-    PyObject* function_applied = _get_attr_str(self, "applied");
-    if (!function_applied) {
-        Py_DECREF(py_deepcopy_object);
-        return NULL;
-    }
-
-    PyObject* is_applied = PyObject_CallOneArg(function_applied, py_deepcopy_object);
-    Py_DECREF(function_applied);
-    if (!is_applied) {
-        Py_DECREF(py_deepcopy_object);
-        return NULL;
-    }
-
-    int active = _truthy(is_applied);
+    /* Check if currently applied */
+    int active = _is_applied(self, py_deepcopy);
     if (active < 0) {
-        Py_DECREF(py_deepcopy_object);
+        Py_DECREF(py_deepcopy);
         return NULL;
     }
     if (!active) {
-        Py_DECREF(py_deepcopy_object);
+        Py_DECREF(py_deepcopy);
         Py_RETURN_FALSE;
     }
 
-    /* Get unapply() from this module */
-    PyObject* function_unapply = _get_attr_str(self, "unapply");
-    if (!function_unapply) {
-        Py_DECREF(py_deepcopy_object);
+    /* Unapply the patch */
+    PyObject* unapply_func = _get_module_func(self, "unapply");
+    if (!unapply_func) {
+        Py_DECREF(py_deepcopy);
         return NULL;
     }
 
-    PyObject* result = PyObject_CallFunction(function_unapply, "O", py_deepcopy_object);
-    Py_DECREF(function_unapply);
-    Py_DECREF(py_deepcopy_object);
+    PyObject* result = PyObject_CallFunction(unapply_func, "O", py_deepcopy);
+    Py_DECREF(unapply_func);
+    Py_DECREF(py_deepcopy);
+
     if (!result)
         return NULL;
     Py_DECREF(result);
@@ -212,40 +193,20 @@ static PyObject* py_disable(PyObject* self, PyObject* noargs) {
 
 static PyObject* py_enabled(PyObject* self, PyObject* noargs) {
     (void)noargs;
-    PyObject* module_copy = PyImport_ImportModule("copy");
-    if (!module_copy)
+
+    /* Get copy.deepcopy function */
+    PyObject* py_deepcopy = _get_copy_deepcopy();
+    if (!py_deepcopy)
         return NULL;
 
-    PyObject* py_deepcopy_object = PyObject_GetAttrString(module_copy, "deepcopy");
-    Py_DECREF(module_copy);
-    if (!py_deepcopy_object)
-        return NULL;
+    /* Check if currently applied */
+    int active = _is_applied(self, py_deepcopy);
+    Py_DECREF(py_deepcopy);
 
-    if (!PyFunction_Check(py_deepcopy_object)) {
-        Py_DECREF(py_deepcopy_object);
-        PyErr_SetString(PyExc_TypeError, "copy.deepcopy is not a Python function");
-        return NULL;
-    }
-
-    /* Get applied() from this module */
-    PyObject* function_applied = _get_attr_str(self, "applied");
-    if (!function_applied) {
-        Py_DECREF(py_deepcopy_object);
-        return NULL;
-    }
-
-    PyObject* is_applied = PyObject_CallOneArg(function_applied, py_deepcopy_object);
-    Py_DECREF(function_applied);
-    Py_DECREF(py_deepcopy_object);
-    if (!is_applied)
-        return NULL;
-
-    int active = _truthy(is_applied);
     if (active < 0)
         return NULL;
-    if (active)
-        Py_RETURN_TRUE;
-    Py_RETURN_FALSE;
+
+    return PyBool_FromLong(active);
 }
 
 /* ===================== Method tables for submodules ======================== */
