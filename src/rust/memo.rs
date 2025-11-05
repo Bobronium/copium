@@ -11,6 +11,7 @@ use std::ptr;
 const TOMBSTONE: *const c_void = usize::MAX as *const c_void;
 
 /// Memo table entry
+#[derive(Clone, Copy)]
 #[repr(C)]
 struct MemoEntry {
     key: *const c_void,

@@ -22,6 +22,10 @@ pub struct TypeCache {
     pub none: *mut PyTypeObject,
 }
 
+// SAFETY: We're just holding pointers to global Python type objects
+unsafe impl Send for TypeCache {}
+unsafe impl Sync for TypeCache {}
+
 static TYPE_CACHE: OnceLock<TypeCache> = OnceLock::new();
 
 /// Initialize type cache

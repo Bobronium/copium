@@ -1,23 +1,23 @@
-//! Main deepcopy implementation
+//! Main deepcopy implementation - simplified to match C pattern
 //!
-//! This module implements the core deepcopy algorithm with:
-//! - Compile-time state management
-//! - Single hash computation per object
-//! - Zero redundant operations
+//! Pattern from C:
+//! 1. Get thread-local memo (creates new if refcount > 1)
+//! 2. Do deepcopy with that memo
+//! 3. Clear memo for reuse
+//! 4. Return memo to thread-local storage
 
-use crate::ffi::*;
-use crate::state::{ThreadState, MemoState, Initialized};
-use crate::types::{classify_type, init_type_cache};
+use crate::ffi;
+use crate::state::{get_thread_local_memo, return_thread_local_memo, ThreadLocalMemo};
+use crate::types::{classify_type, init_type_cache, TypeClass};
 use crate::dispatch::dispatch_deepcopy;
 use pyo3::prelude::*;
-use std::ptr;
+use pyo3::ffi as pyo3_ffi;
 
 /// Main deepcopy entry point
 pub fn deepcopy_impl(
     obj: &Bound<'_, PyAny>,
     memo: Option<&Bound<'_, PyAny>>,
-    state: &mut ThreadState,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     // Initialize type cache if needed
     init_type_cache();
 
@@ -25,125 +25,110 @@ pub fn deepcopy_impl(
     let obj_ptr = obj.as_ptr();
 
     // Handle user-provided memo (conservative path)
-    if let Some(user_memo) = memo {
-        return deepcopy_with_user_memo(obj_ptr, user_memo.as_ptr());
+    if let Some(_user_memo) = memo {
+        return Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+            "User-provided memo not yet implemented in Rust version",
+        ));
     }
+
+    // Get thread-local memo
+    let mut tl_memo = get_thread_local_memo();
 
     // Fast path: native memo
     unsafe {
-        match deepcopy_internal(obj_ptr, state) {
-            Ok(result) => {
+        let result = match deepcopy_internal(obj_ptr, &mut tl_memo) {
+            Ok(result_ptr) => {
                 let py = obj.py();
-                Ok(PyObject::from_borrowed_ptr(py, result))
+                Ok(Py::from_owned_ptr(py, result_ptr))
             }
             Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
-        }
+        };
+
+        // Return memo to thread-local storage
+        return_thread_local_memo(tl_memo);
+
+        result
     }
 }
 
-/// Internal deepcopy with native memo
+/// Internal deepcopy with thread-local memo
 unsafe fn deepcopy_internal(
-    obj: *mut PyObject,
-    state: &mut ThreadState,
-) -> Result<*mut PyObject, String> {
+    obj: *mut ffi::PyObject,
+    memo: &mut ThreadLocalMemo,
+) -> Result<*mut ffi::PyObject, String> {
     // Fast path: check for immutable literals
-    if is_immutable_literal(obj) {
-        return Ok(Py_NewRef(obj));
+    if ffi::is_immutable_literal(obj) {
+        return Ok(ffi::Py_NewRef(obj));
     }
 
     // Compute hash ONCE
     let key = obj as *const std::os::raw::c_void;
-    let hash = hash_pointer(key as *mut std::os::raw::c_void);
+    let hash = ffi::hash_pointer(key as *mut std::os::raw::c_void);
 
-    // Check if we need to initialize memo
-    if state.uninitialized().needs_init() {
-        // Initialize memo and keepalive
-        let initialized = state.initialize();
-
-        // Classify type ONCE
-        let type_class = classify_type(obj);
-
-        // Dispatch to handler
-        return dispatch_deepcopy(obj, type_class, hash, initialized);
+    // Check memo first
+    if let Some(cached) = memo.table.lookup(key, hash) {
+        return Ok(ffi::Py_NewRef(cached));
     }
 
-    // Memo already initialized - lookup first
-    let memo_state = state.uninitialized(); // This is actually initialized but we need to transmute
-    // FIXME: Need better state management here
-
-    // For now, simplified implementation
+    // Classify type ONCE
     let type_class = classify_type(obj);
 
-    // Initialize and dispatch
-    let initialized = state.initialize();
-    dispatch_deepcopy(obj, type_class, hash, initialized)
+    // Dispatch to handler
+    dispatch_deepcopy(obj, type_class, hash, memo)
 }
 
 /// Recursive deepcopy (used by container handlers)
 #[inline]
 pub unsafe fn deepcopy_recursive(
-    obj: *mut PyObject,
-    state: &mut MemoState<Initialized>,
-) -> Result<*mut PyObject, String> {
+    obj: *mut ffi::PyObject,
+    memo: &mut ThreadLocalMemo,
+) -> Result<*mut ffi::PyObject, String> {
     // Fast path: immutable literals
-    if is_immutable_literal(obj) {
-        return Ok(Py_NewRef(obj));
+    if ffi::is_immutable_literal(obj) {
+        return Ok(ffi::Py_NewRef(obj));
     }
 
     // Compute hash
     let key = obj as *const std::os::raw::c_void;
-    let hash = hash_pointer(key as *mut std::os::raw::c_void);
+    let hash = ffi::hash_pointer(key as *mut std::os::raw::c_void);
 
     // Check memo
-    if let Some(cached) = state.memo_lookup(key, hash) {
-        return Ok(Py_NewRef(cached));
+    if let Some(cached) = memo.table.lookup(key, hash) {
+        return Ok(ffi::Py_NewRef(cached));
     }
 
     // Classify and dispatch
     let type_class = classify_type(obj);
-    dispatch_deepcopy(obj, type_class, hash, state)
-}
-
-/// Deepcopy with user-provided memo (conservative path)
-fn deepcopy_with_user_memo(
-    obj: *mut PyObject,
-    memo: *mut PyObject,
-) -> PyResult<PyObject> {
-    // For now, fall back to Python implementation
-    // This would need to implement dict-like memo interface
-    Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-        "User-provided memo not yet implemented in Rust version",
-    ))
+    dispatch_deepcopy(obj, type_class, hash, memo)
 }
 
 /// Shallow copy implementation
-pub fn copy_impl(obj: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+pub fn copy_impl(obj: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let py = obj.py();
     let obj_ptr = obj.as_ptr();
 
     unsafe {
         // Try __copy__ method first
-        let copy_str = PyUnicode_InternFromString(b"__copy__\0".as_ptr() as *const i8);
+        let copy_str = pyo3_ffi::PyUnicode_InternFromString(b"__copy__\0".as_ptr() as *const i8);
         if !copy_str.is_null() {
-            let method = PyObject_GetAttr(obj_ptr, copy_str);
-            Py_DecRef(copy_str);
+            let method = pyo3_ffi::PyObject_GetAttr(obj_ptr, copy_str);
+            pyo3_ffi::Py_DecRef(copy_str);
 
             if !method.is_null() {
-                let result = PyObject_CallNoArgs(method);
-                Py_DecRef(method);
+                let result = pyo3_ffi::PyObject_CallNoArgs(method);
+                pyo3_ffi::Py_DecRef(method);
 
                 if !result.is_null() {
-                    return Ok(PyObject::from_owned_ptr(py, result));
+                    return Ok(Py::from_owned_ptr(py, result));
                 }
-                PyErr_Clear();
+                pyo3_ffi::PyErr_Clear();
             } else {
-                PyErr_Clear();
+                pyo3_ffi::PyErr_Clear();
             }
         }
 
-        // Fall back to reduce protocol
-        // For now, simplified - just return new ref
-        Ok(PyObject::from_borrowed_ptr(py, Py_NewRef(obj_ptr)))
+        // Fall back to just returning new ref (simplified)
+        Ok(Py::from_borrowed_ptr(py, ffi::Py_NewRef(obj_ptr)))
     }
 }
 
@@ -152,20 +137,14 @@ pub fn replicate_impl(
     obj: &Bound<'_, PyAny>,
     n: usize,
     _compile_after: usize,
-) -> PyResult<Vec<PyObject>> {
-    let py = obj.py();
+) -> PyResult<Vec<Py<PyAny>>> {
     let mut results = Vec::with_capacity(n);
 
     // Simple loop for now - optimization would compile after threshold
     for _ in 0..n {
-        let copied = deepcopy_impl(obj, None, &mut ThreadState::new())?;
+        let copied = deepcopy_impl(obj, None)?;
         results.push(copied);
     }
 
     Ok(results)
-}
-
-extern "C" {
-    fn PyUnicode_InternFromString(s: *const i8) -> *mut PyObject;
-    fn PyObject_CallNoArgs(callable: *mut PyObject) -> *mut PyObject;
 }

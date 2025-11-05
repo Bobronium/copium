@@ -1,14 +1,14 @@
 //! Reduce protocol handling for generic object deepcopy
 
 use crate::ffi::*;
-use crate::state::{MemoState, Initialized};
-use crate::deepcopy::deepcopy_recursive;
+use crate::state::ThreadLocalMemo;
+use crate::deepcopy_impl::deepcopy_recursive;
 use std::ptr;
 
 /// Deepcopy via reduce protocol
 pub unsafe fn deepcopy_via_reduce(
     obj: *mut PyObject,
-    state: &mut MemoState<Initialized>,
+    memo: &mut ThreadLocalMemo,
 ) -> Result<*mut PyObject, String> {
     // Try __reduce_ex__(4) first
     let reduce_ex = get_reduce_ex(obj)?;
@@ -24,10 +24,10 @@ pub unsafe fn deepcopy_via_reduce(
     if reduced.is_null() {
         // Clear error and try __reduce__
         PyErr_Clear();
-        return try_reduce(obj, state);
+        return try_reduce(obj, memo);
     }
 
-    reconstruct_from_reduce(obj, reduced, state)
+    reconstruct_from_reduce(obj, reduced, memo)
 }
 
 /// Get __reduce_ex__ method
@@ -50,7 +50,7 @@ unsafe fn get_reduce_ex(obj: *mut PyObject) -> Result<*mut PyObject, String> {
 /// Try __reduce__ as fallback
 unsafe fn try_reduce(
     obj: *mut PyObject,
-    state: &mut MemoState<Initialized>,
+    memo: &mut ThreadLocalMemo,
 ) -> Result<*mut PyObject, String> {
     let reduce_str = PyUnicode_InternFromString(b"__reduce__\0".as_ptr() as *const i8);
     if reduce_str.is_null() {
@@ -71,14 +71,14 @@ unsafe fn try_reduce(
         return Err("__reduce__ call failed".to_string());
     }
 
-    reconstruct_from_reduce(obj, reduced, state)
+    reconstruct_from_reduce(obj, reduced, memo)
 }
 
 /// Reconstruct object from reduce tuple
 unsafe fn reconstruct_from_reduce(
     original: *mut PyObject,
     reduced: *mut PyObject,
-    state: &mut MemoState<Initialized>,
+    memo: &mut ThreadLocalMemo,
 ) -> Result<*mut PyObject, String> {
     // Reduce returns a tuple: (callable, args, state?, listitems?, dictitems?)
     if !Py_IS_TYPE(reduced, &PyTuple_Type) {
@@ -102,7 +102,7 @@ unsafe fn reconstruct_from_reduce(
     }
 
     // Deepcopy args
-    let new_args = deepcopy_recursive(args, state)?;
+    let new_args = deepcopy_recursive(args, memo)?;
 
     // Call constructor
     let new_obj = PyObject_Call(callable, new_args, ptr::null_mut());
@@ -116,16 +116,16 @@ unsafe fn reconstruct_from_reduce(
     // Save to memo before setting state
     let key = original as *const std::os::raw::c_void;
     let hash = hash_pointer(key as *mut std::os::raw::c_void);
-    state.memo_insert(key, new_obj, hash);
+    memo.table.insert(key, new_obj, hash);
 
     // Add to keepalive
-    state.keepalive_append(new_obj);
+    memo.keepalive.append(new_obj);
 
     // Handle state if present (index 2)
     if size > 2 {
         let obj_state = PyTuple_GetItem(reduced, 2);
         if !obj_state.is_null() && obj_state != get_none() {
-            let new_state = deepcopy_recursive(obj_state, state)?;
+            let new_state = deepcopy_recursive(obj_state, memo)?;
             set_object_state(new_obj, new_state)?;
             Py_DecRef(new_state);
         }
