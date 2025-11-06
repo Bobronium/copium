@@ -61,7 +61,6 @@ from typing import Any
 import pytest
 
 import copium
-from datamodelzoo import CASES
 from tests.conftest import CASE_PARAMS
 
 # Try to import psutil (optional but recommended for better C-level measurement)
