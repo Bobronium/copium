@@ -8,6 +8,17 @@ from typing import Dict, Optional, Tuple
 import pyperf
 
 
+if os.getenv("BENCHMARK_FOR_CHART"):
+    # raise absolute case time up to perceivable value
+    # and align stdlib bars for both cases
+    # we can do it since we're interested in speedup ratio, not absolute values
+    # and the reason is: it looks nicer.
+    MIXED_MULTIPLIER = 20000
+    BUILTIN_MULTIPLIER = 30000
+else:
+    MIXED_MULTIPLIER = BUILTIN_MULTIPLIER = 1
+
+
 @dataclass
 class User:
     id: int
@@ -117,7 +128,7 @@ def benchmark_mixed(n):
     """
     total = 0
     value = get_data(lambda: datetime.fromtimestamp(123456789), User, CacheEntry)
-    for ii in range(n * 20000):
+    for ii in range(n * MIXED_MULTIPLIER):
         t0 = pyperf.perf_counter()
         copy.deepcopy(value)
         total += pyperf.perf_counter() - t0
@@ -130,7 +141,7 @@ def benchmark_builtins(n):
     """
     value = get_data(lambda: 123456789, dict, lambda *args: tuple(args))
     total = 0
-    for _ in range(n * 28000):
+    for _ in range(n * BUILTIN_MULTIPLIER):
         t0 = pyperf.perf_counter()
         copy.deepcopy(value)
         total += pyperf.perf_counter() - t0
