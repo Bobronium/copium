@@ -1,0 +1,30 @@
+name: Memory Tests
+on:
+  push:
+    branches: [ "**" ]
+    tags: [ "*" ]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  memory-tests:
+    name: Memory Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.13", "3.14"]  # Run on fewer versions to save CI time
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - uses: go-task/setup-task@v1
+      - name: Setup and install dependencies
+        run: task setup
+      - name: Run memory leak tests
+        run: |
+          uv sync --inexact --quiet --extra test --reinstall-package copium
+          uv run pytest --memory tests/test_memory_leaks.py -v --tb=short
