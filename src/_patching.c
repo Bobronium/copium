@@ -10,6 +10,7 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <stdint.h>
+#include "_common.h"
 
 #if PY_VERSION_HEX >= 0x030C0000
 /* =========================

@@ -43,57 +43,7 @@
 #include "pycore_setobject.h"
 #endif
 
-/* -----------------------------------------------------------------------------
- * Inlining policy
- *
- * Goal:
- *   - Make ALWAYS_INLINE truly "always inline" (force) everywhere it appears.
- *   - Avoid forced inlining on recursive dispatchers to prevent GCC/Clang errors.
- *   - Provide MAYBE_INLINE as a strong hint so PGO can choose profitable expansion.
- *
- * Policy:
- *   - MSVC: ALWAYS_INLINE = __forceinline; MAYBE_INLINE = __inline.
- *   - GCC/Clang: ALWAYS_INLINE = inline + always_inline (+hot); MAYBE_INLINE = inline (+hot).
- * ---------------------------------------------------------------------------*/
-#ifdef ALWAYS_INLINE
-#undef ALWAYS_INLINE
-#endif
-#ifdef MAYBE_INLINE
-#undef MAYBE_INLINE
-#endif
-
-/* Feature-gated attributes for portability */
-#if defined(__has_attribute)
-  #if __has_attribute(hot)
-    #define COPIUM_ATTR_HOT __attribute__((hot))
-  #else
-    #define COPIUM_ATTR_HOT
-  #endif
-  #if __has_attribute(gnu_inline)
-    #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
-  #else
-    #define COPIUM_ATTR_GNU_INLINE
-  #endif
-#else
-  #if defined(__GNUC__) || defined(__clang__)
-    #define COPIUM_ATTR_HOT __attribute__((hot))
-    #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
-  #else
-    #define COPIUM_ATTR_HOT
-    #define COPIUM_ATTR_GNU_INLINE
-  #endif
-#endif
-
-#if defined(_MSC_VER)
-  #define ALWAYS_INLINE __forceinline
-  #define MAYBE_INLINE __inline
-#elif defined(__GNUC__) || defined(__clang__)
-  #define ALWAYS_INLINE inline __attribute__((always_inline)) COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
-  #define MAYBE_INLINE inline COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
-#else
-  #define ALWAYS_INLINE inline
-  #define MAYBE_INLINE inline
-#endif
+/* Note: ALWAYS_INLINE and MAYBE_INLINE are now defined in _common.h */
 
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
 static Py_tss_t g_dictiter_tss = Py_tss_NEEDS_INIT;
@@ -652,7 +602,7 @@ static MAYBE_INLINE PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_s
 static MAYBE_INLINE PyObject* deepcopy_frozenset_c(
     PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
 );
-static MAYBE_INLINE PyObject* deepcopy_bytearray_c(
+static ALWAYS_INLINE PyObject* deepcopy_bytearray_c(
     PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
 );
 static MAYBE_INLINE PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash);
@@ -1805,7 +1755,7 @@ static MAYBE_INLINE PyObject* deepcopy_frozenset_py(
     return copy;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_bytearray_py(
+static ALWAYS_INLINE PyObject* deepcopy_bytearray_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
     Py_ssize_t sz = PyByteArray_Size(obj);
