@@ -1,5 +1,11 @@
-import copy
 import os
+
+# MUST enable patch BEFORE importing copy
+if os.getenv("COPIUM_PATCH_DEEPCOPY") == "1":
+    import copium.patch
+    copium.patch.enable()
+
+import copy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
