@@ -17,7 +17,7 @@ An extremely fast Python copy/deepcopy implementation, written in C.
 </div>
 
 <div align="center">
-  <i><code>deepcopy_memo</code> suite from <a href="https://github.com/python/pyperformance/blob/643526f166869c6006009d316be38a35a3cffb2c/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py#L88">python/pyperformance</a></i>
+  <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/main/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/main/tools/generate_chart.py">tools/generate_chart.py</a></i>
 </div>
 
 ## Highlights
