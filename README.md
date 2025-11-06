@@ -20,13 +20,42 @@ An extremely fast Python copy/deepcopy implementation, written in C.
   <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/main/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/main/tools/generate_chart.py">tools/generate_chart.py</a></i>
 </div>
 
-## Highlights
+## Speedups on 3.14
 
-- ~3x faster on mixed data
-- ~6x faster on typical data
-- [~30 faster in some cases](#benchmarks)
-- [Requires **zero** code changes to adopt](#1-you-set-copium_patch_deepcopy1-before-launch)
-- Passes all tests from `CPython/Lib/test/test_copy.py`
+### `tuple`
+
+- `tuple[Never, ...]` ~5.66x (0 items)
+- `tuple[int, ...]` ~12.46x (20 items)
+- `tuple[int, ...]` ~28.28x (5000 items)
+- `tuple[tuple[str, tuple[tuple[str, tuple[tuple[str, tuple[tuple[str, tuple[int, ...]]]]]]]]]]` ~14.54x
+
+### `list`
+
+- `list[Never]` ~4.97x (0 items)
+- `list[int]` ~9.58x (20 items)
+- `list[int]` ~16.23x (5000 items)
+- `list[str | list[str | list[str | list[str | list[int]]]]]` ~9.19x
+
+### `dict`
+
+- `dict[Never, Never]` ~4.59x (0 items)
+- `dict[str, int]` ~5.95x (20 items)
+- `dict[str, int]` ~3.94x (5000 items)
+- `dict[str, dict[str, ...]]` ~6.19x
+
+### `set`
+
+- `set[Never]` ~15.87x (0 items)
+- `set[int]` ~6.55x (20 items)
+- `set[int]` ~3.69x (5000 items)
+- `set[frozenset[frozenset[int]]]` ~13.72x
+
+### `other`
+
+- `int`/`str`/`bytes` ~4.86x
+- `dataclasses` ~2.74x
+
+Expect much higher speedups on Python 3.13 and lower.
 
 ## Installation
 
@@ -36,147 +65,62 @@ pip install copium
 
 ## Usage
 
-`copium` is designed to be drop-in replacement for `copy` module.
+Simply export `COPIUM_PATCH_DEEPCOPY=1` before running your application. You
+don't have to change a single line of code:
 
-After installation deepcopy will be fast in either of 3 cases:
+`cat example.py`
 
-##### 1) You set `COPIUM_PATCH_DEEPCOPY=1` before launch
+```python
+from copy import deepcopy
 
-##### 2) You call `copium.patch.enable()` manually at launch
+assert deepcopy(x := []) is not x
+```
 
-##### 3) You use `copium.deepcopy()` directly
+`COPIUM_PATCH_DEEPCOPY=1 python example.py`
 
-Generally any code that uses stdlib `copy` can be replaced with `copium` simply by:
+---
+
+To enable patch manually:
+
+```py
+import copium.patch
+
+copium.patch.enable()
+```
+
+---
+
+To use manually:
+
+```py
+from copium import deepcopy
+
+assert deepcopy(x := []) is not x
+```
+
+`copium` module includes all public declarations of stdlib `copy` module, so it's generally safe to:
 
 ```diff
 - from copy import deepcopy
 + from copium import deepcopy
 ```
 
-Alternatively, you can import `copium.patch` once and enable it:
+---
 
-```python
-import copium.patch
+## Project status
 
+- [x] passes all tests in `CPython/Lib/test/test_copy.py`
+- [x] behaves exactly the same as stdlib `copy` in all cases declared in
+  [datamodelzoo](https://github.com/Bobronium/datamodelzoo)
+- [x] consumes less or equal amount of memory as stdlib `copy`
+- [x] always faster than stdlib `copy`
+- [x] passes all tests on free-threaded Python builds
+- [x] has tests for refcounts/recursion/threading edge cases
 
-copium.patch.enable()
-```
+This is the first release.
 
-Or just `export COPIUM_PATCH_DEEPCOPY=1` before running your Python process.
+If you're interested in using this, simply install it and run tests with `COPIUM_PATCH_DEEPCOPY=1`.
 
-This will automatically call `copium.patch.enable()` on start, and all calls to `copy.deepcopy()` will be forwarded to
-`copium.deepcopy()`. On Python 3.12+ there's no performance overhead compared to direct
-usage.
+If it fails — open an issue with detailed bugreport.
 
-There are two main benefits of using `copium.patch`,
-
-- It requires zero code changes
-- It automatically makes any third party code that uses deepcopy faster, for
-  instance, it will speed up instantiations of pydantic
-  models with mutable defaults
-  \(see [pydantic_core](https://github.com/pydantic/pydantic-core/blob/f1239f81d944bcda84bffec64527d46f041ccc9e/src/validators/with_default.rs#L23)).
-
-## Caveats
-
-- `copium.deepcopy()` ignores `sys.getrecursionlimit()`. It still may raise `RecursionError` at some point, but at much
-  larger depths than default interpreter recursion limit (see `tests.test_copium.test_recursion_error`)
-- unless `memo` argument supplied as `dict` when calling `copium.deepcopy()`, special lightweight memo storage will be
-  used to reduce memoization overhead. It implements `MutableMapping` methods, so any custom `__deepcopy__` methods
-  should work as expected
-- `copium` uses unstable CPython API. This means that it might break on new major Python release
-
-## Benchmarks
-
-A full benchmark suite is in progress and will be published soon.
-In the meanwhile, you can reproduce the results shown in the chart above with this minimal script
-
-<details>
-<summary>Pyperf case</summary>
-
-```shell
-cat > benchmark.py << 'PY'
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "pyperf",
-#     "copium",
-# ]
-# ///
-import pyperf
-
-runner = pyperf.Runner()
-
-setup = """
-import copy
-from decimal import Decimal
-
-payload = {
-        "a": 1,
-        "b": (b := [(1, 2, 3), (4, 5, 6)]),
-        "c": [Decimal("3.14"), complex(), [], (), frozenset(), b],
-}
-"""
-
-runner.timeit(name="deepcopy", stmt=f"b=copy.deepcopy(payload)", setup=setup)
-PY
-```
-
-```shell
-uv run --python 3.14t benchmark.py -q -o copy3.14t.json && \
-COPIUM_PATCH_DEEPCOPY=1 PYTHON_GIL=0 \
-uv run --python 3.14t benchmark.py -q -o copium3.14t.json --copy-env && \
-uvx pyperf compare_to copy3.14t.json copium3.14t.json --table
-```
-
-Output:
-
-```shell
-deepcopy: Mean +- std dev: 20.8 us +- 1.6 us
-deepcopy: Mean +- std dev: 928 ns +- 11 ns
-+--------------+---------+--------------------+
-| Benchmark | copy    | copium                |
-+===========+=========+=======================+
-| deepcopy  | 20.8 us | 928 ns: 22.40x faster |
-+-----------+---------+-----------------------+
-```
-
-```shell
-❯ uv run --python 3.13 benchmark.py -q -o copy3.13.json && \
-COPIUM_PATCH_DEEPCOPY=1 \
-uv run --python 3.13 benchmark.py -q -o copium3.13.json --copy-env && \
-uvx pyperf compare_to copy3.13.json copium3.13.json --table
-```
-
-```shell
-deepcopy: Mean +- std dev: 10.8 us +- 0.9 us
-deepcopy: Mean +- std dev: 880 ns +- 23 ns
-+-----------+-----------+-----------------------+
-| Benchmark | copy3.13t | copium3.13t           |
-+===========+===========+=======================+
-| deepcopy  | 10.8 us   | 880 ns: 12.26x faster |
-+-----------+-----------+-----------------------+
-```
-
-```shell
-❯ uv run --python 3.13t benchmark.py -q -o copy3.13t.json && \
-COPIUM_PATCH_DEEPCOPY=1 PYTHON_GIL=0 \
-uv run --python 3.13t benchmark.py -q -o copium3.13t.json --copy-env && \
-uvx pyperf compare_to copy3.13t.json copium3.13t.json --table
-```
-
-```shell
-deepcopy: Mean +- std dev: 29.0 us +- 6.7 us
-deepcopy: Mean +- std dev: 942 ns +- 29 ns
-+-----------+-----------+-----------------------+
-| Benchmark | copy3.13t | copium3.13t           |
-+===========+===========+=======================+
-| deepcopy  | 29.0 us   | 942 ns: 30.84x faster |
-+-----------+-----------+-----------------------+
-```
-
-</details>
-
-## Development
-
-- Install Task: https://taskfile.dev
-- All checks: `task` / `task MATRIX=1`
+If it works as expected, consider whether the speedup in your case worth of using alpha version.
