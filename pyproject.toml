@@ -1,13 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "setuptools-scm>=8.0", "wheel"]
-build-backend = "tools.build_system.backend"
-backend-path = ["."]
-
-[tool.setuptools]
-include-package-data = true
-
-[tool.setuptools.package-data]
-"copium" = ["../copium_autopatch.pth"]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "universal2", "arm64"]

@@ -306,8 +306,7 @@ unsafe fn copy_slots_object(obj: *mut pyo3_ffi::PyObject, py: Python) -> PyResul
     if new_obj.is_null() {
         pyo3_ffi::PyErr_Clear();
         return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-            format!("cannot copy object of type '{}'",
-                std::ffi::CStr::from_ptr((*obj_type).tp_name).to_string_lossy())
+            "cannot copy object"
         ));
     }
 
