@@ -51,14 +51,18 @@ These tests are resource-intensive and slow, so they're opt-in.
 Run with: pytest --memory tests/test_memory_leaks.py
 """
 
+import collections
 import copy as stdlib_copy
 import gc
 import sys
+from types import MappingProxyType
 from typing import Any
 
 import pytest
 
 import copium
+from datamodelzoo import CASES
+from tests.conftest import CASE_PARAMS
 
 # Try to import psutil (optional but recommended for better C-level measurement)
 try:
@@ -68,6 +72,95 @@ try:
 except ImportError:
     HAS_PSUTIL = False
     psutil = None  # type: ignore
+
+
+# Memo options to test (same as in test_copium.py)
+memo_options = ["absent", "dict", "None", "mutable_mapping", "mapping", "invalid"]
+
+
+def get_memo_kwargs(memo: str) -> dict:
+    """
+    Get kwargs for deepcopy based on memo option.
+
+    Matches the behavior in test_duper_deepcopy_parity.
+    """
+    if memo == "dict":
+        return {"memo": {}}
+    elif memo == "None":
+        return {"memo": None}
+    elif memo == "mapping":
+        return {"memo": collections.UserDict()}
+    elif memo == "mutable_mapping":
+        return {"memo": MappingProxyType({})}  # expected to throw
+    elif memo == "invalid":
+        return {"memo": "not a memo"}
+    else:  # "absent"
+        return {}
+
+
+def compare_peak_memory(
+    measure_func,
+    test_data: Any,
+    kwargs: dict,
+    margin: float = 1.1,
+) -> None:
+    """
+    DRY helper: Compare peak memory usage between stdlib and copium.
+
+    Args:
+        measure_func: Function to measure memory (tracemalloc or psutil variant)
+        test_data: Object to deepcopy
+        kwargs: Memo kwargs from get_memo_kwargs()
+        margin: Allowed margin factor (1.1 = 10% more allowed)
+
+    Raises:
+        AssertionError: If copium uses more memory than stdlib (beyond margin)
+    """
+    # Measure stdlib
+    stdlib_error = None
+    try:
+        _, stdlib_peak, stdlib_baseline = measure_func(
+            stdlib_copy.deepcopy, test_data, **kwargs
+        )
+        stdlib_used = stdlib_peak - stdlib_baseline
+    except Exception as e:
+        stdlib_error = e
+
+    # Force cleanup
+    gc.collect()
+
+    # Measure copium
+    copium_error = None
+    try:
+        _, copium_peak, copium_baseline = measure_func(
+            copium.deepcopy, test_data, **kwargs
+        )
+        copium_used = copium_peak - copium_baseline
+    except Exception as e:
+        copium_error = e
+
+    # Handle error cases
+    if stdlib_error is not None:
+        assert copium_error is not None, (
+            f"copium succeeded but stdlib failed with {type(stdlib_error).__name__}"
+        )
+        assert type(copium_error) is type(stdlib_error), (
+            f"Different error types: copium={type(copium_error).__name__}, "
+            f"stdlib={type(stdlib_error).__name__}"
+        )
+        return  # Both failed as expected
+
+    if copium_error is not None:
+        raise AssertionError(
+            f"copium failed but stdlib succeeded"
+        ) from copium_error
+
+    # copium MUST use <= memory than stdlib
+    assert copium_used <= stdlib_used * margin, (
+        f"copium used more memory than stdlib: "
+        f"copium={copium_used:,} bytes, stdlib={stdlib_used:,} bytes, "
+        f"margin={margin:.1%}"
+    )
 
 
 def get_process_memory() -> int:
@@ -161,85 +254,39 @@ def create_test_data_deep():
 
 
 @pytest.mark.memory
-@pytest.mark.parametrize(
-    "data_factory",
-    [
-        create_test_data_small,
-        create_test_data_medium,
-        create_test_data_large,
-        create_test_data_deep,
-    ],
-    ids=["small", "medium", "large", "deep"],
-)
-def test_peak_memory_comparison_tracemalloc(data_factory):
+@pytest.mark.parametrize("memo", memo_options, ids=[f"memo_{option}" for option in memo_options])
+@pytest.mark.parametrize("case", CASE_PARAMS)
+def test_peak_memory_comparison_tracemalloc(case: Any, memo: str):
     """
     Test that copium uses <= memory compared to stdlib during deepcopy.
     Uses tracemalloc to measure Python-level allocations.
+
+    Tests all memo options and all CASE_PARAMS to ensure comprehensive coverage.
     """
-    test_data = data_factory()
-
-    # Measure stdlib
-    _, stdlib_peak, stdlib_baseline = measure_peak_memory_tracemalloc(
-        stdlib_copy.deepcopy, test_data
-    )
-    stdlib_used = stdlib_peak - stdlib_baseline
-
-    # Force cleanup
-    gc.collect()
-
-    # Measure copium
-    _, copium_peak, copium_baseline = measure_peak_memory_tracemalloc(
-        copium.deepcopy, test_data
-    )
-    copium_used = copium_peak - copium_baseline
-
-    # copium MUST use <= memory than stdlib
-    # Allow 10% margin for measurement noise
-    assert copium_used <= stdlib_used * 1.1, (
-        f"copium used more memory than stdlib: "
-        f"copium={copium_used:,} bytes, stdlib={stdlib_used:,} bytes"
+    compare_peak_memory(
+        measure_peak_memory_tracemalloc,
+        case.obj,
+        get_memo_kwargs(memo),
+        margin=1.1,  # 10% margin for measurement noise
     )
 
 
 @pytest.mark.memory
 @pytest.mark.skipif(not HAS_PSUTIL, reason="psutil not installed")
-@pytest.mark.parametrize(
-    "data_factory",
-    [
-        create_test_data_small,
-        create_test_data_medium,
-        create_test_data_large,
-        create_test_data_deep,
-    ],
-    ids=["small", "medium", "large", "deep"],
-)
-def test_peak_memory_comparison_psutil(data_factory):
+@pytest.mark.parametrize("memo", memo_options, ids=[f"memo_{option}" for option in memo_options])
+@pytest.mark.parametrize("case", CASE_PARAMS)
+def test_peak_memory_comparison_psutil(case: Any, memo: str):
     """
     Test that copium uses <= memory compared to stdlib during deepcopy.
     Uses psutil to measure process RSS (includes C-level allocations).
+
+    Tests all memo options and all CASE_PARAMS to ensure comprehensive coverage.
     """
-    test_data = data_factory()
-
-    # Measure stdlib
-    _, stdlib_peak, stdlib_baseline = measure_peak_memory_psutil(
-        stdlib_copy.deepcopy, test_data
-    )
-    stdlib_used = stdlib_peak - stdlib_baseline
-
-    # Force cleanup
-    gc.collect()
-
-    # Measure copium
-    _, copium_peak, copium_baseline = measure_peak_memory_psutil(
-        copium.deepcopy, test_data
-    )
-    copium_used = copium_peak - copium_baseline
-
-    # copium MUST use <= memory than stdlib
-    # RSS is noisy, so allow 20% margin
-    assert copium_used <= stdlib_used * 1.2, (
-        f"copium used more memory than stdlib: "
-        f"copium={copium_used:,} bytes, stdlib={stdlib_used:,} bytes"
+    compare_peak_memory(
+        measure_peak_memory_psutil,
+        case.obj,
+        get_memo_kwargs(memo),
+        margin=1.2,  # 20% margin (RSS is noisy)
     )
 
 

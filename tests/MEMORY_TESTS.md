@@ -36,8 +36,21 @@ copium uses a TLS growable buffer for the memo table that is intentionally retai
 
 ### Test Cases
 
+**Parametrized Tests** (run for all memo options × all CASE_PARAMS):
 - `test_peak_memory_comparison_tracemalloc`: Compare Python-level memory (tracemalloc)
+  - Tests: 6 memo options × ~100+ test cases from datamodelzoo = 600+ combinations
 - `test_peak_memory_comparison_psutil`: Compare process memory including C allocations (psutil)
+  - Tests: 6 memo options × ~100+ test cases from datamodelzoo = 600+ combinations
+
+**Memo options tested:**
+- `absent`: No memo provided (uses TLS buffer optimization)
+- `dict`: Explicit dict memo (no TLS optimization)
+- `None`: Explicit None memo
+- `mapping`: UserDict memo (MutableMapping)
+- `mutable_mapping`: MappingProxyType (expected to fail)
+- `invalid`: Invalid memo type (expected to fail)
+
+**Single-run Tests:**
 - `test_memory_stability_no_unbounded_growth`: Verify no continuous growth over iterations
 - `test_memory_cleanup_after_deepcopy`: Verify proper cleanup after operations
 - `test_no_reference_leaks`: Check for reference count leaks
