@@ -102,7 +102,7 @@ build = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-k not thirdparty and not performance"]
+addopts = ["-k not thirdparty and not performance and not memory"]
 python_files = ["test_*.py"]
 
 [tool.coverage.run]

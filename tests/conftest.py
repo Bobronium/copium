@@ -13,6 +13,10 @@ from datamodelzoo import CASES
 def pytest_configure(config):
     config.option.snapshot_dirname = f".expected/{sys.version_info.major}.{sys.version_info.minor}/"
     config.option.snapshot_patch_pycharm_diff = True
+    config.addinivalue_line(
+        "markers",
+        "memory: marks tests as memory leak tests (deselect with '-m \"not memory\"')"
+    )
 
 
 CASE_PARAMS = [pytest.param(case, id=case.name) for case in CASES]
