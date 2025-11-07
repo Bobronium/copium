@@ -43,12 +43,17 @@ copium uses a TLS growable buffer for the memo table that is intentionally retai
   - Tests: 6 memo options × ~100+ test cases from datamodelzoo = 600+ combinations
 
 **Memo options tested:**
-- `absent`: No memo provided (uses TLS buffer optimization)
-- `dict`: Explicit dict memo (no TLS optimization)
-- `None`: Explicit None memo
-- `mapping`: UserDict memo (MutableMapping)
-- `mutable_mapping`: MappingProxyType (expected to fail)
+- `absent`: No memo provided (uses TLS buffer optimization) - 10% margin
+- `dict`: Explicit dict memo (no TLS optimization) - 10% margin
+- `None`: Explicit None memo (uses TLS optimization) - 10% margin
+- `mapping`: UserDict memo (MutableMapping) - **50% margin** (custom handling overhead)
+- `mutable_mapping`: MappingProxyType (expected to fail) - **50% margin**
 - `invalid`: Invalid memo type (expected to fail)
+
+**Note on margins:** Custom memo types (`mapping`, `mutable_mapping`) use a larger 50% margin
+because they trigger different code paths in copium that may have small overhead (~100-150 bytes).
+This overhead is acceptable since these are less common use cases, and the absolute differences
+are negligible (hundreds of bytes, not megabytes).
 
 **Single-run Tests:**
 - `test_memory_stability_no_unbounded_growth`: Verify no continuous growth over iterations
@@ -57,6 +62,7 @@ copium uses a TLS growable buffer for the memo table that is intentionally retai
 - `test_large_data_retention_policy`: Verify buffer shrinkage policy
 - `test_memo_dict_no_tls_optimization`: Test behavior with explicit memo dict
 - `test_concurrent_deepcopy_memory_isolation`: Verify TLS isolation between threads
+  - Note: Verifies correctness, not memory measurement (tracemalloc is global)
 
 ## Running the Tests
 
