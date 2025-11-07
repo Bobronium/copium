@@ -131,7 +131,6 @@ jobs:
         if: runner.os == 'Linux'
         env:
           PYTHONHASHSEED: "0"
-          BENCHMARK_FOR_CHART: 1
         run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Run pyperformance benchmark with copium
@@ -139,7 +138,6 @@ jobs:
         env:
           PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
-          BENCHMARK_FOR_CHART: 1
         run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Print comparison
@@ -157,8 +155,10 @@ jobs:
 
       - name: Run readme benchmark
         if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.display == '3.14'
+        env:
+          BENCHMARK_FOR_CHART: 1
         run: |
-          .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --fast
+          .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --copy-env --fast
           COPIUM_PATCH_DEEPCOPY=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
           .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
 
