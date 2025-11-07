@@ -14,7 +14,7 @@ if os.getenv("BENCHMARK_FOR_CHART"):
     # we can do it since we're interested in speedup ratio, not absolute values
     # and the reason is: it looks nicer.
     MIXED_MULTIPLIER = 20000
-    BUILTIN_MULTIPLIER = 30000
+    BUILTIN_MULTIPLIER = 29000
 else:
     MIXED_MULTIPLIER = BUILTIN_MULTIPLIER = 1
 
