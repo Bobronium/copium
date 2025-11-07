@@ -9,14 +9,91 @@ pub unsafe fn deepcopy_via_reduce<M: Memo>(
     obj: *mut PyObject,
     memo: &mut M,
 ) -> Result<*mut PyObject, String> {
-    // Try __reduce_ex__(4) first
-    let reduce_ex_result = try_reduce_ex(obj, memo);
-    if let Ok(result) = reduce_ex_result {
+    // Check copyreg.dispatch_table first
+    if let Ok(result) = try_copyreg_dispatch(obj, memo) {
         return Ok(result);
     }
 
+    // Try __reduce_ex__(4) first
+    let reduce_ex_result = try_reduce_ex(obj, memo);
+    match reduce_ex_result {
+        Ok(result) => return Ok(result),
+        Err(e) if e.starts_with("PYTHON_EXCEPTION:AttributeError") => {
+            // AttributeError from custom __getattribute__ should be converted to copy.Error
+            return Err(e);
+        }
+        _ => {}
+    }
+
     // Try __reduce__ as fallback
-    try_reduce(obj, memo)
+    let reduce_result = try_reduce(obj, memo);
+    match reduce_result {
+        Ok(result) => return Ok(result),
+        Err(e) if e.starts_with("PYTHON_EXCEPTION:AttributeError") => {
+            // AttributeError from custom __getattribute__ should be converted to copy.Error
+            return Err(e);
+        }
+        _ => {}
+    }
+
+    // All reduce methods failed - raise TypeError like stdlib
+    // Get the type name for better error message
+    let type_obj = Py_TYPE(obj);
+    let type_name_obj = (*type_obj).tp_name;
+    let type_name = if !type_name_obj.is_null() {
+        std::ffi::CStr::from_ptr(type_name_obj)
+            .to_str()
+            .unwrap_or("unknown")
+    } else {
+        "unknown"
+    };
+
+    Err(format!("PYTHON_EXCEPTION:TypeError:cannot pickle '{}' object", type_name))
+}
+
+/// Try copyreg.dispatch_table
+unsafe fn try_copyreg_dispatch<M: Memo>(
+    obj: *mut PyObject,
+    memo: &mut M,
+) -> Result<*mut PyObject, String> {
+    // Import copyreg module
+    let copyreg = PyImport_ImportModule(b"copyreg\0".as_ptr() as *const i8);
+    if copyreg.is_null() {
+        PyErr_Clear();
+        return Err("No copyreg module".to_string());
+    }
+
+    // Get dispatch_table
+    let dispatch_table = PyObject_GetAttrString(copyreg, b"dispatch_table\0".as_ptr() as *const i8);
+    Py_DECREF(copyreg);
+    if dispatch_table.is_null() {
+        PyErr_Clear();
+        return Err("No dispatch_table".to_string());
+    }
+
+    // Look up the type in dispatch_table
+    let obj_type = Py_TYPE(obj) as *mut PyObject;
+    let reducer = PyObject_GetItem(dispatch_table, obj_type);
+    Py_DECREF(dispatch_table);
+
+    if reducer.is_null() {
+        PyErr_Clear();
+        return Err("No reducer in dispatch_table".to_string());
+    }
+
+    // Call the reducer
+    let reduced = crate::ffi::call_one_arg(reducer, obj);
+    Py_DECREF(reducer);
+
+    if reduced.is_null() {
+        PyErr_Clear();
+        return Err("Reducer call failed".to_string());
+    }
+
+    // Reconstruct from the reduced form
+    let result = reconstruct_from_reduce(obj, reduced, memo);
+    Py_DECREF(reduced);
+    result
 }
 
 unsafe fn try_reduce_ex<M: Memo>(
@@ -32,6 +109,29 @@ unsafe fn try_reduce_ex<M: Memo>(
     Py_DECREF(reduce_ex_str);
 
     if method.is_null() {
+        // Check if it's AttributeError AND the object has custom __getattribute__
+        if !PyErr_Occurred().is_null() {
+            let attr_error = std::ptr::addr_of_mut!(PyExc_AttributeError);
+            if PyErr_GivenExceptionMatches(PyErr_Occurred(), *attr_error) != 0 {
+                // Check if the type has a custom __getattribute__
+                let obj_type = Py_TYPE(obj);
+                let getattribute_str = PyUnicode_InternFromString(b"__getattribute__\0".as_ptr() as *const i8);
+                if !getattribute_str.is_null() {
+                    let type_dict = (*obj_type).tp_dict;
+                    if !type_dict.is_null() {
+                        let has_custom = PyDict_Contains(type_dict, getattribute_str);
+                        Py_DECREF(getattribute_str);
+                        if has_custom == 1 {
+                            // Has custom __getattribute__ - convert to copy.Error
+                            PyErr_Clear();
+                            return Err("PYTHON_EXCEPTION:AttributeError:__reduce_ex__".to_string());
+                        }
+                    } else {
+                        Py_DECREF(getattribute_str);
+                    }
+                }
+            }
+        }
         PyErr_Clear();
         return Err("No __reduce_ex__".to_string());
     }
@@ -89,6 +189,29 @@ unsafe fn try_reduce<M: Memo>(
     Py_DECREF(reduce_str);
 
     if method.is_null() {
+        // Check if it's AttributeError AND the object has custom __getattribute__
+        if !PyErr_Occurred().is_null() {
+            let attr_error = std::ptr::addr_of_mut!(PyExc_AttributeError);
+            if PyErr_GivenExceptionMatches(PyErr_Occurred(), *attr_error) != 0 {
+                // Check if the type has a custom __getattribute__
+                let obj_type = Py_TYPE(obj);
+                let getattribute_str = PyUnicode_InternFromString(b"__getattribute__\0".as_ptr() as *const i8);
+                if !getattribute_str.is_null() {
+                    let type_dict = (*obj_type).tp_dict;
+                    if !type_dict.is_null() {
+                        let has_custom = PyDict_Contains(type_dict, getattribute_str);
+                        Py_DECREF(getattribute_str);
+                        if has_custom == 1 {
+                            // Has custom __getattribute__ - convert to copy.Error
+                            PyErr_Clear();
+                            return Err("PYTHON_EXCEPTION:AttributeError:__reduce__".to_string());
+                        }
+                    } else {
+                        Py_DECREF(getattribute_str);
+                    }
+                }
+            }
+        }
         PyErr_Clear();
         return Err("No __reduce__".to_string());
     }

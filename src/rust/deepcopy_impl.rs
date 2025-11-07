@@ -35,8 +35,16 @@ pub fn deepcopy_impl(
                 Ok(result_ptr) => Ok(Py::from_owned_ptr(py, result_ptr)),
                 Err(e) => {
                     // Check for special error prefixes
-                    if e.starts_with("PYTHON_EXCEPTION:TypeError") {
-                        Err(PyErr::fetch(py))
+                    if e.starts_with("PYTHON_EXCEPTION:AttributeError") {
+                        // Import copy.Error and raise it
+                        let copy_module = py.import_bound("copy")?;
+                        let error_class = copy_module.getattr("Error")?;
+                        let error_type = error_class.downcast::<pyo3::types::PyType>()?;
+                        Err(PyErr::from_type_bound(error_type.clone(), "un(deep)copyable object"))
+                    } else if let Some(msg) = e.strip_prefix("PYTHON_EXCEPTION:TypeError:") {
+                        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(msg.to_string()))
+                    } else if e.starts_with("PYTHON_EXCEPTION:TypeError") {
+                        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(e))
                     } else if e.contains("pickle protocol") {
                         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(e))
                     } else {
@@ -56,8 +64,16 @@ pub fn deepcopy_impl(
                 Ok(result_ptr) => Ok(Py::from_owned_ptr(py, result_ptr)),
                 Err(e) => {
                     // Check for special error prefixes
-                    if e.starts_with("PYTHON_EXCEPTION:TypeError") {
-                        Err(PyErr::fetch(py))
+                    if e.starts_with("PYTHON_EXCEPTION:AttributeError") {
+                        // Import copy.Error and raise it
+                        let copy_module = py.import_bound("copy")?;
+                        let error_class = copy_module.getattr("Error")?;
+                        let error_type = error_class.downcast::<pyo3::types::PyType>()?;
+                        Err(PyErr::from_type_bound(error_type.clone(), "un(deep)copyable object"))
+                    } else if let Some(msg) = e.strip_prefix("PYTHON_EXCEPTION:TypeError:") {
+                        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(msg.to_string()))
+                    } else if e.starts_with("PYTHON_EXCEPTION:TypeError") {
+                        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(e))
                     } else if e.contains("pickle protocol") {
                         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(e))
                     } else {
@@ -240,6 +256,11 @@ pub fn copy_impl(obj: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 
 /// Copy using reduce protocol
 unsafe fn copy_via_reduce(obj: *mut pyo3_ffi::PyObject, py: Python) -> PyResult<Py<PyAny>> {
+    // Check copyreg.dispatch_table first
+    if let Ok(result) = try_copyreg_dispatch_copy(obj, py) {
+        return Ok(result);
+    }
+
     // Try __reduce_ex__(4) for copy (same as stdlib)
     let reduce_ex_str = pyo3_ffi::PyUnicode_InternFromString(b"__reduce_ex__\0".as_ptr() as *const i8);
     if !reduce_ex_str.is_null() {
@@ -258,16 +279,32 @@ unsafe fn copy_via_reduce(obj: *mut pyo3_ffi::PyObject, py: Python) -> PyResult<
                     pyo3_ffi::Py_DecRef(reduced);
                     return result;
                 } else {
-                    // Check if it's a TypeError (e.g., from __slots__)
+                    // Check if there's a Python exception
                     if !pyo3_ffi::PyErr_Occurred().is_null() {
                         let exc_type = pyo3_ffi::PyErr_Occurred();
                         let type_error = std::ptr::addr_of_mut!(pyo3_ffi::PyExc_TypeError);
                         if pyo3_ffi::PyErr_GivenExceptionMatches(exc_type, *type_error) != 0 {
+                            // TypeError - try manual copy for __slots__ or other special cases
                             pyo3_ffi::PyErr_Clear();
-                            // Try manual copy for __slots__ or other special cases
                             return copy_slots_object(obj, py);
+                        } else {
+                            // Other exception (e.g., ValueError from __getstate__) - propagate it
+                            return Err(PyErr::fetch(py));
                         }
                     }
+                }
+            }
+        } else {
+            // Check if it's AttributeError (e.g., from __getattribute__)
+            if !pyo3_ffi::PyErr_Occurred().is_null() {
+                let attr_error = std::ptr::addr_of_mut!(pyo3_ffi::PyExc_AttributeError);
+                if pyo3_ffi::PyErr_GivenExceptionMatches(pyo3_ffi::PyErr_Occurred(), *attr_error) != 0 {
+                    pyo3_ffi::PyErr_Clear();
+                    // Import copy.Error and raise it
+                    let copy_module = py.import_bound("copy")?;
+                    let error_class = copy_module.getattr("Error")?;
+                    let error_type = error_class.downcast::<pyo3::types::PyType>()?;
+                    return Err(PyErr::from_type_bound(error_type.clone(), ""));
                 }
             }
         }
@@ -288,6 +325,25 @@ unsafe fn copy_via_reduce(obj: *mut pyo3_ffi::PyObject, py: Python) -> PyResult<
                 let result = reconstruct_from_reduce_copy(obj, reduced, py);
                 pyo3_ffi::Py_DecRef(reduced);
                 return result;
+            } else {
+                // Check if there's a Python exception from __reduce__
+                if !pyo3_ffi::PyErr_Occurred().is_null() {
+                    // Propagate any exception from __reduce__
+                    return Err(PyErr::fetch(py));
+                }
+            }
+        } else {
+            // Check if it's AttributeError (e.g., from __getattribute__)
+            if !pyo3_ffi::PyErr_Occurred().is_null() {
+                let attr_error = std::ptr::addr_of_mut!(pyo3_ffi::PyExc_AttributeError);
+                if pyo3_ffi::PyErr_GivenExceptionMatches(pyo3_ffi::PyErr_Occurred(), *attr_error) != 0 {
+                    pyo3_ffi::PyErr_Clear();
+                    // Import copy.Error and raise it
+                    let copy_module = py.import_bound("copy")?;
+                    let error_class = copy_module.getattr("Error")?;
+                    let error_type = error_class.downcast::<pyo3::types::PyType>()?;
+                    return Err(PyErr::from_type_bound(error_type.clone(), ""));
+                }
             }
         }
         pyo3_ffi::PyErr_Clear();
@@ -360,6 +416,51 @@ unsafe fn copy_slots_object(obj: *mut pyo3_ffi::PyObject, py: Python) -> PyResul
     }
 
     Ok(Py::from_owned_ptr(py, new_obj))
+}
+
+/// Try copyreg.dispatch_table for shallow copy
+unsafe fn try_copyreg_dispatch_copy(
+    obj: *mut pyo3_ffi::PyObject,
+    py: Python,
+) -> Result<Py<PyAny>, ()> {
+    // Import copyreg module
+    let copyreg = pyo3_ffi::PyImport_ImportModule(b"copyreg\0".as_ptr() as *const i8);
+    if copyreg.is_null() {
+        pyo3_ffi::PyErr_Clear();
+        return Err(());
+    }
+
+    // Get dispatch_table
+    let dispatch_table = pyo3_ffi::PyObject_GetAttrString(copyreg, b"dispatch_table\0".as_ptr() as *const i8);
+    pyo3_ffi::Py_DecRef(copyreg);
+    if dispatch_table.is_null() {
+        pyo3_ffi::PyErr_Clear();
+        return Err(());
+    }
+
+    // Look up the type in dispatch_table
+    let obj_type = pyo3_ffi::Py_TYPE(obj) as *mut pyo3_ffi::PyObject;
+    let reducer = pyo3_ffi::PyObject_GetItem(dispatch_table, obj_type);
+    pyo3_ffi::Py_DecRef(dispatch_table);
+
+    if reducer.is_null() {
+        pyo3_ffi::PyErr_Clear();
+        return Err(());
+    }
+
+    // Call the reducer
+    let reduced = ffi::call_one_arg(reducer, obj);
+    pyo3_ffi::Py_DecRef(reducer);
+
+    if reduced.is_null() {
+        pyo3_ffi::PyErr_Clear();
+        return Err(());
+    }
+
+    // Reconstruct from the reduced form (shallow copy - no deepcopy of args)
+    let result = reconstruct_from_reduce_copy(obj, reduced, py);
+    pyo3_ffi::Py_DecRef(reduced);
+    result.map_err(|_| ())
 }
 
 /// Reconstruct object from reduce for shallow copy
