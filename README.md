@@ -8,6 +8,10 @@
 
 Fast drop-in replacement for `copy.deepcopy()`.
 
+> [!WARNING]  
+> This is alpha version, see [project status](#project-status).
+
+
 <div align="center">
   <picture>
     <source srcset="https://raw.githubusercontent.com/Bobronium/copium/9b217f43b3ca5b7689d2ae0ea8a1c747f0e96548/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
@@ -117,9 +121,7 @@ assert deepcopy(x := []) is not x
 - [x] passes all tests on free-threaded Python builds
 - [x] has tests for refcounts/recursion/threading edge cases
 
-This is the first release.
-
-If you're interested in using this, simply install it and run tests with `COPIUM_PATCH_DEEPCOPY=1`.
+If you're interested in using this, simply add it to your project and run tests with `COPIUM_PATCH_DEEPCOPY=1`.
 
 If it fails — open an issue with detailed bugreport.
 
