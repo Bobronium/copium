@@ -37,18 +37,7 @@ pub unsafe fn deepcopy_via_reduce<M: Memo>(
     }
 
     // All reduce methods failed - raise TypeError like stdlib
-    // Get the type name for better error message
-    let type_obj = Py_TYPE(obj);
-    let type_name_obj = (*type_obj).tp_name;
-    let type_name = if !type_name_obj.is_null() {
-        std::ffi::CStr::from_ptr(type_name_obj)
-            .to_str()
-            .unwrap_or("unknown")
-    } else {
-        "unknown"
-    };
-
-    Err(format!("PYTHON_EXCEPTION:TypeError:cannot pickle '{}' object", type_name))
+    Err("PYTHON_EXCEPTION:TypeError:cannot pickle object".to_string())
 }
 
 /// Try copyreg.dispatch_table
@@ -117,17 +106,12 @@ unsafe fn try_reduce_ex<M: Memo>(
                 let obj_type = Py_TYPE(obj);
                 let getattribute_str = PyUnicode_InternFromString(b"__getattribute__\0".as_ptr() as *const i8);
                 if !getattribute_str.is_null() {
-                    let type_dict = (*obj_type).tp_dict;
-                    if !type_dict.is_null() {
-                        let has_custom = PyDict_Contains(type_dict, getattribute_str);
-                        Py_DECREF(getattribute_str);
-                        if has_custom == 1 {
-                            // Has custom __getattribute__ - convert to copy.Error
-                            PyErr_Clear();
-                            return Err("PYTHON_EXCEPTION:AttributeError:__reduce_ex__".to_string());
-                        }
-                    } else {
-                        Py_DECREF(getattribute_str);
+                    let has_custom = crate::ffi::type_has_custom_attr(obj_type, getattribute_str);
+                    Py_DECREF(getattribute_str);
+                    if has_custom {
+                        // Has custom __getattribute__ - convert to copy.Error
+                        PyErr_Clear();
+                        return Err("PYTHON_EXCEPTION:AttributeError".to_string());
                     }
                 }
             }
@@ -197,17 +181,12 @@ unsafe fn try_reduce<M: Memo>(
                 let obj_type = Py_TYPE(obj);
                 let getattribute_str = PyUnicode_InternFromString(b"__getattribute__\0".as_ptr() as *const i8);
                 if !getattribute_str.is_null() {
-                    let type_dict = (*obj_type).tp_dict;
-                    if !type_dict.is_null() {
-                        let has_custom = PyDict_Contains(type_dict, getattribute_str);
-                        Py_DECREF(getattribute_str);
-                        if has_custom == 1 {
-                            // Has custom __getattribute__ - convert to copy.Error
-                            PyErr_Clear();
-                            return Err("PYTHON_EXCEPTION:AttributeError:__reduce__".to_string());
-                        }
-                    } else {
-                        Py_DECREF(getattribute_str);
+                    let has_custom = crate::ffi::type_has_custom_attr(obj_type, getattribute_str);
+                    Py_DECREF(getattribute_str);
+                    if has_custom {
+                        // Has custom __getattribute__ - convert to copy.Error
+                        PyErr_Clear();
+                        return Err("PYTHON_EXCEPTION:AttributeError".to_string());
                     }
                 }
             }

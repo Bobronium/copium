@@ -35,6 +35,62 @@ extern "C" {
     pub static mut PyWeakref_CallableProxyType: PyTypeObject;
 }
 
+/// Get the tp_name field from a PyTypeObject as a String
+#[inline]
+pub unsafe fn get_type_name(tp: *mut PyTypeObject) -> String {
+    // For stable ABI, get __name__ attribute from the type object
+    let name_str = PyUnicode_InternFromString(b"__name__\0".as_ptr() as *const std::os::raw::c_char);
+    if name_str.is_null() {
+        return "unknown".to_string();
+    }
+
+    let name_obj = PyObject_GetAttr(tp as *mut PyObject, name_str);
+    Py_DECREF(name_str);
+
+    if name_obj.is_null() {
+        PyErr_Clear();
+        return "unknown".to_string();
+    }
+
+    let name_cstr = PyUnicode_AsUTF8(name_obj);
+    if name_cstr.is_null() {
+        Py_DECREF(name_obj);
+        PyErr_Clear();
+        return "unknown".to_string();
+    }
+
+    let result = std::ffi::CStr::from_ptr(name_cstr)
+        .to_str()
+        .unwrap_or("unknown")
+        .to_string();
+
+    Py_DECREF(name_obj);
+    result
+}
+
+/// Check if a type has a custom attribute in its __dict__
+#[inline]
+pub unsafe fn type_has_custom_attr(tp: *mut PyTypeObject, attr_name: *mut PyObject) -> bool {
+    // For stable ABI, get __dict__ attribute from the type object
+    let dict_str = PyUnicode_InternFromString(b"__dict__\0".as_ptr() as *const std::os::raw::c_char);
+    if dict_str.is_null() {
+        return false;
+    }
+
+    let type_dict = PyObject_GetAttr(tp as *mut PyObject, dict_str);
+    Py_DECREF(dict_str);
+
+    if type_dict.is_null() {
+        PyErr_Clear();
+        return false;
+    }
+
+    // Use PySequence_Contains which works on mappingproxy too
+    let has_attr = PySequence_Contains(type_dict, attr_name) == 1;
+    Py_DECREF(type_dict);
+    has_attr
+}
+
 /// Compute pointer hash using SplitMix64
 #[inline(always)]
 pub fn hash_pointer(ptr: *const std::os::raw::c_void) -> Py_hash_t {
