@@ -271,12 +271,12 @@ jobs:
             echo "No chart changes to commit"
           else
             if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-              git commit -m "Update benchmark assets from CI [skip ci]"
+              git commit -m "Update benchmark assets from CI"
               git push
             elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
               # For tags, create a local commit but don't push back.
               # Charts are packaged in the release artifacts/sdist.
-              git commit -m "Update benchmark assets for release ${{ github.ref_name }} [skip ci]"
+              git commit -m "Update benchmark assets for release ${{ github.ref_name }}"
               echo "Charts generated for tag ${{ github.ref_name }} (not pushed)"
             fi
           fi
@@ -292,10 +292,10 @@ jobs:
             echo "README already points to ${CHARTS_SHA}; no update needed"
           else
             if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-              git commit -m "Update README to reference charts @ ${CHARTS_SHA} [skip ci]"
+              git commit -m "Update README to reference charts @ ${CHARTS_SHA}"
               git push
             elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-              git commit -m "Update README to reference charts @ ${CHARTS_SHA} for release ${{ github.ref_name }} [skip ci]"
+              git commit -m "Update README to reference charts @ ${CHARTS_SHA} for release ${{ github.ref_name }}"
               echo "README updated locally for tag ${{ github.ref_name }} (not pushed)"
             fi
           fi
