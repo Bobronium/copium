@@ -14,9 +14,9 @@ Fast drop-in replacement for `copy.deepcopy()`.
 
 <div align="center">
   <picture>
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/391911da1b3c9e13b7633cc656224ee1d9b208f4/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/391911da1b3c9e13b7633cc656224ee1d9b208f4/assets/chart_light.svg" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/391911da1b3c9e13b7633cc656224ee1d9b208f4/assets/chart_light.svg" alt="Benchmark results bar chart">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/4dddd653522a26935a8a57c23277a43da360c336/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/4dddd653522a26935a8a57c23277a43da360c336/assets/chart_light.svg" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/4dddd653522a26935a8a57c23277a43da360c336/assets/chart_light.svg" alt="Benchmark results bar chart">
   </picture>
 </div>
 
