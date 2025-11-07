@@ -16,6 +16,7 @@ mod dispatch;
 mod containers;
 mod reduce;
 mod types;
+mod patching;
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -56,6 +57,11 @@ fn copium(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let copy_module = PyModule::import_bound(py, "copy")?;
     let error = copy_module.getattr("Error")?;
     m.add("Error", error)?;
+
+    // Add patching functions
+    m.add_function(wrap_pyfunction!(patching::apply, m)?)?;
+    m.add_function(wrap_pyfunction!(patching::unapply, m)?)?;
+    m.add_function(wrap_pyfunction!(patching::applied, m)?)?;
 
     Ok(())
 }
