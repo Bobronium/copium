@@ -24,37 +24,37 @@ Fast drop-in replacement for `copy.deepcopy()`.
   <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/main/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/main/tools/generate_chart.py">tools/generate_chart.py</a></i>
 </div>
 
-## Speedups on 3.14
+## Speedups on Python 3.14
 
 ### `tuple`
 
-- `tuple[Never, ...]` ~5.66x (0 items)
+- `()` ~5.66x
 - `tuple[int, ...]` ~12.46x (20 items)
 - `tuple[int, ...]` ~28.28x (5000 items)
 - `tuple[tuple[str, tuple[tuple[str, tuple[tuple[str, tuple[tuple[str, tuple[int, ...]]]]]]]]]]` ~14.54x
 
 ### `list`
 
-- `list[Never]` ~4.97x (0 items)
+- `[]` ~4.97x
 - `list[int]` ~9.58x (20 items)
 - `list[int]` ~16.23x (5000 items)
 - `list[str | list[str | list[str | list[str | list[int]]]]]` ~9.19x
 
 ### `dict`
 
-- `dict[Never, Never]` ~4.59x (0 items)
+- `{}` ~4.59x
 - `dict[str, int]` ~5.95x (20 items)
 - `dict[str, int]` ~3.94x (5000 items)
 - `dict[str, dict[str, ...]]` ~6.19x
 
 ### `set`
 
-- `set[Never]` ~15.87x (0 items)
+- `set()` ~15.87x
 - `set[int]` ~6.55x (20 items)
 - `set[int]` ~3.69x (5000 items)
 - `set[frozenset[frozenset[int]]]` ~13.72x
 
-### `other`
+### other
 
 - `int`/`str`/`bytes` ~4.86x
 - `dataclasses` ~2.74x
