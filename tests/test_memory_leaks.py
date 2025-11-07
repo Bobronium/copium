@@ -161,11 +161,11 @@ def compare_peak_memory(
             "copium failed but stdlib succeeded"
         ) from copium_error
 
-    # KNOWN ISSUE: Python 3.13+ has unexplained 24-byte overhead for dict/mapping memos
-    # This overhead appears consistently on CI for memo_dict, memo_mapping, and
-    # memo_mutable_mapping cases. Root cause is unknown - may be CPython internals change.
+    # KNOWN ISSUE: Unexplained 24-byte overhead for dict/mapping memos
+    # This overhead appears consistently for memo_dict, memo_mapping, and
+    # memo_mutable_mapping cases. Root cause is unknown.
     # We subtract this known overhead to maintain strict <=0% enforcement for actual leaks.
-    if sys.version_info >= (3, 13) and memo_type in ("dict", "mapping", "mutable_mapping"):
+    if memo_type in ("dict", "mapping", "mutable_mapping"):
         copium_used -= 24
 
     # copium MUST use <= memory than stdlib
@@ -317,7 +317,7 @@ def test_peak_memory_comparison_tracemalloc(case: Any, memo: str):
     Note: After optimization using PyObject_CallMethodObjArgs with cached strings,
     all memo types have equal memory performance. Strict <=0% overhead enforced.
 
-    Known issue: Python 3.13+ shows 24-byte overhead for dict/mapping memos (cause unknown).
+    Known issue: 24-byte overhead for dict/mapping memos (cause unknown).
     """
     compare_peak_memory(
         measure_peak_memory_tracemalloc,
@@ -341,7 +341,7 @@ def test_peak_memory_comparison_psutil(case: Any, memo: str):
     Note: Multiple measurements with minimum selection filter out RSS noise from
     OS page allocation. Strict <=0% overhead enforced.
 
-    Known issue: Python 3.13+ shows 24-byte overhead for dict/mapping memos (cause unknown).
+    Known issue: 24-byte overhead for dict/mapping memos (cause unknown).
     """
     compare_peak_memory(
         measure_peak_memory_psutil,

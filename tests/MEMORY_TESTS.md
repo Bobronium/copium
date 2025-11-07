@@ -58,10 +58,9 @@ custom memo types have zero overhead compared to stdlib.
 measurement noise. Noise can only ADD overhead (page faults, allocator overhead), so the minimum
 approaches the true memory usage.
 
-**Known issue (Python 3.13+):** Tests on Python 3.13 and 3.14 show a consistent 24-byte overhead
-for `memo_dict`, `memo_mapping`, and `memo_mutable_mapping` cases. The root cause is unknown but
-appears to be related to CPython internals changes in 3.13+. This exact overhead is subtracted
-in comparisons to maintain strict <=0% enforcement for actual memory leaks.
+**Known issue:** Tests show a consistent 24-byte overhead for `memo_dict`, `memo_mapping`, and
+`memo_mutable_mapping` cases. The root cause is unknown. This exact overhead is subtracted in
+comparisons to maintain strict <=0% enforcement for actual memory leaks.
 
 **Single-run Tests:**
 - `test_memory_stability_no_unbounded_growth`: Verify no continuous growth over iterations
