@@ -43,16 +43,20 @@ copium uses a TLS growable buffer for the memo table that is intentionally retai
   - Tests: 6 memo options × ~100+ test cases from datamodelzoo = 600+ combinations
 
 **Memo options tested:**
-- `absent`: No memo provided (uses TLS buffer optimization) - 10% margin
-- `dict`: Explicit dict memo (no TLS optimization) - 10% margin
-- `None`: Explicit None memo (uses TLS optimization) - 10% margin
-- `mapping`: UserDict memo (MutableMapping) - 10% margin
-- `mutable_mapping`: MappingProxyType (expected to fail) - 10% margin
-- `invalid`: Invalid memo type (expected to fail) - 10% margin
+- `absent`: No memo provided (uses TLS buffer optimization)
+- `dict`: Explicit dict memo (no TLS optimization)
+- `None`: Explicit None memo (uses TLS optimization)
+- `mapping`: UserDict memo (MutableMapping)
+- `mutable_mapping`: MappingProxyType (expected to fail)
+- `invalid`: Invalid memo type (expected to fail)
 
-**Note on margins:** All memo types use a strict 10% margin. After optimizing the C code to use
-`PyObject_CallMethodObjArgs` with cached interned strings, custom memo types have zero overhead
-compared to stdlib, achieving the same memory efficiency as dict memos.
+**Strict enforcement:** All memo types enforce **<=0% overhead** (copium memory must be <= stdlib).
+After optimizing the C code to use `PyObject_CallMethodObjArgs` with cached interned strings,
+custom memo types have zero overhead compared to stdlib.
+
+**Noise filtering:** Each measurement runs 5 times with a warmup, taking the MINIMUM to filter out
+measurement noise. Noise can only ADD overhead (page faults, allocator overhead), so the minimum
+approaches the true memory usage.
 
 **Single-run Tests:**
 - `test_memory_stability_no_unbounded_growth`: Verify no continuous growth over iterations

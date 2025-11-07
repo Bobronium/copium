@@ -18,10 +18,12 @@ Testing Approach:
 -----------------
 We need to verify:
 
-1. **Peak Memory Comparison**:
+1. **Peak Memory Comparison** (Strict <=0% overhead):
    - Memory allocated during copium.deepcopy() MUST be <= stdlib.deepcopy()
    - Measured both at Python level (tracemalloc) and process level (psutil)
-   - This ensures copium isn't using MORE memory than stdlib for the same operation
+   - Each test runs 5 times + warmup, taking MINIMUM to filter measurement noise
+   - Noise can only ADD overhead, so minimum approaches true memory usage
+   - NO MARGIN ALLOWED: copium must use exactly same or less memory
 
 2. **Memory Stability** (no unbounded growth):
    - Run many iterations with varying data
@@ -101,7 +103,7 @@ def compare_peak_memory(
     measure_func,
     test_data: Any,
     kwargs: dict,
-    margin: float = 1.1,
+    margin: float = 1.0,
 ) -> None:
     """
     DRY helper: Compare peak memory usage between stdlib and copium.
@@ -110,10 +112,13 @@ def compare_peak_memory(
         measure_func: Function to measure memory (tracemalloc or psutil variant)
         test_data: Object to deepcopy
         kwargs: Memo kwargs from get_memo_kwargs()
-        margin: Allowed margin factor (1.1 = 10% more allowed)
+        margin: Allowed margin factor (1.0 = strict equality, no overhead allowed)
 
     Raises:
-        AssertionError: If copium uses more memory than stdlib (beyond margin)
+        AssertionError: If copium uses more memory than stdlib
+
+    Note: Multiple measurements are taken and the minimum is used to filter out
+    measurement noise. Noise can only ADD overhead, so minimum approaches true usage.
     """
     # Measure stdlib
     stdlib_error = None
@@ -174,44 +179,82 @@ def measure_peak_memory_tracemalloc(func, *args, **kwargs) -> tuple[Any, int, in
     """
     Measure peak memory usage during function execution using tracemalloc.
 
+    Takes multiple measurements and returns the minimum to filter out noise.
+    Measurement noise can only ADD overhead, so minimum approaches true usage.
+
     Returns: (result, peak_bytes, baseline_bytes)
     """
     import tracemalloc
 
-    # Start tracing
-    tracemalloc.start()
+    # Warmup run to stabilize allocators and TLS buffers
+    try:
+        func(*args, **kwargs)
+    except Exception:
+        pass  # Warmup can fail for invalid inputs
     gc.collect()
 
-    # Get baseline
-    baseline = tracemalloc.get_traced_memory()[0]
+    # Take multiple measurements and use the minimum
+    measurements = []
+    result = None
 
-    # Run function
-    result = func(*args, **kwargs)
+    for _ in range(5):  # 5 runs to filter noise
+        tracemalloc.start()
+        gc.collect()
 
-    # Get peak
-    _current, peak = tracemalloc.get_traced_memory()
+        baseline = tracemalloc.get_traced_memory()[0]
 
-    tracemalloc.stop()
+        try:
+            result = func(*args, **kwargs)
+            _current, peak = tracemalloc.get_traced_memory()
+            measurements.append((peak, baseline))
+        finally:
+            tracemalloc.stop()
 
-    return result, peak, baseline
+        gc.collect()
+
+    # Use minimum peak across runs (noise can only increase measurements)
+    min_peak, min_baseline = min(measurements, key=lambda x: x[0] - x[1])
+
+    return result, min_peak, min_baseline
 
 
 def measure_peak_memory_psutil(func, *args, **kwargs) -> tuple[Any, int, int]:
     """
     Measure peak memory usage during function execution using psutil (process RSS).
 
+    Takes multiple measurements and returns the minimum to filter out noise.
+    RSS measurement includes OS page allocation which has ~4KB granularity noise.
+
     Returns: (result, peak_bytes, baseline_bytes)
     """
+    # Warmup run to stabilize allocators and TLS buffers
+    try:
+        func(*args, **kwargs)
+    except Exception:
+        pass  # Warmup can fail for invalid inputs
     gc.collect()
-    baseline = get_process_memory()
 
-    # Run function and measure
-    result = func(*args, **kwargs)
+    # Take multiple measurements and use the minimum
+    measurements = []
+    result = None
 
-    # Peak is approximated by current memory (psutil doesn't track peak automatically)
-    peak = get_process_memory()
+    for _ in range(5):  # 5 runs to filter noise
+        gc.collect()
+        baseline = get_process_memory()
 
-    return result, peak, baseline
+        try:
+            result = func(*args, **kwargs)
+            peak = get_process_memory()
+            measurements.append((peak, baseline))
+        finally:
+            pass
+
+        gc.collect()
+
+    # Use minimum peak across runs (noise can only increase measurements)
+    min_peak, min_baseline = min(measurements, key=lambda x: x[0] - x[1])
+
+    return result, min_peak, min_baseline
 
 
 def create_test_data_small():
@@ -263,17 +306,12 @@ def test_peak_memory_comparison_tracemalloc(case: Any, memo: str):
     Tests all memo options and all CASE_PARAMS to ensure comprehensive coverage.
 
     Note: After optimization using PyObject_CallMethodObjArgs with cached strings,
-    all memo types have equal memory performance.
+    all memo types have equal memory performance. Strict <=0% overhead enforced.
     """
-    # All memo types now have equal performance after C API optimization
-    # Use strict 10% margin for all cases
-    margin = 1.1
-
     compare_peak_memory(
         measure_peak_memory_tracemalloc,
         case.obj,
         get_memo_kwargs(memo),
-        margin=margin,
     )
 
 
@@ -288,18 +326,13 @@ def test_peak_memory_comparison_psutil(case: Any, memo: str):
 
     Tests all memo options and all CASE_PARAMS to ensure comprehensive coverage.
 
-    Note: psutil RSS measurement can be noisy due to OS memory management,
-    so we use a slightly higher margin (20%) compared to tracemalloc (10%).
+    Note: Multiple measurements with minimum selection filter out RSS noise from
+    OS page allocation. Strict <=0% overhead enforced.
     """
-    # All memo types now have equal performance after C API optimization
-    # psutil RSS measurement can be noisy, use 20% margin for all cases
-    margin = 1.2
-
     compare_peak_memory(
         measure_peak_memory_psutil,
         case.obj,
         get_memo_kwargs(memo),
-        margin=margin,
     )
 
 
