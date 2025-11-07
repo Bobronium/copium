@@ -46,14 +46,13 @@ copium uses a TLS growable buffer for the memo table that is intentionally retai
 - `absent`: No memo provided (uses TLS buffer optimization) - 10% margin
 - `dict`: Explicit dict memo (no TLS optimization) - 10% margin
 - `None`: Explicit None memo (uses TLS optimization) - 10% margin
-- `mapping`: UserDict memo (MutableMapping) - **50% margin** (custom handling overhead)
-- `mutable_mapping`: MappingProxyType (expected to fail) - **50% margin**
-- `invalid`: Invalid memo type (expected to fail)
+- `mapping`: UserDict memo (MutableMapping) - 10% margin
+- `mutable_mapping`: MappingProxyType (expected to fail) - 10% margin
+- `invalid`: Invalid memo type (expected to fail) - 10% margin
 
-**Note on margins:** Custom memo types (`mapping`, `mutable_mapping`) use a larger 50% margin
-because they trigger different code paths in copium that may have small overhead (~100-150 bytes).
-This overhead is acceptable since these are less common use cases, and the absolute differences
-are negligible (hundreds of bytes, not megabytes).
+**Note on margins:** All memo types use a strict 10% margin. After optimizing the C code to use
+`PyObject_CallMethodObjArgs` with cached interned strings, custom memo types have zero overhead
+compared to stdlib, achieving the same memory efficiency as dict memos.
 
 **Single-run Tests:**
 - `test_memory_stability_no_unbounded_growth`: Verify no continuous growth over iterations

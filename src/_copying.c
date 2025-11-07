@@ -290,6 +290,7 @@ typedef struct {
     PyObject* str_append;
     PyObject* str_update;
     PyObject* str_new;
+    PyObject* str_get;
 
     // cached types
     PyObject* sentinel;
@@ -571,7 +572,10 @@ static PyObject* custom_memo_lookup(PyObject* memo, void* key_ptr) {
         Py_INCREF(res);
         return res;
     } else {
-        res = PyObject_CallMethod(memo, "get", "OO", pykey, module_state.sentinel);
+        /* For custom memos, call memo.get(key, sentinel) using PyObject_CallMethodObjArgs.
+           This is more efficient than PyObject_CallMethod because it uses a cached
+           interned string object instead of creating a new string each time. */
+        res = PyObject_CallMethodObjArgs(memo, module_state.str_get, pykey, module_state.sentinel, NULL);
         Py_DECREF(pykey);
         if (UNLIKELY(!res))
             return NULL;
@@ -2954,6 +2958,7 @@ static void cleanup_on_init_failure(void) {
     Py_XDECREF(module_state.str_append);
     Py_XDECREF(module_state.str_update);
     Py_XDECREF(module_state.str_new);
+    Py_XDECREF(module_state.str_get);
 
     Py_XDECREF(module_state.BuiltinFunctionType);
     Py_XDECREF(module_state.MethodType);
@@ -3017,10 +3022,11 @@ int _copium_copying_init(PyObject* module) {
     module_state.str_append = PyUnicode_InternFromString("append");
     module_state.str_update = PyUnicode_InternFromString("update");
     module_state.str_new = PyUnicode_InternFromString("__new__");
+    module_state.str_get = PyUnicode_InternFromString("get");
 
     if (!module_state.str_reduce_ex || !module_state.str_reduce || !module_state.str_deepcopy ||
         !module_state.str_setstate || !module_state.str_dict || !module_state.str_append ||
-        !module_state.str_update || !module_state.str_new) {
+        !module_state.str_update || !module_state.str_new || !module_state.str_get) {
         PyErr_SetString(PyExc_ImportError, "copium: failed to intern required names");
         cleanup_on_init_failure();
         return -1;

@@ -70,7 +70,7 @@ try:
     HAS_PSUTIL = True
 except ImportError:
     HAS_PSUTIL = False
-    psutil = None  # type: ignore
+    psutil = None  # type: ignore[assignment]
 
 
 # Memo options to test (same as in test_copium.py)
@@ -85,16 +85,16 @@ def get_memo_kwargs(memo: str) -> dict:
     """
     if memo == "dict":
         return {"memo": {}}
-    elif memo == "None":
+    if memo == "None":
         return {"memo": None}
-    elif memo == "mapping":
+    if memo == "mapping":
         return {"memo": collections.UserDict()}
-    elif memo == "mutable_mapping":
+    if memo == "mutable_mapping":
         return {"memo": MappingProxyType({})}  # expected to throw
-    elif memo == "invalid":
+    if memo == "invalid":
         return {"memo": "not a memo"}
-    else:  # "absent"
-        return {}
+    # "absent"
+    return {}
 
 
 def compare_peak_memory(
@@ -151,7 +151,7 @@ def compare_peak_memory(
 
     if copium_error is not None:
         raise AssertionError(
-            f"copium failed but stdlib succeeded"
+            "copium failed but stdlib succeeded"
         ) from copium_error
 
     # copium MUST use <= memory than stdlib
@@ -189,7 +189,7 @@ def measure_peak_memory_tracemalloc(func, *args, **kwargs) -> tuple[Any, int, in
     result = func(*args, **kwargs)
 
     # Get peak
-    current, peak = tracemalloc.get_traced_memory()
+    _current, peak = tracemalloc.get_traced_memory()
 
     tracemalloc.stop()
 
@@ -262,14 +262,12 @@ def test_peak_memory_comparison_tracemalloc(case: Any, memo: str):
 
     Tests all memo options and all CASE_PARAMS to ensure comprehensive coverage.
 
-    Note: Custom memo types (UserDict, MappingProxyType) have ~140 bytes overhead
-    due to C API PyObject_CallMethod() machinery vs Python-level method calls.
-    This is expected and unavoidable. See MEMO_OVERHEAD_ANALYSIS.md for details.
+    Note: After optimization using PyObject_CallMethodObjArgs with cached strings,
+    all memo types have equal memory performance.
     """
-    # Custom memo types have C API overhead (~140 bytes from PyObject_CallMethod)
-    # Use 50% margin to account for this expected overhead.
-    # Standard cases (absent, dict, None) use strict 10% margin.
-    margin = 1.5 if memo in ("mapping", "mutable_mapping") else 1.1
+    # All memo types now have equal performance after C API optimization
+    # Use strict 10% margin for all cases
+    margin = 1.1
 
     compare_peak_memory(
         measure_peak_memory_tracemalloc,
@@ -290,12 +288,12 @@ def test_peak_memory_comparison_psutil(case: Any, memo: str):
 
     Tests all memo options and all CASE_PARAMS to ensure comprehensive coverage.
 
-    Note: Custom memo types have C API overhead. Combined with RSS noise,
-    use 50% margin for these cases. See MEMO_OVERHEAD_ANALYSIS.md.
+    Note: psutil RSS measurement can be noisy due to OS memory management,
+    so we use a slightly higher margin (20%) compared to tracemalloc (10%).
     """
-    # Custom memo types have C API overhead + RSS measurement is noisy
-    # Use 50% margin for custom memos, 20% for standard cases
-    margin = 1.5 if memo in ("mapping", "mutable_mapping") else 1.2
+    # All memo types now have equal performance after C API optimization
+    # psutil RSS measurement can be noisy, use 20% margin for all cases
+    margin = 1.2
 
     compare_peak_memory(
         measure_peak_memory_psutil,
@@ -524,7 +522,7 @@ def test_concurrent_deepcopy_memory_isolation():
     def worker(data, thread_id):
         try:
             # Each thread does multiple deepcopy operations
-            for i in range(20):
+            for _i in range(20):
                 copied = copium.deepcopy(data)
                 # Verify the copy is correct
                 assert copied == data
