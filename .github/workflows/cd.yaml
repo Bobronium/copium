@@ -291,6 +291,10 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
+          # Get parent commit (the one that triggered this workflow)
+          PARENT_SHA="${{ github.sha }}"
+          PARENT_SHORT_SHA="${PARENT_SHA:0:7}"
+
           mkdir -p assets
           cp -f downloaded-assets/*.svg assets/
 
@@ -299,19 +303,26 @@ jobs:
           if git diff --staged --quiet; then
             echo "No chart changes to commit"
           else
-            git commit -m "Update benchmark assets from CI"
+            git commit -m "Update benchmark assets from CI (${PARENT_SHORT_SHA})"
             git push
           fi
 
           CHARTS_SHA="$(git rev-parse HEAD)"
+          CHARTS_SHORT_SHA="${CHARTS_SHA:0:7}"
 
+          # Update chart URLs in README
           sed -i "s|https://raw.githubusercontent.com/Bobronium/copium/[^/]*/assets/chart_|https://raw.githubusercontent.com/Bobronium/copium/${CHARTS_SHA}/assets/chart_|g" README.md
+
+          # Update tools script URLs in README to point to parent commit
+          sed -i "s|https://github.com/Bobronium/copium/blob/[^/]*/tools/run_benchmark.py|https://github.com/Bobronium/copium/blob/${PARENT_SHA}/tools/run_benchmark.py|g" README.md
+          sed -i "s|https://github.com/Bobronium/copium/blob/[^/]*/tools/generate_chart.py|https://github.com/Bobronium/copium/blob/${PARENT_SHA}/tools/generate_chart.py|g" README.md
+
           git add README.md
 
           if git diff --staged --quiet; then
             echo "README already points to ${CHARTS_SHA}"
           else
-            git commit -m "Update README to reference charts @ ${CHARTS_SHA}"
+            git commit -m "Update README to reference charts @ ${CHARTS_SHORT_SHA}"
             git push
           fi
 
