@@ -1,73 +1,36 @@
 name: Publish
 
 on:
-  # Auto-publish after Build completes
-  workflow_run:
-    workflows: [ "Build" ]
-    types: [ "completed" ]
-  # Manual publish from a specific Build run
-  workflow_dispatch:
-    inputs:
-      run-id:
-        description: "Build workflow run ID to fetch artifacts from (Actions ➜ Build ➜ a completed run)"
-        required: true
-        type: string
+  workflow_call:
 
 permissions:
   contents: read
   id-token: write
 
-concurrency:
-  # Use head SHA for auto, current SHA for manual, so concurrent publishes of the same ref collapse.
-  group: publish-${{ (github.event_name == 'workflow_run' && github.event.workflow_run.head_sha) || github.sha }}
-  cancel-in-progress: true
-
 jobs:
   publish:
-    # Conditions:
-    # - Auto path: Build succeeded, and original trigger was a push to main OR a tag push (head_branch == null for tags)
-    # - Manual path: always allowed; caller supplies run-id
-    if: >
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == null))
-      || (github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/project/copium
     steps:
-      - name: Resolve source run-id
-        id: resolve
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "RUN_ID=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "RUN_ID=${{ inputs.run-id }}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Prepare directories
         run: |
           rm -rf artifacts dist
           mkdir -p artifacts dist
 
       - name: Download Wheels
-        uses: dawidd6/action-download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          run_id: ${{ steps.resolve.outputs.RUN_ID }}
-          name: "^Wheels-"
-          name_is_regexp: true
+          pattern: "Wheels-*"
           path: artifacts
-          if_no_artifact_found: fail
+          merge-multiple: true
 
       - name: Download sdist
-        uses: dawidd6/action-download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          run_id: ${{ steps.resolve.outputs.RUN_ID }}
           name: sdist
           path: artifacts
-          if_no_artifact_found: fail
 
       - name: Flatten artifacts into ./dist
         shell: bash
@@ -84,4 +47,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          skip-existing: true  # Safe for dev versions or reruns
+          skip-existing: true
