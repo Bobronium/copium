@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0  # Full history needed to verify ancestry
 
-      - name: Verify charts exist and are valid
+      - name: Verify charts are current with source code
         run: |
           set -euo pipefail
 
@@ -32,22 +32,33 @@ jobs:
             exit 1
           fi
 
-          # Verify chart commit exists in this repo
+          # Verify chart commit exists and is an ancestor
           if ! git cat-file -e "$CHART_SHA^{commit}" 2>/dev/null; then
             echo "ERROR: Chart commit $CHART_SHA does not exist in repository"
             exit 1
           fi
 
-          # Verify chart commit is an ancestor of current tag (same branch lineage)
           if ! git merge-base --is-ancestor "$CHART_SHA" "${{ github.sha }}" 2>/dev/null; then
             echo "ERROR: Chart commit ${CHART_SHA:0:7} is not in the ancestry of this tag"
-            echo "Charts may be from a different branch"
             exit 1
           fi
 
-          # All good - charts exist and are from this branch
-          DISTANCE=$(git rev-list --count "$CHART_SHA".."${{ github.sha }}")
-          echo "✓ Charts validated (commit ${CHART_SHA:0:7}, $DISTANCE commits in ancestry)"
+          # Check if any source code changed after chart generation
+          # Source paths that affect benchmark/wheel behavior
+          SOURCE_PATHS="pyproject.toml src/** tools/build_system/** tools/run_benchmark.py tools/generate_chart.py"
+
+          # Get commits between chart commit and current tag
+          if git log --oneline "$CHART_SHA..${{ github.sha }}" -- $SOURCE_PATHS | grep -q .; then
+            echo "ERROR: Source code changed after charts were generated"
+            echo ""
+            echo "Changed files since chart commit ${CHART_SHA:0:7}:"
+            git diff --name-only "$CHART_SHA" "${{ github.sha }}" -- $SOURCE_PATHS
+            echo ""
+            echo "Charts must be regenerated. Push to main to trigger chart generation."
+            exit 1
+          fi
+
+          echo "✓ Charts are current with source code (generated at ${CHART_SHA:0:7})"
 
   build:
     uses: ./.github/workflows/build.yaml
