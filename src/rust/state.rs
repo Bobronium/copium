@@ -18,6 +18,7 @@ pub struct ThreadLocalMemo {
     pub table: MemoTable,
     pub keepalive: KeepAlive,
     exposed_to_python: bool,  // Track if we've been exposed via as_python_dict()
+    cached_dict: *mut PyObject,  // Cached Python dict for stable id()
 }
 
 impl ThreadLocalMemo {
@@ -26,6 +27,7 @@ impl ThreadLocalMemo {
             table: MemoTable::new(),
             keepalive: KeepAlive::new(),
             exposed_to_python: false,
+            cached_dict: std::ptr::null_mut(),
         }
     }
 
@@ -33,6 +35,13 @@ impl ThreadLocalMemo {
         self.table.clear();
         self.keepalive.clear();
         self.exposed_to_python = false;
+
+        // Clear the cached dict's contents if it exists
+        unsafe {
+            if !self.cached_dict.is_null() {
+                PyDict_Clear(self.cached_dict);
+            }
+        }
     }
 
     pub fn is_exposed(&self) -> bool {
@@ -45,6 +54,11 @@ impl ThreadLocalMemo {
         self.keepalive.shrink_if_large();
     }
 }
+
+// Note: We don't implement Drop for ThreadLocalMemo because:
+// 1. It's stored in thread-local storage and dropped during thread shutdown
+// 2. The GIL might not be held during thread shutdown, making Py_DECREF unsafe
+// 3. Thread-local leaks are acceptable since they're per-thread and cleaned up on thread exit
 
 impl Memo for ThreadLocalMemo {
     #[inline(always)]
@@ -83,39 +97,42 @@ impl Memo for ThreadLocalMemo {
         // Mark as exposed to Python
         self.exposed_to_python = true;
 
-        // Create a temporary dict for thread-local memo
-        let dict = PyDict_New();
-        if dict.is_null() {
-            return std::ptr::null_mut();
+        // Create dict once and cache it for stable id()
+        if self.cached_dict.is_null() {
+            self.cached_dict = PyDict_New();
+            if self.cached_dict.is_null() {
+                return std::ptr::null_mut();
+            }
         }
+
+        // Clear the dict (in case it was used before)
+        PyDict_Clear(self.cached_dict);
 
         // Get the keepalive list as a Python list
         let keepalive_list = self.keepalive.as_python_list();
         if keepalive_list.is_null() {
-            Py_DECREF(dict);
             return std::ptr::null_mut();
         }
 
         // Store keepalive list at memo[id(memo)]
-        let memo_id = dict as isize;
+        let memo_id = self.cached_dict as isize;
         let memo_id_obj = PyLong_FromSsize_t(memo_id);
         if memo_id_obj.is_null() {
             Py_DECREF(keepalive_list);
-            Py_DECREF(dict);
             return std::ptr::null_mut();
         }
 
-        if PyDict_SetItem(dict, memo_id_obj, keepalive_list) < 0 {
+        if PyDict_SetItem(self.cached_dict, memo_id_obj, keepalive_list) < 0 {
             Py_DECREF(memo_id_obj);
             Py_DECREF(keepalive_list);
-            Py_DECREF(dict);
             return std::ptr::null_mut();
         }
 
         Py_DECREF(memo_id_obj);
         Py_DECREF(keepalive_list);
 
-        dict
+        // Return a new reference to the cached dict
+        Py_NewRef(self.cached_dict)
     }
 }
 
