@@ -3,7 +3,7 @@
 //! Uses open addressing with linear probing and tombstone-based deletion.
 //! Hash is computed ONCE using SplitMix64 and reused throughout.
 
-use crate::ffi::{hash_pointer, PyObject, Py_DecRef, Py_IncRef, Py_ssize_t, Py_XNewRef};
+use crate::ffi::{hash_pointer, PyObject, Py_DecRef, Py_IncRef, Py_ssize_t};
 use std::os::raw::c_void;
 use std::ptr;
 

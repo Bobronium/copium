@@ -4,7 +4,6 @@
 //! with reduce protocol reconstruction.
 
 use crate::ffi::{PyObject, Py_DecRef, Py_IncRef};
-use std::ptr;
 
 /// KeepAlive vector
 pub struct KeepAlive {
@@ -82,8 +81,9 @@ impl KeepAlive {
 
         for (i, &obj) in self.items.iter().enumerate() {
             if !obj.is_null() {
+                // PyList_SetItem steals a reference, so we need to incref first
                 Py_IncRef(obj);
-                PyList_SET_ITEM(list, i as Py_ssize_t, obj);
+                PyList_SetItem(list, i as Py_ssize_t, obj);
             }
         }
 
