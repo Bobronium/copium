@@ -269,6 +269,8 @@ jobs:
             echo "No chart changes to commit"
           else
             git commit -m "Update benchmark assets from CI (${PARENT_SHORT_SHA})"
+            # Pull any remote changes before pushing
+            git pull --rebase origin main
             git push
           fi
 
@@ -288,6 +290,8 @@ jobs:
             echo "README already points to ${CHARTS_SHA}"
           else
             git commit -m "Update README to reference charts @ ${CHARTS_SHORT_SHA}"
+            # Pull any remote changes before pushing
+            git pull --rebase origin main
             git push
           fi
 
