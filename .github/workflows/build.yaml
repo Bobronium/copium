@@ -2,6 +2,11 @@ name: Build
 
 on:
   workflow_call:
+    inputs:
+      use-cache:
+        type: boolean
+        default: true
+        description: "Use cached wheels if source unchanged"
   workflow_dispatch:
 
 jobs:
@@ -34,18 +39,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Compute source hash for cache key
+        if: inputs.use-cache
+        id: source-hash
+        run: |
+          # Hash source files that affect wheel builds
+          SOURCE_HASH=$(cat \
+            pyproject.toml \
+            tools/build_system/backend.py \
+            tools/run_benchmark.py \
+            tools/generate_chart.py \
+            $(find src tests .github -type f 2>/dev/null || true) \
+            | sha256sum | cut -d' ' -f1)
+          echo "hash=$SOURCE_HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Cache wheels
+        if: inputs.use-cache
+        uses: actions/cache@v4
+        with:
+          path: ./wheelhouse
+          key: wheels-${{ matrix.build.platform }}-${{ matrix.build.arch_label }}-${{ matrix.python.tag }}-${{ steps.source-hash.outputs.hash }}
+
       - name: Set up QEMU
         if: runner.os == 'Linux' && runner.arch == 'X64'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: all
 
+      - name: Check if cache hit
+        id: cache-check
+        if: inputs.use-cache
+        run: |
+          if [ -d "./wheelhouse" ] && [ "$(ls -A ./wheelhouse/*.whl 2>/dev/null)" ]; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+            echo "Cache hit - skipping build"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup uv
+        if: steps.cache-check.outputs.hit != 'true'
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
 
       - name: Build wheels
+        if: steps.cache-check.outputs.hit != 'true'
         uses: pypa/cibuildwheel@v3.2.1
         env:
           CIBW_BUILD: "${{ matrix.python.tag }}-*"

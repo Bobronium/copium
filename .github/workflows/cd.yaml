@@ -44,8 +44,8 @@ jobs:
           fi
 
           # Check if any source code changed after chart generation
-          # Source paths that affect benchmark/wheel behavior
-          SOURCE_PATHS="pyproject.toml src/** tools/build_system/** tools/run_benchmark.py tools/generate_chart.py"
+          # These paths match the build cache key - single source of truth
+          SOURCE_PATHS="pyproject.toml tools/build_system/backend.py tools/run_benchmark.py tools/generate_chart.py src/** tests/** .github/**"
 
           # Get commits between chart commit and current tag
           if git log --oneline "$CHART_SHA..${{ github.sha }}" -- $SOURCE_PATHS | grep -q .; then
@@ -62,6 +62,8 @@ jobs:
 
   build:
     uses: ./.github/workflows/build.yaml
+    with:
+      use-cache: ${{ github.ref_type != 'tag' }}
 
   pyperf:
     if: github.ref == 'refs/heads/main'
