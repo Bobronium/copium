@@ -14,14 +14,14 @@ Fast drop-in replacement for `copy.deepcopy()`.
 
 <div align="center">
   <picture>
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/c745947e5112f65538aba78e69e54a2a8e51fc6f/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/c745947e5112f65538aba78e69e54a2a8e51fc6f/assets/chart_light.svg" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/c745947e5112f65538aba78e69e54a2a8e51fc6f/assets/chart_light.svg" alt="Benchmark results bar chart">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/72f0278e972cb36d501b7e9c465d909c77c20480/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/72f0278e972cb36d501b7e9c465d909c77c20480/assets/chart_light.svg" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/72f0278e972cb36d501b7e9c465d909c77c20480/assets/chart_light.svg" alt="Benchmark results bar chart">
   </picture>
 </div>
 
 <div align="center">
-  <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/581fdbec357a4830e76b3ee93ac2fdc654c43211/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/581fdbec357a4830e76b3ee93ac2fdc654c43211/tools/generate_chart.py">tools/generate_chart.py</a></i>
+  <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/ea038c2c1ba7ba84ff62982b2cc2a7d1326a510b/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/ea038c2c1ba7ba84ff62982b2cc2a7d1326a510b/tools/generate_chart.py">tools/generate_chart.py</a></i>
 </div>
 
 
