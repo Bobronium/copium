@@ -57,6 +57,7 @@ jobs:
     uses: ./.github/workflows/build.yaml
     with:
       is-release: ${{ github.ref_type == 'tag' }}
+      run-benchmarks: ${{ github.ref == 'refs/heads/main' }}
 
   publish:
     needs: build

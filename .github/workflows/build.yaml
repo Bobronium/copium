@@ -6,7 +6,11 @@ on:
       is-release:
         type: boolean
         default: false
-        description: "Release build (skip benchmarks/charts/commit/publish)"
+        description: "Release build (skip readme/pyperf benchmarks and charts)"
+      run-benchmarks:
+        type: boolean
+        default: false
+        description: "Run pyperf and readme benchmarks (main only)"
   workflow_dispatch:
 
 jobs:
@@ -129,24 +133,24 @@ jobs:
           find . -path './.venv' -prune -o -type d -name '__pycache__' -exec rm -rf {} +
 
       - name: Run pyperformance benchmark
-        if: runner.os == 'Linux' && !inputs.is-release
+        if: runner.os == 'Linux' && inputs.run-benchmarks
         env:
           PYTHONHASHSEED: "0"
         run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Run pyperformance benchmark with copium
-        if: runner.os == 'Linux' && !inputs.is-release
+        if: runner.os == 'Linux' && inputs.run-benchmarks
         env:
           PYTHONHASHSEED: "0"
           COPIUM_PATCH_DEEPCOPY: 1
         run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env  -o copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json
 
       - name: Print comparison
-        if: runner.os == 'Linux' && !inputs.is-release
+        if: runner.os == 'Linux' && inputs.run-benchmarks
         run: .venv/bin/pyperf compare_to copy-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json copium-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.archs }}.json --table
 
       - name: Upload pyperf jsons
-        if: runner.os == 'Linux' && !inputs.is-release
+        if: runner.os == 'Linux' && inputs.run-benchmarks
         uses: actions/upload-artifact@v4
         with:
           name: pyperf-${{ matrix.python.tag }}-${{ matrix.build.platform }}-${{ matrix.build.arch_label }}
@@ -155,7 +159,7 @@ jobs:
             copium-*.json
 
       - name: Run readme benchmark
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.display == '3.14' && !inputs.is-release
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.display == '3.14' && inputs.run-benchmarks
         env:
           BENCHMARK_FOR_CHART: 1
         run: |
@@ -164,7 +168,7 @@ jobs:
           .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
 
       - name: Upload readme benchmark results
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.display == '3.14' && !inputs.is-release
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.display == '3.14' && inputs.run-benchmarks
         uses: actions/upload-artifact@v4
         with:
           name: readme-benchmarks
