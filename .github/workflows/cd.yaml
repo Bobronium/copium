@@ -78,7 +78,11 @@ jobs:
         id: wheel
         shell: bash
         run: |
-          wheel=$(find wheelhouse -name "*.whl" -type f | head -n1)
+          # Prefer manylinux over musllinux for codspeed runner compatibility
+          wheel=$(find wheelhouse -name "*-cp${{ matrix.python }}*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$wheel" ]]; then
+            wheel=$(find wheelhouse -name "*-cp${{ matrix.python }}*-musllinux*_x86_64.whl" -type f | head -n1)
+          fi
           if [[ -z "$wheel" ]]; then
             echo "No wheel found for Python ${{ matrix.python }}"
             exit 1
