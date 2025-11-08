@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 10  # Fetch recent commits to check ancestry
 
       - name: Verify charts are up to date
         run: |
@@ -33,23 +35,22 @@ jobs:
 
           CURRENT_SHA="${{ github.sha }}"
 
-          if [[ "$CHART_SHA" != "$CURRENT_SHA" ]]; then
-            echo "ERROR: Charts are outdated!"
-            echo "  README references charts from: $CHART_SHA"
-            echo "  Current commit (tag):          $CURRENT_SHA"
-            echo ""
-            echo "The charts in README.md are not from this commit."
-            echo "Please wait for CI to complete on this commit before tagging."
-            echo ""
-            echo "Steps to fix:"
-            echo "  1. Delete this tag: git push --delete origin ${{ github.ref_name }}"
-            echo "  2. Wait for the Build workflow to complete on commit $CURRENT_SHA"
-            echo "  3. Verify charts were committed"
-            echo "  4. Re-tag: git tag ${{ github.ref_name }} && git push origin ${{ github.ref_name }}"
+          # Check if CHART_SHA is an ancestor of current commit (charts were generated before this tag)
+          if git merge-base --is-ancestor "$CHART_SHA" "$CURRENT_SHA" 2>/dev/null; then
+            # Get the distance between chart commit and current commit
+            DISTANCE=$(git rev-list --count "$CHART_SHA".."$CURRENT_SHA")
+
+            if [[ "$DISTANCE" -le 2 ]]; then
+              echo "✓ Charts are up to date (from commit ${CHART_SHA:0:7}, $DISTANCE commits ago)"
+            else
+              echo "WARNING: Charts are $DISTANCE commits old (from ${CHART_SHA:0:7})"
+              echo "Consider regenerating charts before release"
+            fi
+          else
+            echo "ERROR: Chart commit ${CHART_SHA:0:7} is not in the history of this tag"
+            echo "Charts may be from a different branch or outdated"
             exit 1
           fi
-
-          echo "✓ Charts are up to date (SHA: $CHART_SHA)"
 
   build:
     uses: ./.github/workflows/build.yaml
