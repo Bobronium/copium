@@ -52,8 +52,6 @@ jobs:
           echo "✓ Charts are up to date (SHA: $CHART_SHA)"
 
   build:
-    needs: verify-charts
-    if: always() && !cancelled() && !failure()
     uses: ./.github/workflows/build.yaml
 
   codspeed:
@@ -333,7 +331,7 @@ jobs:
           path: README.md
 
   sdist:
-    needs: [build, commit-assets]
+    needs: [build, commit-assets, verify-charts]
     if: (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && !cancelled() && !failure()
     runs-on: ubuntu-latest
     steps:
