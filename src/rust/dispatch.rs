@@ -74,18 +74,8 @@ unsafe fn call_custom_deepcopy<M: Memo>(
         return Err("Object has no __deepcopy__ method".to_string());
     }
 
-    // Create memo argument
-    // For user-provided memo, we need to pass the actual dict
-    // For thread-local memo, create a temporary dict that gets populated
-    let memo_arg = if memo.is_user_provided() {
-        // User-provided memo: use the Python dict directly
-        // We need to cast to UserProvidedMemo to get the dict
-        // For now, just create a new dict (TODO: pass actual dict)
-        PyDict_New()
-    } else {
-        // Thread-local memo: create temporary dict
-        PyDict_New()
-    };
+    // Get the Python dict representation of the memo
+    let memo_arg = memo.as_python_dict();
 
     if memo_arg.is_null() {
         Py_DECREF(method);
@@ -104,7 +94,7 @@ unsafe fn call_custom_deepcopy<M: Memo>(
         let key = obj as *const std::os::raw::c_void;
         let hash = hash_pointer(key as *mut std::os::raw::c_void);
         memo.insert(key, result, hash);
-        memo.keepalive(result);
+        memo.keepalive(obj);  // Keep the original object alive, not the result
 
         Ok(result)
     }

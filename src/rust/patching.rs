@@ -230,8 +230,56 @@ mod code_replace_patch {
     }
 }
 
+// Re-export the appropriate implementation
 #[cfg(Py_3_12)]
-pub use vectorcall_patch::*;
+pub use vectorcall_patch::{apply, unapply, applied};
 
 #[cfg(not(Py_3_12))]
-pub use code_replace_patch::*;
+pub use code_replace_patch::{apply, unapply, applied};
+
+// High-level enable/disable/enabled API (works for both versions)
+use pyo3::prelude::*;
+
+/// Enable patching of copy.deepcopy to use copium.deepcopy
+#[pyfunction]
+pub fn enable(py: Python) -> PyResult<bool> {
+    let copy_mod = py.import_bound("copy")?;
+    let deepcopy_fn = copy_mod.getattr("deepcopy")?;
+
+    // Check if already applied
+    if applied(&deepcopy_fn)? {
+        return Ok(false);
+    }
+
+    // Get copium.deepcopy as target
+    let copium_mod = py.import_bound("copium")?;
+    let copium_deepcopy = copium_mod.getattr("deepcopy")?;
+
+    // Apply the patch
+    apply(&deepcopy_fn, &copium_deepcopy)?;
+    Ok(true)
+}
+
+/// Disable patching of copy.deepcopy
+#[pyfunction]
+pub fn disable(py: Python) -> PyResult<bool> {
+    let copy_mod = py.import_bound("copy")?;
+    let deepcopy_fn = copy_mod.getattr("deepcopy")?;
+
+    // Check if not applied
+    if !applied(&deepcopy_fn)? {
+        return Ok(false);
+    }
+
+    // Unapply the patch
+    unapply(&deepcopy_fn)?;
+    Ok(true)
+}
+
+/// Check if copy.deepcopy is patched
+#[pyfunction]
+pub fn enabled(py: Python) -> PyResult<bool> {
+    let copy_mod = py.import_bound("copy")?;
+    let deepcopy_fn = copy_mod.getattr("deepcopy")?;
+    applied(&deepcopy_fn)
+}

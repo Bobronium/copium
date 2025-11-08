@@ -67,6 +67,9 @@ pub unsafe fn deepcopy_list<M: Memo>(
     let hash = hash_pointer(key as *mut std::os::raw::c_void);
     memo.insert(key, new_list, hash);
 
+    // Keep original list alive (stdlib behavior for both user and thread-local memos)
+    memo.keepalive(list);
+
     // Copy elements
     for i in 0..size {
         let item = PyList_GetItem(list, i);

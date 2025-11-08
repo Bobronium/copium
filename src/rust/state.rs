@@ -17,6 +17,7 @@ use std::os::raw::c_void;
 pub struct ThreadLocalMemo {
     pub table: MemoTable,
     pub keepalive: KeepAlive,
+    exposed_to_python: bool,  // Track if we've been exposed via as_python_dict()
 }
 
 impl ThreadLocalMemo {
@@ -24,12 +25,18 @@ impl ThreadLocalMemo {
         Self {
             table: MemoTable::new(),
             keepalive: KeepAlive::new(),
+            exposed_to_python: false,
         }
     }
 
     fn clear_internal(&mut self) {
         self.table.clear();
         self.keepalive.clear();
+        self.exposed_to_python = false;
+    }
+
+    pub fn is_exposed(&self) -> bool {
+        self.exposed_to_python
     }
 
     fn cleanup_internal(&mut self) {
@@ -66,6 +73,49 @@ impl Memo for ThreadLocalMemo {
     #[inline(always)]
     fn is_user_provided(&self) -> bool {
         false
+    }
+
+    fn is_exposed(&self) -> bool {
+        self.exposed_to_python
+    }
+
+    unsafe fn as_python_dict(&mut self) -> *mut PyObject {
+        // Mark as exposed to Python
+        self.exposed_to_python = true;
+
+        // Create a temporary dict for thread-local memo
+        let dict = PyDict_New();
+        if dict.is_null() {
+            return std::ptr::null_mut();
+        }
+
+        // Get the keepalive list as a Python list
+        let keepalive_list = self.keepalive.as_python_list();
+        if keepalive_list.is_null() {
+            Py_DECREF(dict);
+            return std::ptr::null_mut();
+        }
+
+        // Store keepalive list at memo[id(memo)]
+        let memo_id = dict as isize;
+        let memo_id_obj = PyLong_FromSsize_t(memo_id);
+        if memo_id_obj.is_null() {
+            Py_DECREF(keepalive_list);
+            Py_DECREF(dict);
+            return std::ptr::null_mut();
+        }
+
+        if PyDict_SetItem(dict, memo_id_obj, keepalive_list) < 0 {
+            Py_DECREF(memo_id_obj);
+            Py_DECREF(keepalive_list);
+            Py_DECREF(dict);
+            return std::ptr::null_mut();
+        }
+
+        Py_DECREF(memo_id_obj);
+        Py_DECREF(keepalive_list);
+
+        dict
     }
 }
 

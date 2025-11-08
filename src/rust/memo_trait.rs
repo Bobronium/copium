@@ -26,4 +26,10 @@ pub trait Memo {
 
     /// Check if this is a user-provided memo (affects behavior of __deepcopy__ methods)
     fn is_user_provided(&self) -> bool;
+
+    /// Get the Python dict representation of the memo (for passing to __deepcopy__ methods)
+    unsafe fn as_python_dict(&mut self) -> *mut PyObject;
+
+    /// Check if this memo has been exposed to Python code (for thread-local memos)
+    fn is_exposed(&self) -> bool;
 }

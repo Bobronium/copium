@@ -70,6 +70,25 @@ impl KeepAlive {
     pub fn as_mut_vec(&mut self) -> &mut Vec<*mut PyObject> {
         &mut self.items
     }
+
+    /// Convert to Python list
+    pub unsafe fn as_python_list(&self) -> *mut PyObject {
+        use crate::ffi::*;
+
+        let list = PyList_New(self.items.len() as Py_ssize_t);
+        if list.is_null() {
+            return std::ptr::null_mut();
+        }
+
+        for (i, &obj) in self.items.iter().enumerate() {
+            if !obj.is_null() {
+                Py_IncRef(obj);
+                PyList_SET_ITEM(list, i as Py_ssize_t, obj);
+            }
+        }
+
+        list
+    }
 }
 
 impl Drop for KeepAlive {

@@ -270,7 +270,7 @@ unsafe fn reconstruct_from_reduce<M: Memo>(
     let key = original as *const std::os::raw::c_void;
     let hash = hash_pointer(key as *mut std::os::raw::c_void);
     memo.insert(key, new_obj, hash);
-    memo.keepalive(new_obj);
+    memo.keepalive(original);
 
     // Handle state if present (index 2)
     if size > 2 {

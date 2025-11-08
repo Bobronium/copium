@@ -77,14 +77,6 @@ impl Memo for UserProvidedMemo {
             PyErr_Clear();
         }
         Py_DECREF(key_obj);
-
-        // Add original object to keepalive (matches stdlib behavior)
-        let original = key as *mut PyObject;
-        if !self.keepalive_list.is_null() && !original.is_null() {
-            if PyList_Append(self.keepalive_list, original) < 0 {
-                PyErr_Clear();
-            }
-        }
     }
 
     unsafe fn keepalive(&mut self, obj: *mut PyObject) {
@@ -109,6 +101,16 @@ impl Memo for UserProvidedMemo {
 
     #[inline(always)]
     fn is_user_provided(&self) -> bool {
+        true
+    }
+
+    unsafe fn as_python_dict(&mut self) -> *mut PyObject {
+        // Return the user's dict (with new reference)
+        Py_NewRef(self.dict)
+    }
+
+    fn is_exposed(&self) -> bool {
+        // User-provided memos are always exposed to Python
         true
     }
 }
