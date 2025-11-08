@@ -334,7 +334,7 @@ jobs:
 
   sdist:
     needs: [build, commit-assets]
-    if: always() && !cancelled() && !failure()
+    if: (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && !cancelled() && !failure()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
