@@ -56,3 +56,32 @@ jobs:
         with:
           name: "Wheels-${{ matrix.python.display }}-${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }}-${{ matrix.build.arch_label }}"
           path: ./wheelhouse/*.whl
+
+      - name: Find wheel for benchmarks
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+        id: wheel
+        shell: bash
+        run: |
+          # Prefer manylinux over musllinux
+          wheel=$(ls wheelhouse/*-${{ matrix.python.tag }}-*-manylinux*_x86_64.whl 2>/dev/null | head -n1 || true)
+          if [[ -z "$wheel" ]]; then
+            wheel=$(ls wheelhouse/*-${{ matrix.python.tag }}-*-musllinux*_x86_64.whl 2>/dev/null | head -n1 || true)
+          fi
+          if [[ -z "$wheel" ]]; then
+            echo "No wheel found"
+            exit 1
+          fi
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv for codspeed
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+        run: |
+          uv venv --python ${{ matrix.python.display }} --clear
+          uv sync --extra test --no-install-project
+
+      - name: Run codspeed benchmarks
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: instrumentation
+          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance

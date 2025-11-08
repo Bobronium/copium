@@ -54,52 +54,6 @@ jobs:
   build:
     uses: ./.github/workflows/build.yaml
 
-  codspeed:
-    needs: build
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ["3.13", "3.14"]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Download wheels
-        uses: actions/download-artifact@v4
-        with:
-          pattern: "Wheels-${{ matrix.python }}-Linux-x86_64"
-          path: wheelhouse
-
-      - name: Find wheel
-        id: wheel
-        shell: bash
-        run: |
-          # Prefer manylinux over musllinux for codspeed runner compatibility
-          wheel=$(find wheelhouse -name "*-cp${{ matrix.python }}*-manylinux*_x86_64.whl" -type f | head -n1)
-          if [[ -z "$wheel" ]]; then
-            wheel=$(find wheelhouse -name "*-cp${{ matrix.python }}*-musllinux*_x86_64.whl" -type f | head -n1)
-          fi
-          if [[ -z "$wheel" ]]; then
-            echo "No wheel found for Python ${{ matrix.python }}"
-            exit 1
-          fi
-          echo "path=$wheel" >> "$GITHUB_OUTPUT"
-
-      - name: Setup venv
-        run: |
-          uv venv --python ${{ matrix.python }} --clear
-          uv sync --extra test --no-install-project
-
-      - name: Run codspeed benchmarks
-        uses: CodSpeedHQ/action@v4
-        with:
-          mode: instrumentation
-          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance
-
   pyperf:
     if: github.ref == 'refs/heads/main'
     needs: build
