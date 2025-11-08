@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify-charts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify charts are up to date
+        run: |
+          set -euo pipefail
+
+          # Extract the commit SHA that the README charts reference
+          CHART_SHA=$(grep -oP 'https://raw\.githubusercontent\.com/Bobronium/copium/\K[a-f0-9]{40}(?=/assets/chart_)' README.md | head -n1 || true)
+
+          if [[ -z "$CHART_SHA" ]]; then
+            echo "ERROR: No chart URLs found in README.md"
+            echo "Expected format: https://raw.githubusercontent.com/Bobronium/copium/<SHA>/assets/chart_*.svg"
+            exit 1
+          fi
+
+          CURRENT_SHA="${{ github.sha }}"
+
+          if [[ "$CHART_SHA" != "$CURRENT_SHA" ]]; then
+            echo "ERROR: Charts are outdated!"
+            echo "  README references charts from: $CHART_SHA"
+            echo "  Current commit (tag):          $CURRENT_SHA"
+            echo ""
+            echo "The charts in README.md are not from this commit."
+            echo "Please wait for CI to complete on this commit before tagging."
+            echo ""
+            echo "Steps to fix:"
+            echo "  1. Delete this tag: git push --delete origin ${{ github.ref_name }}"
+            echo "  2. Wait for the Build workflow to complete on commit $CURRENT_SHA"
+            echo "  3. Verify charts were committed"
+            echo "  4. Re-tag: git tag ${{ github.ref_name }} && git push origin ${{ github.ref_name }}"
+            exit 1
+          fi
+
+          echo "✓ Charts are up to date (SHA: $CHART_SHA)"
+
+  build:
+    needs: verify-charts
+    uses: ./.github/workflows/build.yaml
+    with:
+      is-release: true
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/copium
+    steps:
+      - name: Prepare directories
+        run: |
+          rm -rf artifacts dist
+          mkdir -p artifacts dist
+
+      - name: Download Wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "Wheels-*"
+          path: artifacts
+          merge-multiple: true
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: artifacts
+
+      - name: Flatten artifacts into ./dist
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          # Copy wheels and sdists from any artifact subfolder into ./dist
+          for f in artifacts/**/*.whl artifacts/**/*.tar.gz; do
+            cp -v "$f" dist/
+          done
+          echo "Contents of dist:"
+          ls -l dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
