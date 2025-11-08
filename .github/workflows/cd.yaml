@@ -55,11 +55,308 @@ jobs:
     needs: verify-charts
     if: always() && !cancelled() && !failure()
     uses: ./.github/workflows/build.yaml
-    with:
-      is-release: ${{ github.ref_type == 'tag' }}
-      run-benchmarks: ${{ github.ref == 'refs/heads/main' }}
+
+  codspeed:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "Wheels-${{ matrix.python }}-Linux-x86_64"
+          path: wheelhouse
+
+      - name: Find wheel
+        id: wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*.whl" -type f | head -n1)
+          if [[ -z "$wheel" ]]; then
+            echo "No wheel found for Python ${{ matrix.python }}"
+            exit 1
+          fi
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv
+        run: |
+          uv venv --python ${{ matrix.python }} --clear
+          uv sync --extra test --no-install-project
+
+      - name: Run codspeed benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: instrumentation
+          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance
+
+  pyperf:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python:
+          - { display: "3.10", tag: "cp310" }
+          - { display: "3.11", tag: "cp311" }
+          - { display: "3.12", tag: "cp312" }
+          - { display: "3.13", tag: "cp313" }
+          - { display: "3.14", tag: "cp314" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone pyperformance
+        run: git clone https://github.com/python/pyperformance.git --depth 1
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "Wheels-${{ matrix.python.display }}-Linux-x86_64"
+          path: wheelhouse
+
+      - name: Find wheel
+        id: wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$wheel" ]]; then
+            wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-musllinux*_x86_64.whl" -type f | head -n1)
+          fi
+          if [[ -z "$wheel" ]]; then
+            echo "No wheel found for ${{ matrix.python.tag }}"
+            exit 1
+          fi
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv
+        run: |
+          uv venv --python ${{ matrix.python.display }} --clear
+          uv sync --extra benchmark --no-install-project
+          uv pip install ${{ steps.wheel.outputs.path }}
+
+      - name: Tune pyperf
+        run: |
+          sudo PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -B -m pyperf system tune || echo unable to tune system
+          find . -path './.venv' -prune -o -type d -name '__pycache__' -exec rm -rf {} +
+
+      - name: Run pyperformance benchmark
+        env:
+          PYTHONHASHSEED: "0"
+        run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}.json
+
+      - name: Run pyperformance benchmark with copium
+        env:
+          PYTHONHASHSEED: "0"
+          COPIUM_PATCH_DEEPCOPY: 1
+        run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env -o copium-${{ matrix.python.tag }}.json
+
+      - name: Print comparison
+        run: .venv/bin/pyperf compare_to copy-${{ matrix.python.tag }}.json copium-${{ matrix.python.tag }}.json --table
+
+      - name: Upload pyperf jsons
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyperf-${{ matrix.python.tag }}
+          path: |
+            copy-*.json
+            copium-*.json
+
+  readme-benchmarks:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "Wheels-3.14-Linux-x86_64"
+          path: wheelhouse
+
+      - name: Find wheel
+        id: wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$wheel" ]]; then
+            wheel=$(find wheelhouse -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
+          fi
+          if [[ -z "$wheel" ]]; then
+            echo "No wheel found for cp314"
+            exit 1
+          fi
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra benchmark --no-install-project
+          uv pip install ${{ steps.wheel.outputs.path }}
+
+      - name: Run readme benchmark
+        env:
+          BENCHMARK_FOR_CHART: 1
+        run: |
+          .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --copy-env --fast
+          COPIUM_PATCH_DEEPCOPY=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
+          .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
+
+      - name: Upload readme benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: readme-benchmarks
+          path: |
+            readme_stdlib.json
+            readme_copium.json
+
+  charts:
+    if: github.ref == 'refs/heads/main'
+    needs: readme-benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download readme benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: readme-benchmarks
+
+      - name: Setup Python environment
+        run: |
+          uv venv --python 3.14
+          uv sync --extra benchmark --no-install-project
+
+      - name: Generate charts
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          for theme in light dark; do
+            uv run --with matplotlib tools/generate_chart.py \
+              --name "readme_copium.json:copium.deepcopy({benchname})" \
+              --name "readme_stdlib.json:copy.deepcopy({benchname})" \
+              --aggregate geomean \
+              --group-sort min --group-order asc --within-order asc \
+              --save-svg assets/chart_$theme.svg \
+              --theme $theme
+          done
+          test -s assets/chart_light.svg
+          test -s assets/chart_dark.svg
+
+      - name: Upload prepared assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-assets
+          path: assets/*.svg
+
+  commit-assets:
+    if: github.ref == 'refs/heads/main'
+    needs: charts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download prepared assets
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-assets
+          path: downloaded-assets
+
+      - name: Commit and push assets, then update README
+        run: |
+          set -euo pipefail
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          mkdir -p assets
+          cp -f downloaded-assets/*.svg assets/
+
+          git add assets/*.svg
+
+          if git diff --staged --quiet; then
+            echo "No chart changes to commit"
+          else
+            git commit -m "Update benchmark assets from CI"
+            git push
+          fi
+
+          CHARTS_SHA="$(git rev-parse HEAD)"
+
+          sed -i "s|https://raw.githubusercontent.com/Bobronium/copium/[^/]*/assets/chart_|https://raw.githubusercontent.com/Bobronium/copium/${CHARTS_SHA}/assets/chart_|g" README.md
+          git add README.md
+
+          if git diff --staged --quiet; then
+            echo "README already points to ${CHARTS_SHA}"
+          else
+            git commit -m "Update README to reference charts @ ${CHARTS_SHA}"
+            git push
+          fi
+
+      - name: Upload updated README
+        uses: actions/upload-artifact@v4
+        with:
+          name: updated-readme
+          path: README.md
+
+  sdist:
+    needs: [build, commit-assets]
+    if: always() && !cancelled() && !failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download prepared assets
+        if: github.ref == 'refs/heads/main'
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-assets
+          path: .
+
+      - name: Download updated README
+        if: github.ref == 'refs/heads/main'
+        uses: actions/download-artifact@v4
+        with:
+          name: updated-readme
+          path: .
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Build sdist
+        run: uv build --sdist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
 
   publish:
-    needs: build
+    needs: sdist
     if: (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && !cancelled() && !failure()
     uses: ./.github/workflows/publish.yaml
