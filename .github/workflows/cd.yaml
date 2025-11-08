@@ -62,8 +62,6 @@ jobs:
 
   build:
     uses: ./.github/workflows/build.yaml
-    with:
-      use-cache: ${{ github.ref_type != 'tag' }}
 
   pyperf:
     if: github.ref == 'refs/heads/main'
