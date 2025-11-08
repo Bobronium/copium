@@ -1,0 +1,50 @@
+name: Publish
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/copium
+    steps:
+      - name: Prepare directories
+        run: |
+          rm -rf artifacts dist
+          mkdir -p artifacts dist
+
+      - name: Download Wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "Wheels-*"
+          path: artifacts
+          merge-multiple: true
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: artifacts
+
+      - name: Flatten artifacts into ./dist
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          # Copy wheels and sdists from any artifact subfolder into ./dist
+          for f in artifacts/**/*.whl artifacts/**/*.tar.gz; do
+            cp -v "$f" dist/
+          done
+          echo "Contents of dist:"
+          ls -l dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true

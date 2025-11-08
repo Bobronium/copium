@@ -1,16 +1,19 @@
-name: Release
+name: CD
 
 on:
   push:
-    tags: ["v*"]
+    branches: [ main ]
+    tags: [ "v*" ]
+    paths-ignore:
+      - 'assets/**'
+      - 'README.md'
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
-
-permissions:
-  contents: read
-  id-token: write
 
 jobs:
   verify-charts:
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,48 +53,12 @@ jobs:
 
   build:
     needs: verify-charts
+    if: always() && !cancelled() && !failure()
     uses: ./.github/workflows/build.yaml
     with:
-      is-release: true
+      is-release: ${{ github.ref_type == 'tag' }}
 
   publish:
     needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/copium
-    steps:
-      - name: Prepare directories
-        run: |
-          rm -rf artifacts dist
-          mkdir -p artifacts dist
-
-      - name: Download Wheels
-        uses: actions/download-artifact@v4
-        with:
-          pattern: "Wheels-*"
-          path: artifacts
-          merge-multiple: true
-
-      - name: Download sdist
-        uses: actions/download-artifact@v4
-        with:
-          name: sdist
-          path: artifacts
-
-      - name: Flatten artifacts into ./dist
-        shell: bash
-        run: |
-          shopt -s globstar nullglob
-          # Copy wheels and sdists from any artifact subfolder into ./dist
-          for f in artifacts/**/*.whl artifacts/**/*.tar.gz; do
-            cp -v "$f" dist/
-          done
-          echo "Contents of dist:"
-          ls -l dist
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
-          skip-existing: true
+    if: (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && !cancelled() && !failure()
+    uses: ./.github/workflows/publish.yaml
