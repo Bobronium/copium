@@ -15,6 +15,27 @@ from matplotlib.path import Path as MplPath
 
 
 # ============================================================================
+# Font Configuration
+# ============================================================================
+
+GITHUB_FONTS = [
+    "Liberation Sans",
+    "DejaVu Sans",
+    "Helvetica",
+    "Arial",
+    "sans-serif",
+]
+
+MONOSPACE_FONTS = [
+    "JetBrains Mono",
+    "Liberation Mono",
+    "DejaVu Sans Mono",
+    "Courier New",
+    "monospace",
+]
+
+
+# ============================================================================
 # Data Shapes
 # ============================================================================
 
@@ -199,6 +220,32 @@ def format_time(seconds: float) -> str:
         if seconds < 100
         else f"{seconds:.0f}s"
     )
+
+
+def configure_fonts(use_monospace: bool = False) -> None:
+    """Configure matplotlib font settings."""
+    font_family = MONOSPACE_FONTS if use_monospace else GITHUB_FONTS
+    plt.rcParams["font.sans-serif"] = font_family
+    plt.rcParams["font.family"] = "monospace" if use_monospace else "sans-serif"
+
+
+def validate_fonts(use_monospace: bool = False, strict: bool = False) -> None:
+    """Validate that required fonts are available."""
+    if not strict:
+        return
+
+    import matplotlib.font_manager as fm
+
+    available_fonts = {f.name for f in fm.fontManager.ttflist}
+
+    required_font = "JetBrains Mono" if use_monospace else None
+
+    if required_font and required_font not in available_fonts:
+        raise RuntimeError(
+            f"Font '{required_font}' not found. "
+            f"Install it or run without --strict flag.\n"
+            f"Available fonts: {sorted(available_fonts)}"
+        )
 
 
 def compute_ticks(max_val: float, pad_ratio: float = 0.04, target_ticks: int = 3) -> AxisTicks:
@@ -524,8 +571,14 @@ def render_chart(
     save_png: Path | None = None,
     save_svg: Path | None = None,
     show: bool = False,
+    use_monospace: bool = False,
+    strict: bool = False,
 ) -> tuple:
     """Render single-series performance chart."""
+    # Configure fonts
+    configure_fonts(use_monospace)
+    validate_fonts(use_monospace, strict)
+
     sorted_data = sort_group(data, sort_spec)
     names = sorted_data.names
     values = sorted_data.values
@@ -660,8 +713,14 @@ def render_grouped_chart(
     save_png: Path | None = None,
     save_svg: Path | None = None,
     show: bool = False,
+    use_monospace: bool = False,
+    strict: bool = False,
 ) -> tuple:
     """Render grouped performance chart."""
+    # Configure fonts
+    configure_fonts(use_monospace)
+    validate_fonts(use_monospace, strict)
+
     sorted_groups = sort_groups(groups, sort_spec)
 
     # Flatten with spacers
@@ -900,6 +959,10 @@ def main() -> None:
     parser.add_argument("--save-svg", type=Path, help="Output SVG file")
     parser.add_argument("--save-png", type=Path, help="Output PNG file")
     parser.add_argument("--show", action="store_true", help="Show chart")
+    parser.add_argument("--monospace", action="store_true", help="Use monospace font")
+    parser.add_argument(
+        "--strict", action="store_true", help="Fail if required fonts are not available"
+    )
 
     args = parser.parse_args()
 
@@ -946,6 +1009,8 @@ def main() -> None:
         save_png=args.save_png,
         save_svg=args.save_svg,
         show=args.show,
+        use_monospace=args.monospace,
+        strict=args.strict,
     )
 
 
