@@ -980,10 +980,12 @@ def main() -> None:
     # Build configuration
     theme = Theme.dark() if args.theme == "dark" else Theme.light()
 
-    palette = ColorPalette(
-        fast="#3573A7" if args.theme == "dark" else "#00b3e5",
-        slow="#E89B14",
-    )
+    colors = {
+        "dark": {"fast": "#E6D4CF", "slow": "#754536"},
+        "light": {"fast": "#BFD7E6", "slow": "#6A7F92"},
+    }
+
+    palette = ColorPalette(fast=colors[args.theme]["fast"], slow=colors[args.theme]["slow"])
 
     config = GroupChartConfig(
         theme=theme,
