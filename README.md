@@ -8,28 +8,37 @@
 
 Fast drop-in replacement for `copy.deepcopy()`.
 
-> [!WARNING]  
-> This is alpha version, see [project status](#project-status).
-
 
 <div align="center">
   <picture>
     <source srcset="https://raw.githubusercontent.com/Bobronium/copium/72f0278e972cb36d501b7e9c465d909c77c20480/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
     <source srcset="https://raw.githubusercontent.com/Bobronium/copium/72f0278e972cb36d501b7e9c465d909c77c20480/assets/chart_light.svg" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/72f0278e972cb36d501b7e9c465d909c77c20480/assets/chart_light.svg" alt="Benchmark results bar chart">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/72f0278e972cb36d501b7e9c465d909c77c20480/assets/chart_light.svg" alt="Benchmark results bar chart" width="600">
   </picture>
 </div>
-
 <div align="center">
   <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/ea038c2c1ba7ba84ff62982b2cc2a7d1326a510b/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/ea038c2c1ba7ba84ff62982b2cc2a7d1326a510b/tools/generate_chart.py">tools/generate_chart.py</a></i>
 </div>
 
+## Highlights
+
+- ⚡ 4-28x faster than `copy.deepcopy()` on builtin types
+- 🧠 uses less than or equal memory as `copy.deepcopy()`
+- 🧪 passes all tests in `CPython/Lib/test/test_copy.py`
+- 🎯 behaves exactly the same as `copy.deepcopy()` in all cases declared in
+  [datamodelzoo](https://github.com/Bobronium/datamodelzoo)
+- 🛡️ tested for refcount, recursion, threading and memo edge cases
+- 🔓 passes all tests on free-threaded Python builds
 
 ## Installation
 
+> [!WARNING]
+> This is an alpha version. Run your test suite with `COPIUM_PATCH_DEEPCOPY=1` to verify compatibility in your environment.
+ 
 ```bash
 pip install copium
 ```
+
 
 ## Usage
 
@@ -48,7 +57,7 @@ assert deepcopy(x := []) is not x
 
 ---
 
-To enable patch manually:
+To enable the patch manually:
 
 ```py
 import copium.patch
@@ -66,7 +75,7 @@ from copium import deepcopy
 assert deepcopy(x := []) is not x
 ```
 
-`copium` module includes all public declarations of stdlib `copy` module, so it's generally safe to:
+The `copium` module includes all public declarations of stdlib `copy` module, so it's generally safe to:
 
 ```diff
 - from copy import deepcopy
@@ -74,23 +83,6 @@ assert deepcopy(x := []) is not x
 ```
 
 ---
-
-## Project status
-
-- [x] passes all tests in `CPython/Lib/test/test_copy.py`
-- [x] behaves exactly the same as stdlib `copy` in all cases declared in
-  [datamodelzoo](https://github.com/Bobronium/datamodelzoo)
-- [x] consumes less or equal amount of memory as stdlib `copy`
-- [x] always faster than stdlib `copy`
-- [x] passes all tests on free-threaded Python builds
-- [x] has tests for refcounts/recursion/threading edge cases
-
-If you're interested in using this, simply add it to your project and run tests with `COPIUM_PATCH_DEEPCOPY=1`.
-
-If it fails — open an issue with detailed bugreport.
-
-If it works as expected, consider whether the speedup in your case worth of using alpha version.
-
 
 ## Speedups on Python 3.14
 
@@ -128,3 +120,5 @@ If it works as expected, consider whether the speedup in your case worth of usin
 - `dataclasses` ~2.74x
 
 Expect much higher speedups on Python 3.13 and lower.
+
+
