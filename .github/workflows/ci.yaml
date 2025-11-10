@@ -17,13 +17,13 @@ permissions:
 
 jobs:
   test:
-    uses: ./.github/workflows/ci/test.yaml
+    uses: ./.github/workflows/ci-test.yaml
 
   lint:
-    uses: ./.github/workflows/ci/lint.yaml
+    uses: ./.github/workflows/ci-lint.yaml
 
   typecheck:
-    uses: ./.github/workflows/ci/typecheck.yaml
+    uses: ./.github/workflows/ci-typecheck.yaml
 
   memory-tests:
-    uses: ./.github/workflows/ci/memory-tests.yaml
+    uses: ./.github/workflows/ci-memory-tests.yaml
