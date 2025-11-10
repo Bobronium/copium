@@ -8,6 +8,7 @@
 
 Fast drop-in replacement for `copy.deepcopy()`.
 
+<img src="assets/copium_logo_512.png" alt="Copium Logo" width="256" align="left">
 
 <div align="center">
   <picture>
@@ -19,6 +20,8 @@ Fast drop-in replacement for `copy.deepcopy()`.
 <div align="center">
   <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/e22653dae4ae357a3df4e0c8e04dde1585eb480d/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/e22653dae4ae357a3df4e0c8e04dde1585eb480d/tools/generate_chart.py">tools/generate_chart.py</a></i>
 </div>
+
+---
 
 ## Highlights
 
