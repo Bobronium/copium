@@ -12,331 +12,44 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Tag-only verification
   verify-charts:
     if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Full history needed to verify ancestry
+    uses: ./.github/workflows/verify-charts.yaml
 
-      - name: Verify charts are current with source code
-        run: |
-          set -euo pipefail
-
-          # Extract the chart commit SHA from README
-          CHART_SHA=$(grep -oP 'https://raw\.githubusercontent\.com/Bobronium/copium/\K[a-f0-9]{40}(?=/assets/chart_)' README.md | head -n1 || true)
-
-          if [[ -z "$CHART_SHA" ]]; then
-            echo "ERROR: No chart URLs found in README.md"
-            exit 1
-          fi
-
-          # Verify chart commit exists and is an ancestor
-          if ! git cat-file -e "$CHART_SHA^{commit}" 2>/dev/null; then
-            echo "ERROR: Chart commit $CHART_SHA does not exist in repository"
-            exit 1
-          fi
-
-          if ! git merge-base --is-ancestor "$CHART_SHA" "${{ github.sha }}" 2>/dev/null; then
-            echo "ERROR: Chart commit ${CHART_SHA:0:7} is not in the ancestry of this tag"
-            exit 1
-          fi
-
-          # Check if any source code changed after chart generation
-          # These paths match the build cache key - single source of truth
-          SOURCE_PATHS="pyproject.toml tools/build_system/backend.py tools/run_benchmark.py tools/generate_chart.py src/** tests/** .github/**"
-
-          # Get commits between chart commit and current tag
-          if git log --oneline "$CHART_SHA..${{ github.sha }}" -- $SOURCE_PATHS | grep -q .; then
-            echo "ERROR: Source code changed after charts were generated"
-            echo ""
-            echo "Changed files since chart commit ${CHART_SHA:0:7}:"
-            git diff --name-only "$CHART_SHA" "${{ github.sha }}" -- $SOURCE_PATHS
-            echo ""
-            echo "Charts must be regenerated. Push to main to trigger chart generation."
-            exit 1
-          fi
-
-          echo "✓ Charts are current with source code (generated at ${CHART_SHA:0:7})"
-
+  # Build wheels (runs for all events)
   build:
     uses: ./.github/workflows/build.yaml
 
+  # Main branch only: benchmarks and charts
   pyperf:
     if: github.ref == 'refs/heads/main'
     needs: build
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python:
-          - { display: "3.10", tag: "cp310" }
-          - { display: "3.11", tag: "cp311" }
-          - { display: "3.12", tag: "cp312" }
-          - { display: "3.13", tag: "cp313" }
-          - { display: "3.14", tag: "cp314" }
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Clone pyperformance
-        run: git clone https://github.com/python/pyperformance.git --depth 1
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Download wheels
-        uses: actions/download-artifact@v4
-        with:
-          pattern: "Wheels-${{ matrix.python.display }}-Linux-x86_64"
-          path: wheelhouse
-
-      - name: Find wheel
-        id: wheel
-        shell: bash
-        run: |
-          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-manylinux*_x86_64.whl" -type f | head -n1)
-          if [[ -z "$wheel" ]]; then
-            wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-musllinux*_x86_64.whl" -type f | head -n1)
-          fi
-          if [[ -z "$wheel" ]]; then
-            echo "No wheel found for ${{ matrix.python.tag }}"
-            exit 1
-          fi
-          echo "path=$wheel" >> "$GITHUB_OUTPUT"
-
-      - name: Setup venv
-        run: |
-          uv venv --python ${{ matrix.python.display }} --clear
-          uv sync --extra benchmark --no-install-project
-          uv pip install ${{ steps.wheel.outputs.path }}
-
-      - name: Tune pyperf
-        run: |
-          sudo PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -B -m pyperf system tune || echo unable to tune system
-          find . -path './.venv' -prune -o -type d -name '__pycache__' -exec rm -rf {} +
-
-      - name: Run pyperformance benchmark
-        env:
-          PYTHONHASHSEED: "0"
-        run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}.json
-
-      - name: Run pyperformance benchmark with copium
-        env:
-          PYTHONHASHSEED: "0"
-          COPIUM_PATCH_DEEPCOPY: 1
-        run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env -o copium-${{ matrix.python.tag }}.json
-
-      - name: Print comparison
-        run: .venv/bin/pyperf compare_to copy-${{ matrix.python.tag }}.json copium-${{ matrix.python.tag }}.json --table
-
-      - name: Upload pyperf jsons
-        uses: actions/upload-artifact@v4
-        with:
-          name: pyperf-${{ matrix.python.tag }}
-          path: |
-            copy-*.json
-            copium-*.json
+    uses: ./.github/workflows/pyperf.yaml
 
   readme-benchmarks:
     if: github.ref == 'refs/heads/main'
     needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Download wheels
-        uses: actions/download-artifact@v4
-        with:
-          pattern: "Wheels-3.14-Linux-x86_64"
-          path: wheelhouse
-
-      - name: Find wheel
-        id: wheel
-        shell: bash
-        run: |
-          wheel=$(find wheelhouse -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
-          if [[ -z "$wheel" ]]; then
-            wheel=$(find wheelhouse -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
-          fi
-          if [[ -z "$wheel" ]]; then
-            echo "No wheel found for cp314"
-            exit 1
-          fi
-          echo "path=$wheel" >> "$GITHUB_OUTPUT"
-
-      - name: Setup venv
-        run: |
-          uv venv --python 3.14 --clear
-          uv sync --extra benchmark --no-install-project
-          uv pip install ${{ steps.wheel.outputs.path }}
-
-      - name: Run readme benchmark
-        env:
-          BENCHMARK_FOR_CHART: 1
-        run: |
-          .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --copy-env --fast
-          COPIUM_PATCH_DEEPCOPY=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
-          .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
-
-      - name: Upload readme benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: readme-benchmarks
-          path: |
-            readme_stdlib.json
-            readme_copium.json
+    uses: ./.github/workflows/readme-benchmarks.yaml
 
   charts:
     if: github.ref == 'refs/heads/main'
     needs: readme-benchmarks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Download readme benchmark artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: readme-benchmarks
-
-      - name: Install JetBrains Mono
-        run: sudo apt-get install -y fonts-jetbrains-mono
-
-      - name: Setup Python environment
-        run: |
-          uv venv --python 3.14
-          uv sync --extra benchmark --no-install-project
-
-      - name: Generate charts
-        run: |
-          set -euo pipefail
-          mkdir -p assets
-          for theme in light dark; do
-            uv run --with matplotlib tools/generate_chart.py \
-              --name "readme_copium.json:copium.deepcopy({benchname})" \
-              --name "readme_stdlib.json:copy.deepcopy({benchname})" \
-              --aggregate geomean \
-              --group-sort min --group-order asc --within-order asc \
-              --save-svg assets/chart_$theme.svg \
-              --theme $theme \
-              --monospace \
-              --strict
-          done
-          test -s assets/chart_light.svg
-          test -s assets/chart_dark.svg
-
-      - name: Upload prepared assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: prepared-assets
-          path: assets/*.svg
+    uses: ./.github/workflows/charts.yaml
 
   commit-assets:
     if: github.ref == 'refs/heads/main'
     needs: charts
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    uses: ./.github/workflows/commit-assets.yaml
 
-      - name: Download prepared assets
-        uses: actions/download-artifact@v4
-        with:
-          name: prepared-assets
-          path: downloaded-assets
-
-      - name: Commit and push assets, then update README
-        run: |
-          set -euo pipefail
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-
-          # Get parent commit (the one that triggered this workflow)
-          PARENT_SHA="${{ github.sha }}"
-          PARENT_SHORT_SHA="${PARENT_SHA:0:7}"
-
-          mkdir -p assets
-          cp -f downloaded-assets/*.svg assets/
-
-          git add assets/*.svg
-
-          if git diff --staged --quiet; then
-            echo "No chart changes to commit"
-          else
-            git commit -m "Update benchmark assets from CI (${PARENT_SHORT_SHA})"
-            git push
-          fi
-
-          CHARTS_SHA="$(git rev-parse HEAD)"
-          CHARTS_SHORT_SHA="${CHARTS_SHA:0:7}"
-
-          # Update chart URLs in README
-          sed -i "s|https://raw.githubusercontent.com/Bobronium/copium/[^/]*/assets/chart_|https://raw.githubusercontent.com/Bobronium/copium/${CHARTS_SHA}/assets/chart_|g" README.md
-
-          # Update tools script URLs in README to point to parent commit
-          sed -i "s|https://github.com/Bobronium/copium/blob/[^/]*/tools/run_benchmark.py|https://github.com/Bobronium/copium/blob/${PARENT_SHA}/tools/run_benchmark.py|g" README.md
-          sed -i "s|https://github.com/Bobronium/copium/blob/[^/]*/tools/generate_chart.py|https://github.com/Bobronium/copium/blob/${PARENT_SHA}/tools/generate_chart.py|g" README.md
-
-          git add README.md
-
-          if git diff --staged --quiet; then
-            echo "README already points to ${CHARTS_SHA}"
-          else
-            git commit -m "Update README to reference charts @ ${CHARTS_SHORT_SHA}"
-            git push
-          fi
-
-      - name: Upload updated README
-        uses: actions/upload-artifact@v4
-        with:
-          name: updated-readme
-          path: README.md
-
+  # Build sdist (main branch or tag)
   sdist:
     needs: [build, commit-assets, verify-charts]
     if: (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && !cancelled() && !failure()
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    uses: ./.github/workflows/sdist.yaml
 
-      - name: Download prepared assets
-        if: github.ref == 'refs/heads/main'
-        uses: actions/download-artifact@v4
-        with:
-          name: prepared-assets
-          path: .
-
-      - name: Download updated README
-        if: github.ref == 'refs/heads/main'
-        uses: actions/download-artifact@v4
-        with:
-          name: updated-readme
-          path: .
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Build sdist
-        run: uv build --sdist
-
-      - name: Upload sdist
-        uses: actions/upload-artifact@v4
-        with:
-          name: sdist
-          path: dist/*.tar.gz
-
+  # Publish to PyPI (main branch or tag)
+  # Kept inline as reusing workflows is not supported for PyPI publishing
   publish:
     needs: sdist
     if: (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && !cancelled() && !failure()

@@ -1,0 +1,53 @@
+name: Verify Charts
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  verify-charts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed to verify ancestry
+
+      - name: Verify charts are current with source code
+        run: |
+          set -euo pipefail
+
+          # Extract the chart commit SHA from README
+          CHART_SHA=$(grep -oP 'https://raw\.githubusercontent\.com/Bobronium/copium/\K[a-f0-9]{40}(?=/assets/chart_)' README.md | head -n1 || true)
+
+          if [[ -z "$CHART_SHA" ]]; then
+            echo "ERROR: No chart URLs found in README.md"
+            exit 1
+          fi
+
+          # Verify chart commit exists and is an ancestor
+          if ! git cat-file -e "$CHART_SHA^{commit}" 2>/dev/null; then
+            echo "ERROR: Chart commit $CHART_SHA does not exist in repository"
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "$CHART_SHA" "${{ github.sha }}" 2>/dev/null; then
+            echo "ERROR: Chart commit ${CHART_SHA:0:7} is not in the ancestry of this tag"
+            exit 1
+          fi
+
+          # Check if any source code changed after chart generation
+          # These paths match the build cache key - single source of truth
+          SOURCE_PATHS="pyproject.toml tools/build_system/backend.py tools/run_benchmark.py tools/generate_chart.py src/** tests/** .github/**"
+
+          # Get commits between chart commit and current tag
+          if git log --oneline "$CHART_SHA..${{ github.sha }}" -- $SOURCE_PATHS | grep -q .; then
+            echo "ERROR: Source code changed after charts were generated"
+            echo ""
+            echo "Changed files since chart commit ${CHART_SHA:0:7}:"
+            git diff --name-only "$CHART_SHA" "${{ github.sha }}" -- $SOURCE_PATHS
+            echo ""
+            echo "Charts must be regenerated. Push to main to trigger chart generation."
+            exit 1
+          fi
+
+          echo "✓ Charts are current with source code (generated at ${CHART_SHA:0:7})"

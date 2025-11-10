@@ -1,0 +1,80 @@
+name: Pyperf Benchmarks
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  pyperf:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python:
+          - { display: "3.10", tag: "cp310" }
+          - { display: "3.11", tag: "cp311" }
+          - { display: "3.12", tag: "cp312" }
+          - { display: "3.13", tag: "cp313" }
+          - { display: "3.14", tag: "cp314" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone pyperformance
+        run: git clone https://github.com/python/pyperformance.git --depth 1
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "Wheels-${{ matrix.python.display }}-Linux-x86_64"
+          path: wheelhouse
+
+      - name: Find wheel
+        id: wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$wheel" ]]; then
+            wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-musllinux*_x86_64.whl" -type f | head -n1)
+          fi
+          if [[ -z "$wheel" ]]; then
+            echo "No wheel found for ${{ matrix.python.tag }}"
+            exit 1
+          fi
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv
+        run: |
+          uv venv --python ${{ matrix.python.display }} --clear
+          uv sync --extra benchmark --no-install-project
+          uv pip install ${{ steps.wheel.outputs.path }}
+
+      - name: Tune pyperf
+        run: |
+          sudo PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -B -m pyperf system tune || echo unable to tune system
+          find . -path './.venv' -prune -o -type d -name '__pycache__' -exec rm -rf {} +
+
+      - name: Run pyperformance benchmark
+        env:
+          PYTHONHASHSEED: "0"
+        run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py -o copy-${{ matrix.python.tag }}.json
+
+      - name: Run pyperformance benchmark with copium
+        env:
+          PYTHONHASHSEED: "0"
+          COPIUM_PATCH_DEEPCOPY: 1
+        run: .venv/bin/python pyperformance/pyperformance/data-files/benchmarks/bm_deepcopy/run_benchmark.py --copy-env -o copium-${{ matrix.python.tag }}.json
+
+      - name: Print comparison
+        run: .venv/bin/pyperf compare_to copy-${{ matrix.python.tag }}.json copium-${{ matrix.python.tag }}.json --table
+
+      - name: Upload pyperf jsons
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyperf-${{ matrix.python.tag }}
+          path: |
+            copy-*.json
+            copium-*.json

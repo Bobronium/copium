@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [ "**" ]
+    tags: [ "*" ]
+    paths-ignore:
+      - 'assets/**'
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - 'assets/**'
+      - '**.md'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yaml
+
+  lint:
+    uses: ./.github/workflows/lint.yaml
+
+  typecheck:
+    uses: ./.github/workflows/typecheck.yaml
+
+  memory-tests:
+    uses: ./.github/workflows/memory-tests.yaml

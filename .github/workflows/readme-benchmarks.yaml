@@ -1,0 +1,58 @@
+name: README Benchmarks
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  readme-benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "Wheels-3.14-Linux-x86_64"
+          path: wheelhouse
+
+      - name: Find wheel
+        id: wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$wheel" ]]; then
+            wheel=$(find wheelhouse -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
+          fi
+          if [[ -z "$wheel" ]]; then
+            echo "No wheel found for cp314"
+            exit 1
+          fi
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra benchmark --no-install-project
+          uv pip install ${{ steps.wheel.outputs.path }}
+
+      - name: Run readme benchmark
+        env:
+          BENCHMARK_FOR_CHART: 1
+        run: |
+          .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --copy-env --fast
+          COPIUM_PATCH_DEEPCOPY=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
+          .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
+
+      - name: Upload readme benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: readme-benchmarks
+          path: |
+            readme_stdlib.json
+            readme_copium.json

@@ -1,0 +1,53 @@
+name: Generate Charts
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  charts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download readme benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: readme-benchmarks
+
+      - name: Install JetBrains Mono
+        run: sudo apt-get install -y fonts-jetbrains-mono
+
+      - name: Setup Python environment
+        run: |
+          uv venv --python 3.14
+          uv sync --extra benchmark --no-install-project
+
+      - name: Generate charts
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          for theme in light dark; do
+            uv run --with matplotlib tools/generate_chart.py \
+              --name "readme_copium.json:copium.deepcopy({benchname})" \
+              --name "readme_stdlib.json:copy.deepcopy({benchname})" \
+              --aggregate geomean \
+              --group-sort min --group-order asc --within-order asc \
+              --save-svg assets/chart_$theme.svg \
+              --theme $theme \
+              --monospace \
+              --strict
+          done
+          test -s assets/chart_light.svg
+          test -s assets/chart_dark.svg
+
+      - name: Upload prepared assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-assets
+          path: assets/*.svg
