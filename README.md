@@ -33,8 +33,6 @@ Fast drop-in replacement for `copy.deepcopy()`.
   <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/e22653dae4ae357a3df4e0c8e04dde1585eb480d/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/e22653dae4ae357a3df4e0c8e04dde1585eb480d/tools/generate_chart.py">tools/generate_chart.py</a></i>
 </div>
 
----
-
 ## Highlights
 
 - ⚡ 4-28x faster than `copy.deepcopy()` on builtin types
