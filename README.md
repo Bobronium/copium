@@ -91,8 +91,8 @@ assert deepcopy(x := []) is not x
 The `copium` module includes all public declarations of stdlib `copy` module, so it's generally safe to:
 
 ```diff
-- from copy import deepcopy
-+ from copium import deepcopy
+- from copy import copy, deepcopy, Error
++ from copium import copy, deepcopy, Error
 ```
 
 ---
