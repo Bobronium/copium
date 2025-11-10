@@ -1,11 +1,11 @@
-name: Pyperf Benchmarks
+name: Pyperformance Benchmarks
 
 on:
   workflow_call:
   workflow_dispatch:
 
 jobs:
-  pyperf:
+  pyperformance:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -71,10 +71,10 @@ jobs:
       - name: Print comparison
         run: .venv/bin/pyperf compare_to copy-${{ matrix.python.tag }}.json copium-${{ matrix.python.tag }}.json --table
 
-      - name: Upload pyperf jsons
+      - name: Upload pyperformance results
         uses: actions/upload-artifact@v4
         with:
-          name: pyperf-${{ matrix.python.tag }}
+          name: pyperformance-${{ matrix.python.tag }}
           path: |
             copy-*.json
             copium-*.json

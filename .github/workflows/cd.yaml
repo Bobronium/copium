@@ -21,30 +21,20 @@ jobs:
   build:
     uses: ./.github/workflows/build.yaml
 
-  # Main branch only: benchmarks and charts
-  pyperf:
+  # Main branch only: benchmarks
+  pyperformance:
     if: github.ref == 'refs/heads/main'
     needs: build
-    uses: ./.github/workflows/pyperf.yaml
+    uses: ./.github/workflows/pyperformance-benchmarks.yaml
 
-  readme-benchmarks:
+  benchmarks-and-assets:
     if: github.ref == 'refs/heads/main'
     needs: build
-    uses: ./.github/workflows/readme-benchmarks.yaml
-
-  charts:
-    if: github.ref == 'refs/heads/main'
-    needs: readme-benchmarks
-    uses: ./.github/workflows/charts.yaml
-
-  commit-assets:
-    if: github.ref == 'refs/heads/main'
-    needs: charts
-    uses: ./.github/workflows/commit-assets.yaml
+    uses: ./.github/workflows/benchmarks-and-assets.yaml
 
   # Build sdist (main branch or tag)
   sdist:
-    needs: [build, commit-assets, verify-charts]
+    needs: [build, benchmarks-and-assets, verify-charts]
     if: (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && !cancelled() && !failure()
     uses: ./.github/workflows/sdist.yaml
 

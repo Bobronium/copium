@@ -1,0 +1,125 @@
+name: Benchmarks and Assets
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  benchmarks-and-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # Download wheels and run README benchmarks
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "Wheels-3.14-Linux-x86_64"
+          path: wheelhouse
+
+      - name: Find wheel
+        id: wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$wheel" ]]; then
+            wheel=$(find wheelhouse -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
+          fi
+          if [[ -z "$wheel" ]]; then
+            echo "No wheel found for cp314"
+            exit 1
+          fi
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra benchmark --no-install-project
+          uv pip install ${{ steps.wheel.outputs.path }}
+
+      - name: Run readme benchmark
+        env:
+          BENCHMARK_FOR_CHART: 1
+        run: |
+          .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --copy-env --fast
+          COPIUM_PATCH_DEEPCOPY=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
+          .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
+
+      # Generate charts
+      - name: Install JetBrains Mono
+        run: sudo apt-get install -y fonts-jetbrains-mono
+
+      - name: Generate charts
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          for theme in light dark; do
+            uv run --with matplotlib tools/generate_chart.py \
+              --name "readme_copium.json:copium.deepcopy({benchname})" \
+              --name "readme_stdlib.json:copy.deepcopy({benchname})" \
+              --aggregate geomean \
+              --group-sort min --group-order asc --within-order asc \
+              --save-svg assets/chart_$theme.svg \
+              --theme $theme \
+              --monospace \
+              --strict
+          done
+          test -s assets/chart_light.svg
+          test -s assets/chart_dark.svg
+
+      # Commit assets and update README
+      - name: Commit and push assets, then update README
+        run: |
+          set -euo pipefail
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          # Get parent commit (the one that triggered this workflow)
+          PARENT_SHA="${{ github.sha }}"
+          PARENT_SHORT_SHA="${PARENT_SHA:0:7}"
+
+          git add assets/*.svg
+
+          if git diff --staged --quiet; then
+            echo "No chart changes to commit"
+          else
+            git commit -m "Update benchmark assets from CI (${PARENT_SHORT_SHA})"
+            git push
+          fi
+
+          CHARTS_SHA="$(git rev-parse HEAD)"
+          CHARTS_SHORT_SHA="${CHARTS_SHA:0:7}"
+
+          # Update chart URLs in README
+          sed -i "s|https://raw.githubusercontent.com/Bobronium/copium/[^/]*/assets/chart_|https://raw.githubusercontent.com/Bobronium/copium/${CHARTS_SHA}/assets/chart_|g" README.md
+
+          # Update tools script URLs in README to point to parent commit
+          sed -i "s|https://github.com/Bobronium/copium/blob/[^/]*/tools/run_benchmark.py|https://github.com/Bobronium/copium/blob/${PARENT_SHA}/tools/run_benchmark.py|g" README.md
+          sed -i "s|https://github.com/Bobronium/copium/blob/[^/]*/tools/generate_chart.py|https://github.com/Bobronium/copium/blob/${PARENT_SHA}/tools/generate_chart.py|g" README.md
+
+          git add README.md
+
+          if git diff --staged --quiet; then
+            echo "README already points to ${CHARTS_SHA}"
+          else
+            git commit -m "Update README to reference charts @ ${CHARTS_SHORT_SHA}"
+            git push
+          fi
+
+      # Upload artifacts for sdist build
+      - name: Upload prepared assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-assets
+          path: assets/*.svg
+
+      - name: Upload updated README
+        uses: actions/upload-artifact@v4
+        with:
+          name: updated-readme
+          path: README.md
