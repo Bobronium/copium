@@ -15,28 +15,28 @@ jobs:
   # Tag-only verification
   verify-charts:
     if: github.ref_type == 'tag'
-    uses: ./.github/workflows/verify-charts.yaml
+    uses: ./.github/workflows/cd/verify-charts.yaml
 
   # Build wheels (runs for all events)
   build:
-    uses: ./.github/workflows/build.yaml
+    uses: ./.github/workflows/cd/build.yaml
 
   # Main branch only: benchmarks
   pyperformance:
     if: github.ref == 'refs/heads/main'
     needs: build
-    uses: ./.github/workflows/pyperformance-benchmarks.yaml
+    uses: ./.github/workflows/cd/pyperformance-benchmarks.yaml
 
-  benchmarks-and-assets:
+  update-charts:
     if: github.ref == 'refs/heads/main'
     needs: build
-    uses: ./.github/workflows/benchmarks-and-assets.yaml
+    uses: ./.github/workflows/cd/update-charts.yaml
 
   # Build sdist (main branch or tag)
   sdist:
-    needs: [build, benchmarks-and-assets, verify-charts]
+    needs: [build, update-charts, verify-charts]
     if: (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && !cancelled() && !failure()
-    uses: ./.github/workflows/sdist.yaml
+    uses: ./.github/workflows/cd/sdist.yaml
 
   # Publish to PyPI (main branch or tag)
   # Kept inline as reusing workflows is not supported for PyPI publishing

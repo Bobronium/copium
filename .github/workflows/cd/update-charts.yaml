@@ -1,4 +1,4 @@
-name: Benchmarks and Assets
+name: Update Charts
 
 on:
   workflow_call:
