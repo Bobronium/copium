@@ -8,7 +8,7 @@
 
 Fast drop-in replacement for `copy.deepcopy()`.
 
-<img src="assets/copium_logo_512.png" alt="Copium Logo" width="256" align="left">
+<img src="assets/copium_logo_512.png" alt="Copium Logo" width="200" align="left">
 
 <div align="center">
   <picture>
