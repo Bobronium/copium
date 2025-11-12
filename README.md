@@ -20,7 +20,11 @@ copium
 
 Fast drop-in replacement for `copy.deepcopy()`.
 
-<img src="assets/copium_logo_512.png" alt="Copium Logo" width="200" align="left">
+<picture>
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/main/assets/copium_logo_512.png" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/main/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/main/assets/copium_logo_512.png" alt="Copium Logo" width="200" align="left">
+</picture>
 
 <div align="center">
   <picture>
