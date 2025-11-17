@@ -105,7 +105,7 @@ tasks:
             ACT="$VENV/bin/activate"; [ -f "$VENV/Scripts/activate" ] && ACT="$VENV/Scripts/activate"
             . "$ACT"
             uv sync --active --inexact --quiet --extra test --reinstall-package copium
-            uv run --active pytest tests
+            uv run --active pytest tests {{.CLI_ARGS}}
             deactivate
           done
         '
