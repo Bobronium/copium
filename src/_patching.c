@@ -1,7 +1,10 @@
 /*
- * SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium)
- * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
  *
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * Patching internals (no standalone module init).
  * Public API is registered onto the "copium" module via:
  *   int _copium_patching_add_api(PyObject* module)

@@ -1,7 +1,10 @@
 /*
- * SPDX-FileCopyrightText: 2025-present Arseny Boykov
- * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
  *
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * duper._pinning (compiled into copium._copying extension)
  * - Pin/PinsProxy types
  * - Open-addressed pin table

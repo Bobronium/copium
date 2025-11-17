@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
+#
+# SPDX-License-Identifier: MIT
+
 import collections
 import copy as stdlib_copy
 import sys

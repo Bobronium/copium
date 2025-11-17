@@ -1,7 +1,10 @@
 /*
- * SPDX-FileCopyrightText: 2025-present Arseny Boykov
- * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
  *
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * copium
  * - Fast, native deepcopy with reduce protocol + keepalive memo
  * - Pin integration via _pinning.c (Pin/PinsProxy + APIs)
@@ -13,9 +16,7 @@
  *   py_replicate(x, n, /) -> any
  *
  * Python 3.10–3.14 compatible.
- */
-
-
+*/
 #include <stddef.h>  // ptrdiff_t
 #include <stdint.h>
 #include <stdlib.h>

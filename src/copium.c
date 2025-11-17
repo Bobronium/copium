@@ -1,4 +1,10 @@
 /*
+ * SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * Public module definition & API glue for the copium extension.
  *
  * Module structure:

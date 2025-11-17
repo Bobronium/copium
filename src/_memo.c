@@ -1,7 +1,10 @@
 /*
- * SPDX-FileCopyrightText: 2025-present Arseny Boykov
- * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
  *
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * copium._memo (compiled into copium._copying extension)
  * - Memo type (internal hash table for deepcopy memo)
  * - Implements MutableMapping protocol with views

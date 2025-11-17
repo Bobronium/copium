@@ -1,4 +1,5 @@
-# SPDX-FileCopyrightText: 2025-present Arseny
+# SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
+#
 # SPDX-License-Identifier: MIT
 
 from __future__ import annotations
