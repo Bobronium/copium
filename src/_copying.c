@@ -29,9 +29,9 @@
 
 #include "Python.h"
 #include "pycore_object.h"  // _PyNone_Type, _PyNotImplemented_Type
-// _PyDict_NewPresized/_PyDict_*KnownHas
+// _PyDict_NewPresized
 #if PY_VERSION_HEX < PY_VERSION_3_11_HEX
-#include "dictobject.h"
+#include "dictobjecPt.h"
 #else
 #include "pycore_dict.h"
 #endif
@@ -824,7 +824,8 @@ static MAYBE_INLINE PyObject* deepcopy_tuple_c(PyObject* obj, MemoObject* mo, Py
 }
 
 static MAYBE_INLINE PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
-    PyObject* copy = PyDict_New();
+    Py_ssize_t sz = Py_SIZE(obj);
+    PyObject* copy = _PyDict_NewPresized(sz);
     if (!copy)
         return NULL;
     if (MEMO_STORE_C((void*)obj, copy, id_hash) < 0) {
@@ -1656,7 +1657,8 @@ static MAYBE_INLINE PyObject* deepcopy_tuple_py(
 static MAYBE_INLINE PyObject* deepcopy_dict_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
-    PyObject* copy = PyDict_New();
+    Py_ssize_t sz = Py_SIZE(obj);
+    PyObject* copy = _PyDict_NewPresized(sz);
     if (!copy)
         return NULL;
     if (MEMO_STORE_PY((void*)obj, copy, id_hash) < 0) {
