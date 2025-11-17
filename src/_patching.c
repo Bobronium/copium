@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023-present Arseny Boykov (Bobronium)
+ * SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium)
  * SPDX-License-Identifier: MIT
  *
  * Patching internals (no standalone module init).

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023-present Arseny Boykov
+ * SPDX-FileCopyrightText: 2025-present Arseny Boykov
  * SPDX-License-Identifier: MIT
  *
  * copium

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023-present Arseny
+# SPDX-FileCopyrightText: 2025-present Arseny
 # SPDX-License-Identifier: MIT
 
 from __future__ import annotations
