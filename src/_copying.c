@@ -1063,370 +1063,423 @@ static MAYBE_INLINE PyObject* call_reduce_method_preferring_ex(PyObject* obj) {
     return NULL;
 }
 
-static int unpack_reduce_result_tuple(
+static ALWAYS_INLINE int validate_reduce_tuple(
     PyObject* reduce_result,
-    PyObject** out_constructor,
-    PyObject** out_args,
+    PyObject** out_callable,
+    PyObject** out_argtup,
     PyObject** out_state,
-    PyObject** out_list_iterator,
-    PyObject** out_dict_iterator
+    PyObject** out_listitems,
+    PyObject** out_dictitems
 ) {
     if (!PyTuple_Check(reduce_result)) {
         if (PyUnicode_Check(reduce_result) || PyBytes_Check(reduce_result)) {
-            *out_constructor = *out_args = *out_state = *out_list_iterator = *out_dict_iterator =
-                NULL;
+            *out_callable = *out_argtup = *out_state = *out_listitems = *out_dictitems = NULL;
             return 1;
         }
         PyErr_SetString(PyExc_TypeError, "__reduce__ must return a tuple or str");
         return -1;
     }
-    Py_ssize_t sz = PyTuple_GET_SIZE(reduce_result);
-    if (sz < 2 || sz > 5) {
-        PyErr_SetString(PyExc_TypeError, "__reduce__ tuple length must be in [2,5]");
+
+    Py_ssize_t size = PyTuple_GET_SIZE(reduce_result);
+    if (size < 2 || size > 5) {
+        PyErr_SetString(
+            PyExc_TypeError, "tuple returned by __reduce__ must contain 2 through 5 elements"
+        );
         return -1;
     }
-    PyObject* cons = PyTuple_GET_ITEM(reduce_result, 0);
-    PyObject* args = PyTuple_GET_ITEM(reduce_result, 1);
-    if (!PyCallable_Check(cons) || !PyTuple_Check(args)) {
-        PyErr_SetString(PyExc_TypeError, "__reduce__ first two items must be (callable, tuple)");
+
+    PyObject* callable = PyTuple_GET_ITEM(reduce_result, 0);
+    PyObject* argtup = PyTuple_GET_ITEM(reduce_result, 1);
+    PyObject* state = (size >= 3) ? PyTuple_GET_ITEM(reduce_result, 2) : Py_None;
+    PyObject* listitems = (size >= 4) ? PyTuple_GET_ITEM(reduce_result, 3) : Py_None;
+    PyObject* dictitems = (size == 5) ? PyTuple_GET_ITEM(reduce_result, 4) : Py_None;
+
+    if (!PyCallable_Check(callable)) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "first item of the tuple returned by __reduce__ must be callable, not %.200s",
+            Py_TYPE(callable)->tp_name
+        );
         return -1;
     }
-    *out_constructor = cons;
-    *out_args = args;
-    *out_state = (sz >= 3) ? PyTuple_GET_ITEM(reduce_result, 2) : NULL;
-    *out_list_iterator = (sz >= 4) ? PyTuple_GET_ITEM(reduce_result, 3) : NULL;
-    *out_dict_iterator = (sz == 5) ? PyTuple_GET_ITEM(reduce_result, 4) : NULL;
+
+    if (!PyTuple_Check(argtup)) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "second item of the tuple returned by __reduce__ must be a tuple, not %.200s",
+            Py_TYPE(argtup)->tp_name
+        );
+        return -1;
+    }
+
+    if (listitems != Py_None && !PyIter_Check(listitems)) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "fourth item of the tuple returned by __reduce__ must be an iterator, not %.200s",
+            Py_TYPE(listitems)->tp_name
+        );
+        return -1;
+    }
+
+    if (dictitems != Py_None && !PyIter_Check(dictitems)) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "fifth item of the tuple returned by __reduce__ must be an iterator, not %.200s",
+            Py_TYPE(dictitems)->tp_name
+        );
+        return -1;
+    }
+
+    *out_callable = callable;
+    *out_argtup = argtup;
+    *out_state = (state == Py_None) ? NULL : state;
+    *out_listitems = (listitems == Py_None) ? NULL : listitems;
+    *out_dictitems = (dictitems == Py_None) ? NULL : dictitems;
+
     return 0;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
     PyObject* obj, PyTypeObject* tp, MemoObject* mo, Py_ssize_t id_hash
 ) {
-    PyObject* reduce_res = try_reduce_via_registry(obj, tp);
-    if (!reduce_res) {
+    PyObject* reduce_result = try_reduce_via_registry(obj, tp);
+    if (!reduce_result) {
         if (PyErr_Occurred())
             return NULL;
-        reduce_res = call_reduce_method_preferring_ex(obj);
-        if (!reduce_res)
+        reduce_result = call_reduce_method_preferring_ex(obj);
+        if (!reduce_result)
             return NULL;
     }
 
-    PyObject *cons = NULL, *args = NULL, *state = NULL, *listit = NULL, *dictit = NULL;
-    int unpack = unpack_reduce_result_tuple(reduce_res, &cons, &args, &state, &listit, &dictit);
-    if (unpack < 0) {
-        Py_DECREF(reduce_res);
-        return NULL;
-    }
-    if (unpack == 1) {
-        Py_DECREF(reduce_res);
+    PyObject *callable, *argtup, *state, *listitems, *dictitems;
+    int valid =
+        validate_reduce_tuple(reduce_result, &callable, &argtup, &state, &listitems, &dictitems);
+    if (valid < 0)
+        goto error;
+    if (valid == 1) {
+        Py_DECREF(reduce_result);
         return Py_NewRef(obj);
     }
 
-    PyObject* recon = NULL;
-    if (cons == module_state.copyreg_newobj) {
-        if (PyTuple_Check(args) && PyTuple_GET_SIZE(args) >= 1) {
-            PyObject* cls = PyTuple_GET_ITEM(args, 0);
-            if (PyType_Check(cls)) {
-                Py_ssize_t n = PyTuple_GET_SIZE(args) - 1;
-                PyObject* newargs = PyTuple_New(n);
-                if (!newargs) {
-                    Py_DECREF(reduce_res);
-                    return NULL;
-                }
-                for (Py_ssize_t i = 0; i < n; i++) {
-                    PyObject* a = PyTuple_GET_ITEM(args, i + 1);
-                    PyObject* ca = deepcopy_c(a, mo);
-                    if (!ca) {
-                        Py_DECREF(newargs);
-                        Py_DECREF(reduce_res);
-                        return NULL;
-                    }
-                    PyTuple_SET_ITEM(newargs, i, ca);
-                }
-                recon = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, newargs, NULL);
+    PyObject* inst = NULL;
+
+    // Handle __newobj__
+    if (callable == module_state.copyreg_newobj) {
+        if (PyTuple_GET_SIZE(argtup) < 1) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "__newobj__ expected at least 1 argument, got %zd",
+                PyTuple_GET_SIZE(argtup)
+            );
+            goto error;
+        }
+
+        PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
+        if (!PyType_Check(cls)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "first argument to __newobj__() must be a class, not %.200s",
+                Py_TYPE(cls)->tp_name
+            );
+            goto error;
+        }
+
+        Py_ssize_t nargs = PyTuple_GET_SIZE(argtup) - 1;
+        PyObject* newargs = PyTuple_New(nargs);
+        if (!newargs)
+            goto error;
+
+        for (Py_ssize_t i = 0; i < nargs; i++) {
+            PyObject* arg = PyTuple_GET_ITEM(argtup, i + 1);
+            PyObject* arg_copy = deepcopy_c(arg, mo);
+            if (!arg_copy) {
                 Py_DECREF(newargs);
+                goto error;
             }
+            PyTuple_SET_ITEM(newargs, i, arg_copy);
         }
-    } else if (cons == module_state.copyreg_newobj_ex) {
-        if (PyTuple_Check(args) && PyTuple_GET_SIZE(args) == 3) {
-            PyObject* cls = PyTuple_GET_ITEM(args, 0);
-            PyObject* pargs = PyTuple_GET_ITEM(args, 1);
-            PyObject* pkwargs = PyTuple_GET_ITEM(args, 2);
-            if (PyType_Check(cls) && PyTuple_Check(pargs)) {
-                PyObject* dc_pargs = deepcopy_c(pargs, mo);
-                if (!dc_pargs) {
-                    Py_DECREF(reduce_res);
-                    return NULL;
-                }
-                PyObject* dc_kwargs = NULL;
-                if (pkwargs != Py_None) {
-                    dc_kwargs = deepcopy_c(pkwargs, mo);
-                    if (!dc_kwargs) {
-                        Py_DECREF(dc_pargs);
-                        Py_DECREF(reduce_res);
-                        return NULL;
-                    }
-                }
-                recon = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, dc_pargs, dc_kwargs);
-                Py_DECREF(dc_pargs);
-                Py_XDECREF(dc_kwargs);
-            }
-        }
+
+        inst = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, newargs, NULL);
+        Py_DECREF(newargs);
+        if (!inst)
+            goto error;
     }
-    if (!recon) {
-        if (PyTuple_GET_SIZE(args) == 0) {
-            recon = PyObject_CallNoArgs(cons);
+    // Handle __newobj_ex__
+    else if (callable == module_state.copyreg_newobj_ex) {
+        if (PyTuple_GET_SIZE(argtup) != 3) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "__newobj_ex__ expected 3 arguments, got %zd",
+                PyTuple_GET_SIZE(argtup)
+            );
+            goto error;
+        }
+
+        PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
+        PyObject* args = PyTuple_GET_ITEM(argtup, 1);
+        PyObject* kwargs = PyTuple_GET_ITEM(argtup, 2);
+
+        if (!PyType_Check(cls)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "first argument to __newobj_ex__() must be a class, not %.200s",
+                Py_TYPE(cls)->tp_name
+            );
+            goto error;
+        }
+        if (!PyTuple_Check(args)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "second argument to __newobj_ex__() must be a tuple, not %.200s",
+                Py_TYPE(args)->tp_name
+            );
+            goto error;
+        }
+        if (!PyDict_Check(kwargs)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "third argument to __newobj_ex__() must be a dict, not %.200s",
+                Py_TYPE(kwargs)->tp_name
+            );
+            goto error;
+        }
+
+        PyObject* args_copy = deepcopy_c(args, mo);
+        if (!args_copy)
+            goto error;
+
+        PyObject* kwargs_copy = deepcopy_c(kwargs, mo);
+        if (!kwargs_copy) {
+            Py_DECREF(args_copy);
+            goto error;
+        }
+
+        inst = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, args_copy, kwargs_copy);
+        Py_DECREF(args_copy);
+        Py_DECREF(kwargs_copy);
+        if (!inst)
+            goto error;
+    }
+    // Generic callable
+    else {
+        Py_ssize_t nargs = PyTuple_GET_SIZE(argtup);
+        if (nargs == 0) {
+            inst = PyObject_CallNoArgs(callable);
         } else {
-            Py_ssize_t n = PyTuple_GET_SIZE(args);
-            PyObject* dcargs = PyTuple_New(n);
-            if (!dcargs) {
-                Py_DECREF(reduce_res);
-                return NULL;
-            }
-            for (Py_ssize_t i = 0; i < n; i++) {
-                PyObject* a = PyTuple_GET_ITEM(args, i);
-                PyObject* ca = deepcopy_c(a, mo);
-                if (!ca) {
-                    Py_DECREF(dcargs);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+            PyObject* argtup_copy = PyTuple_New(nargs);
+            if (!argtup_copy)
+                goto error;
+
+            for (Py_ssize_t i = 0; i < nargs; i++) {
+                PyObject* arg = PyTuple_GET_ITEM(argtup, i);
+                PyObject* arg_copy = deepcopy_c(arg, mo);
+                if (!arg_copy) {
+                    Py_DECREF(argtup_copy);
+                    goto error;
                 }
-                PyTuple_SET_ITEM(dcargs, i, ca);
+                PyTuple_SET_ITEM(argtup_copy, i, arg_copy);
             }
-            recon = PyObject_CallObject(cons, dcargs);
-            Py_DECREF(dcargs);
+
+            inst = PyObject_CallObject(callable, argtup_copy);
+            Py_DECREF(argtup_copy);
         }
-    }
-    if (!recon) {
-        Py_DECREF(reduce_res);
-        return NULL;
+        if (!inst)
+            goto error;
     }
 
-    if (MEMO_STORE_C((void*)obj, recon, id_hash) < 0) {
-        Py_DECREF(recon);
-        Py_DECREF(reduce_res);
-        return NULL;
-    }
+    // Memoize
+    if (MEMO_STORE_C((void*)obj, inst, id_hash) < 0)
+        goto error_with_inst;
 
-    if (state && state != Py_None) {
-        PyObject* setstate = PyObject_GetAttr(recon, module_state.str_setstate);
+    // Handle state (BUILD semantics)
+    if (state) {
+        PyObject* setstate;
+        if (PyObject_GetOptionalAttr(inst, module_state.str_setstate, &setstate) < 0)
+            goto error_with_inst;
+
         if (setstate) {
-            PyObject* cstate = deepcopy_c(state, mo);
-            if (!cstate) {
+            // Explicit __setstate__
+            PyObject* state_copy = deepcopy_c(state, mo);
+            if (!state_copy) {
                 Py_DECREF(setstate);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error_with_inst;
             }
-            PyObject* r = PyObject_CallOneArg(setstate, cstate);
-            Py_DECREF(cstate);
+
+            PyObject* result = PyObject_CallOneArg(setstate, state_copy);
+            Py_DECREF(state_copy);
             Py_DECREF(setstate);
-            if (!r) {
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
-            }
-            Py_DECREF(r);
+            if (!result)
+                goto error_with_inst;
+            Py_DECREF(result);
         } else {
-            PyErr_Clear();
+            // Default __setstate__: handle inst.__dict__ and slotstate
             PyObject* dict_state = NULL;
-            PyObject* slot_state = NULL;
+            PyObject* slotstate = NULL;
+
             if (PyTuple_Check(state) && PyTuple_GET_SIZE(state) == 2) {
                 dict_state = PyTuple_GET_ITEM(state, 0);
-                slot_state = PyTuple_GET_ITEM(state, 1);
-                if (slot_state && slot_state != Py_None) {
-                    PyObject* it = PyObject_GetIter(slot_state);
-                    if (!it) {
-                        Py_DECREF(recon);
-                        Py_DECREF(reduce_res);
-                        return NULL;
-                    }
-                    PyObject* key;
-                    while ((key = PyIter_Next(it)) != NULL) {
-                        PyObject* value = PyObject_GetItem(slot_state, key);
-                        if (!value) {
-                            Py_DECREF(key);
-                            Py_DECREF(it);
-                            Py_DECREF(recon);
-                            Py_DECREF(reduce_res);
-                            return NULL;
-                        }
-                        PyObject* cvalue = deepcopy_c(value, mo);
-                        Py_DECREF(value);
-                        if (!cvalue) {
-                            Py_DECREF(key);
-                            Py_DECREF(it);
-                            Py_DECREF(recon);
-                            Py_DECREF(reduce_res);
-                            return NULL;
-                        }
-                        if (PyObject_SetAttr(recon, key, cvalue) < 0) {
-                            Py_DECREF(cvalue);
-                            Py_DECREF(key);
-                            Py_DECREF(it);
-                            Py_DECREF(recon);
-                            Py_DECREF(reduce_res);
-                            return NULL;
-                        }
-                        Py_DECREF(cvalue);
-                        Py_DECREF(key);
-                    }
-                    Py_DECREF(it);
-                    if (PyErr_Occurred()) {
-                        Py_DECREF(recon);
-                        Py_DECREF(reduce_res);
-                        return NULL;
-                    }
-                }
+                slotstate = PyTuple_GET_ITEM(state, 1);
             } else {
                 dict_state = state;
             }
+
+            // Set inst.__dict__ from the state dict
             if (dict_state && dict_state != Py_None) {
-                PyObject* cdict_state = deepcopy_c(dict_state, mo);
-                if (!cdict_state) {
-                    Py_DECREF(recon);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+                if (!PyDict_Check(dict_state)) {
+                    PyErr_SetString(PyExc_TypeError, "state is not a dictionary");
+                    goto error_with_inst;
                 }
-                PyObject* obj_dict = PyObject_GetAttr(recon, module_state.str_dict);
-                if (!obj_dict) {
-                    Py_DECREF(cdict_state);
-                    Py_DECREF(recon);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+
+                PyObject* dict_state_copy = deepcopy_c(dict_state, mo);
+                if (!dict_state_copy)
+                    goto error_with_inst;
+
+                PyObject* inst_dict = PyObject_GetAttr(inst, module_state.str_dict);
+                if (!inst_dict) {
+                    Py_DECREF(dict_state_copy);
+                    goto error_with_inst;
                 }
-                PyObject* update = PyObject_GetAttr(obj_dict, module_state.str_update);
-                Py_DECREF(obj_dict);
-                if (!update) {
-                    Py_DECREF(cdict_state);
-                    Py_DECREF(recon);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+
+                PyObject *d_key, *d_value;
+                Py_ssize_t pos = 0;
+                while (PyDict_Next(dict_state_copy, &pos, &d_key, &d_value)) {
+                    if (PyObject_SetItem(inst_dict, d_key, d_value) < 0) {
+                        Py_DECREF(inst_dict);
+                        Py_DECREF(dict_state_copy);
+                        goto error_with_inst;
+                    }
                 }
-                PyObject* r = PyObject_CallOneArg(update, cdict_state);
-                Py_DECREF(update);
-                Py_DECREF(cdict_state);
-                if (!r) {
-                    Py_DECREF(recon);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+
+                Py_DECREF(inst_dict);
+                Py_DECREF(dict_state_copy);
+            }
+
+            // Also set instance attributes from the slotstate dict
+            if (slotstate && slotstate != Py_None) {
+                if (!PyDict_Check(slotstate)) {
+                    PyErr_SetString(PyExc_TypeError, "slot state is not a dictionary");
+                    goto error_with_inst;
                 }
-                Py_DECREF(r);
+
+                PyObject* slotstate_copy = deepcopy_c(slotstate, mo);
+                if (!slotstate_copy)
+                    goto error_with_inst;
+
+                PyObject *d_key, *d_value;
+                Py_ssize_t pos = 0;
+                while (PyDict_Next(slotstate_copy, &pos, &d_key, &d_value)) {
+                    if (PyObject_SetAttr(inst, d_key, d_value) < 0) {
+                        Py_DECREF(slotstate_copy);
+                        goto error_with_inst;
+                    }
+                }
+
+                Py_DECREF(slotstate_copy);
             }
         }
     }
 
-    if (listit && listit != Py_None) {
-        PyObject* append = PyObject_GetAttr(recon, module_state.str_append);
-        if (!append) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
-        PyObject* it = PyObject_GetIter(listit);
+    // Handle listitems
+    if (listitems) {
+        PyObject* append = PyObject_GetAttr(inst, module_state.str_append);
+        if (!append)
+            goto error_with_inst;
+
+        PyObject* it = PyObject_GetIter(listitems);
         if (!it) {
             Py_DECREF(append);
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
+            goto error_with_inst;
         }
+
         PyObject* item;
         while ((item = PyIter_Next(it)) != NULL) {
-            PyObject* citem = deepcopy_c(item, mo);
+            PyObject* item_copy = deepcopy_c(item, mo);
             Py_DECREF(item);
-            if (!citem) {
+            if (!item_copy) {
                 Py_DECREF(it);
                 Py_DECREF(append);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error_with_inst;
             }
-            PyObject* r = PyObject_CallOneArg(append, citem);
-            Py_DECREF(citem);
-            if (!r) {
+
+            PyObject* result = PyObject_CallOneArg(append, item_copy);
+            Py_DECREF(item_copy);
+            if (!result) {
                 Py_DECREF(it);
                 Py_DECREF(append);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error_with_inst;
             }
-            Py_DECREF(r);
+            Py_DECREF(result);
         }
+
         Py_DECREF(it);
         Py_DECREF(append);
-        if (PyErr_Occurred()) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
+        if (PyErr_Occurred())
+            goto error_with_inst;
     }
 
-    if (dictit && dictit != Py_None) {
-        PyObject* it = PyObject_GetIter(dictit);
-        if (!it) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
+    // Handle dictitems
+    if (dictitems) {
+        PyObject* it = PyObject_GetIter(dictitems);
+        if (!it)
+            goto error_with_inst;
+
         PyObject* pair;
         while ((pair = PyIter_Next(it)) != NULL) {
             if (!PyTuple_Check(pair) || PyTuple_GET_SIZE(pair) != 2) {
                 Py_DECREF(pair);
                 Py_DECREF(it);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                PyErr_SetString(PyExc_TypeError, "dictiter must yield (key, value) pairs");
-                return NULL;
+                PyErr_SetString(PyExc_ValueError, "dictiter must yield (key, value) pairs");
+                goto error_with_inst;
             }
-            PyObject* k = PyTuple_GET_ITEM(pair, 0);
-            PyObject* v = PyTuple_GET_ITEM(pair, 1);
-            PyObject* ck = deepcopy_c(k, mo);
-            if (!ck) {
+
+            PyObject* key = PyTuple_GET_ITEM(pair, 0);
+            PyObject* value = PyTuple_GET_ITEM(pair, 1);
+
+            PyObject* key_copy = deepcopy_c(key, mo);
+            if (!key_copy) {
                 Py_DECREF(pair);
                 Py_DECREF(it);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error_with_inst;
             }
-            PyObject* cv = deepcopy_c(v, mo);
-            if (!cv) {
-                Py_DECREF(ck);
+
+            PyObject* value_copy = deepcopy_c(value, mo);
+            if (!value_copy) {
+                Py_DECREF(key_copy);
                 Py_DECREF(pair);
                 Py_DECREF(it);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error_with_inst;
             }
-            if (PyObject_SetItem(recon, ck, cv) < 0) {
-                Py_DECREF(ck);
-                Py_DECREF(cv);
-                Py_DECREF(pair);
-                Py_DECREF(it);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
-            }
-            Py_DECREF(ck);
-            Py_DECREF(cv);
+
+            int status = PyObject_SetItem(inst, key_copy, value_copy);
+            Py_DECREF(key_copy);
+            Py_DECREF(value_copy);
             Py_DECREF(pair);
+
+            if (status < 0) {
+                Py_DECREF(it);
+                goto error_with_inst;
+            }
         }
+
         Py_DECREF(it);
-        if (PyErr_Occurred()) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
+        if (PyErr_Occurred())
+            goto error_with_inst;
     }
 
-    if (recon != obj) {
-        if (keepvector_append(&mo->keep, obj) < 0) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
+    // Keep alive original object if reconstruction returned different object
+    if (inst != obj) {
+        if (keepvector_append(&mo->keep, obj) < 0)
+            goto error_with_inst;
     }
-    Py_DECREF(reduce_res);
-    return recon;
+
+    Py_DECREF(reduce_result);
+    return inst;
+
+error_with_inst:
+    Py_DECREF(inst);
+error:
+    Py_DECREF(reduce_result);
+    return NULL;
 }
 
 /* === Python-dict memo specializations ====================================== */
@@ -1873,338 +1926,347 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_py(
     PyObject** keep_list_ptr,
     Py_ssize_t id_hash
 ) {
-    PyObject* reduce_res = try_reduce_via_registry(obj, tp);
-    if (!reduce_res) {
+    PyObject* reduce_result = try_reduce_via_registry(obj, tp);
+    if (!reduce_result) {
         if (PyErr_Occurred())
             return NULL;
-        reduce_res = call_reduce_method_preferring_ex(obj);
-        if (!reduce_res)
+        reduce_result = call_reduce_method_preferring_ex(obj);
+        if (!reduce_result)
             return NULL;
     }
 
-    PyObject *cons = NULL, *args = NULL, *state = NULL, *listit = NULL, *dictit = NULL;
-    int unpack = unpack_reduce_result_tuple(reduce_res, &cons, &args, &state, &listit, &dictit);
-    if (unpack < 0) {
-        Py_DECREF(reduce_res);
-        return NULL;
-    }
-    if (unpack == 1) {
-        Py_DECREF(reduce_res);
+    PyObject *callable, *argtup, *state, *listitems, *dictitems;
+    int valid =
+        validate_reduce_tuple(reduce_result, &callable, &argtup, &state, &listitems, &dictitems);
+    if (valid < 0)
+        goto error;
+    if (valid == 1) {
+        Py_DECREF(reduce_result);
         return Py_NewRef(obj);
     }
 
-    PyObject* recon = NULL;
-    if (cons == module_state.copyreg_newobj) {
-        if (PyTuple_Check(args) && PyTuple_GET_SIZE(args) >= 1) {
-            PyObject* cls = PyTuple_GET_ITEM(args, 0);
-            if (PyType_Check(cls)) {
-                Py_ssize_t n = PyTuple_GET_SIZE(args) - 1;
-                PyObject* newargs = PyTuple_New(n);
-                if (!newargs) {
-                    Py_DECREF(reduce_res);
-                    return NULL;
-                }
-                for (Py_ssize_t i = 0; i < n; i++) {
-                    PyObject* a = PyTuple_GET_ITEM(args, i + 1);
-                    PyObject* ca = deepcopy_py(a, memo_dict, keep_list_ptr);
-                    if (!ca) {
-                        Py_DECREF(newargs);
-                        Py_DECREF(reduce_res);
-                        return NULL;
-                    }
-                    PyTuple_SET_ITEM(newargs, i, ca);
-                }
-                recon = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, newargs, NULL);
+    PyObject* inst = NULL;
+
+    // Handle __newobj__
+    if (callable == module_state.copyreg_newobj) {
+        if (PyTuple_GET_SIZE(argtup) < 1) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "__newobj__ expected at least 1 argument, got %zd",
+                PyTuple_GET_SIZE(argtup)
+            );
+            goto error;
+        }
+
+        PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
+        if (!PyType_Check(cls)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "first argument to __newobj__() must be a class, not %.200s",
+                Py_TYPE(cls)->tp_name
+            );
+            goto error;
+        }
+
+        Py_ssize_t nargs = PyTuple_GET_SIZE(argtup) - 1;
+        PyObject* newargs = PyTuple_New(nargs);
+        if (!newargs)
+            goto error;
+
+        for (Py_ssize_t i = 0; i < nargs; i++) {
+            PyObject* arg = PyTuple_GET_ITEM(argtup, i + 1);
+            PyObject* arg_copy = deepcopy_py(arg, memo_dict, keep_list_ptr);
+            if (!arg_copy) {
                 Py_DECREF(newargs);
+                goto error;
             }
+            PyTuple_SET_ITEM(newargs, i, arg_copy);
         }
-    } else if (cons == module_state.copyreg_newobj_ex) {
-        if (PyTuple_Check(args) && PyTuple_GET_SIZE(args) == 3) {
-            PyObject* cls = PyTuple_GET_ITEM(args, 0);
-            PyObject* pargs = PyTuple_GET_ITEM(args, 1);
-            PyObject* pkwargs = PyTuple_GET_ITEM(args, 2);
-            if (PyType_Check(cls) && PyTuple_Check(pargs)) {
-                PyObject* dc_pargs = deepcopy_py(pargs, memo_dict, keep_list_ptr);
-                if (!dc_pargs) {
-                    Py_DECREF(reduce_res);
-                    return NULL;
-                }
-                PyObject* dc_kwargs = NULL;
-                if (pkwargs != Py_None) {
-                    dc_kwargs = deepcopy_py(pkwargs, memo_dict, keep_list_ptr);
-                    if (!dc_kwargs) {
-                        Py_DECREF(dc_pargs);
-                        Py_DECREF(reduce_res);
-                        return NULL;
-                    }
-                }
-                recon = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, dc_pargs, dc_kwargs);
-                Py_DECREF(dc_pargs);
-                Py_XDECREF(dc_kwargs);
-            }
-        }
+
+        inst = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, newargs, NULL);
+        Py_DECREF(newargs);
+        if (!inst)
+            goto error;
     }
-    if (!recon) {
-        if (PyTuple_GET_SIZE(args) == 0) {
-            recon = PyObject_CallNoArgs(cons);
+    // Handle __newobj_ex__
+    else if (callable == module_state.copyreg_newobj_ex) {
+        if (PyTuple_GET_SIZE(argtup) != 3) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "__newobj_ex__ expected 3 arguments, got %zd",
+                PyTuple_GET_SIZE(argtup)
+            );
+            goto error;
+        }
+
+        PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
+        PyObject* args = PyTuple_GET_ITEM(argtup, 1);
+        PyObject* kwargs = PyTuple_GET_ITEM(argtup, 2);
+
+        if (!PyType_Check(cls)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "first argument to __newobj_ex__() must be a class, not %.200s",
+                Py_TYPE(cls)->tp_name
+            );
+            goto error;
+        }
+        if (!PyTuple_Check(args)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "second argument to __newobj_ex__() must be a tuple, not %.200s",
+                Py_TYPE(args)->tp_name
+            );
+            goto error;
+        }
+        if (!PyDict_Check(kwargs)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "third argument to __newobj_ex__() must be a dict, not %.200s",
+                Py_TYPE(kwargs)->tp_name
+            );
+            goto error;
+        }
+
+        PyObject* args_copy = deepcopy_py(args, memo_dict, keep_list_ptr);
+        if (!args_copy)
+            goto error;
+
+        PyObject* kwargs_copy = deepcopy_py(kwargs, memo_dict, keep_list_ptr);
+        if (!kwargs_copy) {
+            Py_DECREF(args_copy);
+            goto error;
+        }
+
+        inst = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, args_copy, kwargs_copy);
+        Py_DECREF(args_copy);
+        Py_DECREF(kwargs_copy);
+        if (!inst)
+            goto error;
+    }
+    // Generic callable
+    else {
+        Py_ssize_t nargs = PyTuple_GET_SIZE(argtup);
+        if (nargs == 0) {
+            inst = PyObject_CallNoArgs(callable);
         } else {
-            Py_ssize_t n = PyTuple_GET_SIZE(args);
-            PyObject* dcargs = PyTuple_New(n);
-            if (!dcargs) {
-                Py_DECREF(reduce_res);
-                return NULL;
-            }
-            for (Py_ssize_t i = 0; i < n; i++) {
-                PyObject* a = PyTuple_GET_ITEM(args, i);
-                PyObject* ca = deepcopy_py(a, memo_dict, keep_list_ptr);
-                if (!ca) {
-                    Py_DECREF(dcargs);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+            PyObject* argtup_copy = PyTuple_New(nargs);
+            if (!argtup_copy)
+                goto error;
+
+            for (Py_ssize_t i = 0; i < nargs; i++) {
+                PyObject* arg = PyTuple_GET_ITEM(argtup, i);
+                PyObject* arg_copy = deepcopy_py(arg, memo_dict, keep_list_ptr);
+                if (!arg_copy) {
+                    Py_DECREF(argtup_copy);
+                    goto error;
                 }
-                PyTuple_SET_ITEM(dcargs, i, ca);
+                PyTuple_SET_ITEM(argtup_copy, i, arg_copy);
             }
-            recon = PyObject_CallObject(cons, dcargs);
-            Py_DECREF(dcargs);
+
+            inst = PyObject_CallObject(callable, argtup_copy);
+            Py_DECREF(argtup_copy);
         }
-    }
-    if (!recon) {
-        Py_DECREF(reduce_res);
-        return NULL;
+        if (!inst)
+            goto error;
     }
 
-    if (MEMO_STORE_PY((void*)obj, recon, id_hash) < 0) {
-        Py_DECREF(recon);
-        Py_DECREF(reduce_res);
-        return NULL;
-    }
+    // Memoize
+    if (MEMO_STORE_PY((void*)obj, inst, id_hash) < 0)
+        goto error;
 
-    if (state && state != Py_None) {
-        PyObject* setstate = PyObject_GetAttr(recon, module_state.str_setstate);
+    // Handle state (BUILD semantics)
+    if (state) {
+        PyObject* setstate;
+        if (PyObject_GetOptionalAttr(inst, module_state.str_setstate, &setstate) < 0)
+            goto error;
+
         if (setstate) {
-            PyObject* cstate = deepcopy_py(state, memo_dict, keep_list_ptr);
-            if (!cstate) {
+            // Explicit __setstate__
+            PyObject* state_copy = deepcopy_py(state, memo_dict, keep_list_ptr);
+            if (!state_copy) {
                 Py_DECREF(setstate);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error;
             }
-            PyObject* r = PyObject_CallOneArg(setstate, cstate);
-            Py_DECREF(cstate);
+
+            PyObject* result = PyObject_CallOneArg(setstate, state_copy);
+            Py_DECREF(state_copy);
             Py_DECREF(setstate);
-            if (!r) {
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
-            }
-            Py_DECREF(r);
+            if (!result)
+                goto error;
+            Py_DECREF(result);
         } else {
-            PyErr_Clear();
+            // Default __setstate__: handle inst.__dict__ and slotstate
             PyObject* dict_state = NULL;
-            PyObject* slot_state = NULL;
+            PyObject* slotstate = NULL;
+
             if (PyTuple_Check(state) && PyTuple_GET_SIZE(state) == 2) {
                 dict_state = PyTuple_GET_ITEM(state, 0);
-                slot_state = PyTuple_GET_ITEM(state, 1);
-                if (slot_state && slot_state != Py_None) {
-                    PyObject* it = PyObject_GetIter(slot_state);
-                    if (!it) {
-                        Py_DECREF(recon);
-                        Py_DECREF(reduce_res);
-                        return NULL;
-                    }
-                    PyObject* key;
-                    while ((key = PyIter_Next(it)) != NULL) {
-                        PyObject* value = PyObject_GetItem(slot_state, key);
-                        if (!value) {
-                            Py_DECREF(key);
-                            Py_DECREF(it);
-                            Py_DECREF(recon);
-                            Py_DECREF(reduce_res);
-                            return NULL;
-                        }
-                        PyObject* cvalue = deepcopy_py(value, memo_dict, keep_list_ptr);
-                        Py_DECREF(value);
-                        if (!cvalue) {
-                            Py_DECREF(key);
-                            Py_DECREF(it);
-                            Py_DECREF(recon);
-                            Py_DECREF(reduce_res);
-                            return NULL;
-                        }
-                        if (PyObject_SetAttr(recon, key, cvalue) < 0) {
-                            Py_DECREF(cvalue);
-                            Py_DECREF(key);
-                            Py_DECREF(it);
-                            Py_DECREF(recon);
-                            Py_DECREF(reduce_res);
-                            return NULL;
-                        }
-                        Py_DECREF(cvalue);
-                        Py_DECREF(key);
-                    }
-                    Py_DECREF(it);
-                    if (PyErr_Occurred()) {
-                        Py_DECREF(recon);
-                        Py_DECREF(reduce_res);
-                        return NULL;
-                    }
-                }
+                slotstate = PyTuple_GET_ITEM(state, 1);
             } else {
                 dict_state = state;
             }
+
+            // Set inst.__dict__ from the state dict
             if (dict_state && dict_state != Py_None) {
-                PyObject* cdict_state = deepcopy_py(dict_state, memo_dict, keep_list_ptr);
-                if (!cdict_state) {
-                    Py_DECREF(recon);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+                if (!PyDict_Check(dict_state)) {
+                    PyErr_SetString(PyExc_TypeError, "state is not a dictionary");
+                    goto error;
                 }
-                PyObject* obj_dict = PyObject_GetAttr(recon, module_state.str_dict);
-                if (!obj_dict) {
-                    Py_DECREF(cdict_state);
-                    Py_DECREF(recon);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+
+                PyObject* dict_state_copy = deepcopy_py(dict_state, memo_dict, keep_list_ptr);
+                if (!dict_state_copy)
+                    goto error;
+
+                PyObject* inst_dict = PyObject_GetAttr(inst, module_state.str_dict);
+                if (!inst_dict) {
+                    Py_DECREF(dict_state_copy);
+                    goto error;
                 }
-                PyObject* update = PyObject_GetAttr(obj_dict, module_state.str_update);
-                Py_DECREF(obj_dict);
-                if (!update) {
-                    Py_DECREF(cdict_state);
-                    Py_DECREF(recon);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+
+                PyObject *d_key, *d_value;
+                Py_ssize_t pos = 0;
+                while (PyDict_Next(dict_state_copy, &pos, &d_key, &d_value)) {
+                    if (PyObject_SetItem(inst_dict, d_key, d_value) < 0) {
+                        Py_DECREF(inst_dict);
+                        Py_DECREF(dict_state_copy);
+                        goto error;
+                    }
                 }
-                PyObject* r = PyObject_CallOneArg(update, cdict_state);
-                Py_DECREF(update);
-                Py_DECREF(cdict_state);
-                if (!r) {
-                    Py_DECREF(recon);
-                    Py_DECREF(reduce_res);
-                    return NULL;
+
+                Py_DECREF(inst_dict);
+                Py_DECREF(dict_state_copy);
+            }
+
+            // Also set instance attributes from the slotstate dict
+            if (slotstate && slotstate != Py_None) {
+                if (!PyDict_Check(slotstate)) {
+                    PyErr_SetString(PyExc_TypeError, "slot state is not a dictionary");
+                    goto error;
                 }
-                Py_DECREF(r);
+
+                PyObject* slotstate_copy = deepcopy_py(slotstate, memo_dict, keep_list_ptr);
+                if (!slotstate_copy)
+                    goto error;
+
+                PyObject *d_key, *d_value;
+                Py_ssize_t pos = 0;
+                while (PyDict_Next(slotstate_copy, &pos, &d_key, &d_value)) {
+                    if (PyObject_SetAttr(inst, d_key, d_value) < 0) {
+                        Py_DECREF(slotstate_copy);
+                        goto error;
+                    }
+                }
+
+                Py_DECREF(slotstate_copy);
             }
         }
     }
 
-    if (listit && listit != Py_None) {
-        PyObject* append = PyObject_GetAttr(recon, module_state.str_append);
-        if (!append) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
-        PyObject* it = PyObject_GetIter(listit);
+    // Handle listitems
+    if (listitems) {
+        PyObject* append = PyObject_GetAttr(inst, module_state.str_append);
+        if (!append)
+            goto error;
+
+        PyObject* it = PyObject_GetIter(listitems);
         if (!it) {
             Py_DECREF(append);
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
+            goto error;
         }
+
         PyObject* item;
         while ((item = PyIter_Next(it)) != NULL) {
-            PyObject* citem = deepcopy_py(item, memo_dict, keep_list_ptr);
+            PyObject* item_copy = deepcopy_py(item, memo_dict, keep_list_ptr);
             Py_DECREF(item);
-            if (!citem) {
+            if (!item_copy) {
                 Py_DECREF(it);
                 Py_DECREF(append);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error;
             }
-            PyObject* r = PyObject_CallOneArg(append, citem);
-            Py_DECREF(citem);
-            if (!r) {
+
+            PyObject* result = PyObject_CallOneArg(append, item_copy);
+            Py_DECREF(item_copy);
+            if (!result) {
                 Py_DECREF(it);
                 Py_DECREF(append);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error;
             }
-            Py_DECREF(r);
+            Py_DECREF(result);
         }
+
         Py_DECREF(it);
         Py_DECREF(append);
-        if (PyErr_Occurred()) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
+        if (PyErr_Occurred())
+            goto error;
     }
 
-    if (dictit && dictit != Py_None) {
-        PyObject* it = PyObject_GetIter(dictit);
-        if (!it) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
+    // Handle dictitems
+    if (dictitems) {
+        PyObject* it = PyObject_GetIter(dictitems);
+        if (!it)
+            goto error;
+
         PyObject* pair;
         while ((pair = PyIter_Next(it)) != NULL) {
             if (!PyTuple_Check(pair) || PyTuple_GET_SIZE(pair) != 2) {
                 Py_DECREF(pair);
                 Py_DECREF(it);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                PyErr_SetString(PyExc_TypeError, "dictiter must yield (key, value) pairs");
-                return NULL;
+                PyErr_SetString(PyExc_ValueError, "dictiter must yield (key, value) pairs");
+                goto error;
             }
-            PyObject* k = PyTuple_GET_ITEM(pair, 0);
-            PyObject* v = PyTuple_GET_ITEM(pair, 1);
-            PyObject* ck = deepcopy_py(k, memo_dict, keep_list_ptr);
-            if (!ck) {
+
+            PyObject* key = PyTuple_GET_ITEM(pair, 0);
+            PyObject* value = PyTuple_GET_ITEM(pair, 1);
+
+            PyObject* key_copy = deepcopy_py(key, memo_dict, keep_list_ptr);
+            if (!key_copy) {
                 Py_DECREF(pair);
                 Py_DECREF(it);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error;
             }
-            PyObject* cv = deepcopy_py(v, memo_dict, keep_list_ptr);
-            if (!cv) {
-                Py_DECREF(ck);
+
+            PyObject* value_copy = deepcopy_py(value, memo_dict, keep_list_ptr);
+            if (!value_copy) {
+                Py_DECREF(key_copy);
                 Py_DECREF(pair);
                 Py_DECREF(it);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
+                goto error;
             }
-            if (PyObject_SetItem(recon, ck, cv) < 0) {
-                Py_DECREF(ck);
-                Py_DECREF(cv);
-                Py_DECREF(pair);
-                Py_DECREF(it);
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
-            }
-            Py_DECREF(ck);
-            Py_DECREF(cv);
+
+            int status = PyObject_SetItem(inst, key_copy, value_copy);
+            Py_DECREF(key_copy);
+            Py_DECREF(value_copy);
             Py_DECREF(pair);
+
+            if (status < 0) {
+                Py_DECREF(it);
+                goto error;
+            }
         }
+
         Py_DECREF(it);
-        if (PyErr_Occurred()) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
+        if (PyErr_Occurred())
+            goto error;
     }
 
-    if (recon != obj) {
+    // Keep alive original object if reconstruction returned different object
+    if (inst != obj) {
         if (*keep_list_ptr == NULL) {
-            if (ensure_keep_list_for_pymemo(memo_dict, keep_list_ptr) < 0) {
-                Py_DECREF(recon);
-                Py_DECREF(reduce_res);
-                return NULL;
-            }
+            if (ensure_keep_list_for_pymemo(memo_dict, keep_list_ptr) < 0)
+                goto error;
         }
-        if (PyList_Append(*keep_list_ptr, obj) < 0) {
-            Py_DECREF(recon);
-            Py_DECREF(reduce_res);
-            return NULL;
-        }
+        if (PyList_Append(*keep_list_ptr, obj) < 0)
+            goto error;
     }
-    Py_DECREF(reduce_res);
-    return recon;
+
+    Py_DECREF(reduce_result);
+    return inst;
+
+error:
+    Py_XDECREF(inst);
+    Py_DECREF(reduce_result);
+    return NULL;
 }
 
 /* ------------------------------ Public API ---------------------------------
@@ -2704,7 +2766,7 @@ static PyObject* reconstruct_state(
             if (!PyTuple_Check(pair) || PyTuple_GET_SIZE(pair) != 2) {
                 Py_DECREF(pair);
                 Py_DECREF(it);
-                PyErr_SetString(PyExc_TypeError, "dictiter must yield (key, value) pairs");
+                PyErr_SetString(PyExc_ValueError, "dictiter must yield (key, value) pairs");
                 return NULL;
             }
             PyObject* k = PyTuple_GET_ITEM(pair, 0);
@@ -2839,9 +2901,8 @@ PyObject* py_copy(PyObject* self, PyObject* obj) {
     }
 
     PyObject *constructor = NULL, *args = NULL, *state = NULL, *listiter = NULL, *dictiter = NULL;
-    int unpack_result = unpack_reduce_result_tuple(
-        reduce_result, &constructor, &args, &state, &listiter, &dictiter
-    );
+    int unpack_result =
+        validate_reduce_tuple(reduce_result, &constructor, &args, &state, &listiter, &dictiter);
     if (unpack_result < 0) {
         Py_DECREF(reduce_result);
         return NULL;
