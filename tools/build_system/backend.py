@@ -111,7 +111,9 @@ def _get_version_info() -> dict[str, Any]:
         from setuptools_scm import get_version
 
         version = get_version(
-            root=str(PROJECT_ROOT), version_scheme="guess-next-dev", local_scheme="no-local-version"
+            root=str(PROJECT_ROOT),
+            version_scheme="guess-next-dev",
+            local_scheme="dirty-tag"
         )
         echo("setuptools-scm:", version)
     except NoExceptionError as e:
