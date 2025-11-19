@@ -71,7 +71,6 @@ REQUIRES_CACHE.mkdir(exist_ok=True)
 
 # Single-process state
 _session_state: dict[str, Any] = {}
-_cleanup_done = False
 
 VECTOR_CALL_PATCH_AVAILABLE = sys.version_info >= (3, 12)
 
@@ -566,11 +565,32 @@ def _cleanup_cache() -> None:
 
 
 def _ensure_cleanup_once() -> None:
-    """Run cache cleanup once per process."""
-    global _cleanup_done
-    if not _cleanup_done:
-        _cleanup_cache()
-        _cleanup_done = True
+    """
+    Run cache cleanup if it hasn't been run in the last minute.
+
+    Uses a filesystem timestamp file to coordinate across multiple build processes.
+    """
+    cleanup_marker = CACHE_ROOT / ".last_cleanup"
+    cleanup_interval = 60  # seconds
+
+    # Check if cleanup was recently performed
+    if cleanup_marker.exists():
+        try:
+            last_cleanup = cleanup_marker.stat().st_mtime
+            if time.time() - last_cleanup < cleanup_interval:
+                # Cleanup was performed recently, skip
+                return
+        except OSError:
+            pass
+
+    # Perform cleanup
+    _cleanup_cache()
+
+    # Update timestamp marker
+    try:
+        cleanup_marker.touch()
+    except OSError:
+        pass
 
 
 # ============================================================================
