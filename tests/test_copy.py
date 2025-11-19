@@ -906,7 +906,11 @@ def test_reduce_4tuple(copy) -> None:
 def test_reduce_5tuple(copy) -> None:
     class C(dict):
         def __reduce__(self):
-            return (C, (), self.__dict__, None, self.items())
+            # Replaced `self.items()` with `iter(self.items())`.
+            # FIXME: cannot claim that copium passes stdlib tests until it's resolved.
+            # Details: https://github.com/python/cpython/issues/141757
+            # Can remove this comment if https://github.com/python/cpython/pull/141759 gets merged.
+            return (C, (), self.__dict__, None, iter(self.items()))
 
         def __eq__(self, other):
             return dict(self) == dict(other) and self.__dict__ == other.__dict__
