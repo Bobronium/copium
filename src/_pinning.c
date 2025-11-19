@@ -21,11 +21,11 @@
 #include "Python.h"
 
 #if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+    #define LIKELY(x) __builtin_expect(!!(x), 1)
+    #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 #else
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
+    #define LIKELY(x) (x)
+    #define UNLIKELY(x) (x)
 #endif
 
 /* ------------------------------ Pin type ---------------------------------- */
@@ -96,7 +96,6 @@ typedef struct {
 #define PIN_TOMBSTONE ((void*)(uintptr_t)(-1))
 
 static PinTable* global_pin_table = NULL; /* owned here */
-
 
 static void pin_table_free(PinTable* table) {
     if (!table)

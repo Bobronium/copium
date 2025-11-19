@@ -22,26 +22,26 @@
 #include <stdlib.h>
 #include <string.h>
 #if defined(__APPLE__) || defined(__linux__)
-#include <pthread.h>
+    #include <pthread.h>
 #endif
 #if defined(_WIN32)
-#include <windows.h>
+    #include <windows.h>
 #endif
 
 #include "Python.h"
 #include "pycore_object.h"  // _PyNone_Type, _PyNotImplemented_Type
 // _PyDict_NewPresized
 #if PY_VERSION_HEX < PY_VERSION_3_11_HEX
-#include "dictobject.h"
+    #include "dictobject.h"
 #else
-#include "pycore_dict.h"
+    #include "pycore_dict.h"
 #endif
 // _PySet_NextEntry()
 
 #if PY_VERSION_HEX < PY_VERSION_3_13_HEX
-#include "setobject.h"
+    #include "setobject.h"
 #else
-#include "pycore_setobject.h"
+    #include "pycore_setobject.h"
 #endif
 
 /* -----------------------------------------------------------------------------
@@ -57,43 +57,44 @@
  *   - GCC/Clang: ALWAYS_INLINE = inline + always_inline (+hot); MAYBE_INLINE = inline (+hot).
  * ---------------------------------------------------------------------------*/
 #ifdef ALWAYS_INLINE
-#undef ALWAYS_INLINE
+    #undef ALWAYS_INLINE
 #endif
 #ifdef MAYBE_INLINE
-#undef MAYBE_INLINE
+    #undef MAYBE_INLINE
 #endif
 
 /* Feature-gated attributes for portability */
 #if defined(__has_attribute)
-  #if __has_attribute(hot)
-    #define COPIUM_ATTR_HOT __attribute__((hot))
-  #else
-    #define COPIUM_ATTR_HOT
-  #endif
-  #if __has_attribute(gnu_inline)
-    #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
-  #else
-    #define COPIUM_ATTR_GNU_INLINE
-  #endif
+    #if __has_attribute(hot)
+        #define COPIUM_ATTR_HOT __attribute__((hot))
+    #else
+        #define COPIUM_ATTR_HOT
+    #endif
+    #if __has_attribute(gnu_inline)
+        #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
+    #else
+        #define COPIUM_ATTR_GNU_INLINE
+    #endif
 #else
-  #if defined(__GNUC__) || defined(__clang__)
-    #define COPIUM_ATTR_HOT __attribute__((hot))
-    #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
-  #else
-    #define COPIUM_ATTR_HOT
-    #define COPIUM_ATTR_GNU_INLINE
-  #endif
+    #if defined(__GNUC__) || defined(__clang__)
+        #define COPIUM_ATTR_HOT __attribute__((hot))
+        #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
+    #else
+        #define COPIUM_ATTR_HOT
+        #define COPIUM_ATTR_GNU_INLINE
+    #endif
 #endif
 
 #if defined(_MSC_VER)
-  #define ALWAYS_INLINE __forceinline
-  #define MAYBE_INLINE __inline
+    #define ALWAYS_INLINE __forceinline
+    #define MAYBE_INLINE __inline
 #elif defined(__GNUC__) || defined(__clang__)
-  #define ALWAYS_INLINE inline __attribute__((always_inline)) COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
-  #define MAYBE_INLINE inline COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
+    #define ALWAYS_INLINE \
+        inline __attribute__((always_inline)) COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
+    #define MAYBE_INLINE inline COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
 #else
-  #define ALWAYS_INLINE inline
-  #define MAYBE_INLINE inline
+    #define ALWAYS_INLINE inline
+    #define MAYBE_INLINE inline
 #endif
 
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
@@ -102,7 +103,6 @@ static int g_dict_watcher_id = -1;
 static int g_dict_watcher_registered = 0;
 #endif
 
-
 /* ------------------------------ Small helpers ------------------------------ */
 
 #if PY_VERSION_HEX < PY_VERSION_3_13_HEX
@@ -110,7 +110,7 @@ static int g_dict_watcher_registered = 0;
 static ALWAYS_INLINE int get_optional_attr(PyObject* obj, PyObject* name, PyObject** out) {
     return _PyObject_LookupAttr(obj, name, out);
 }
-#define PyObject_GetOptionalAttr(obj, name, out) get_optional_attr((obj), (name), (out))
+    #define PyObject_GetOptionalAttr(obj, name, out) get_optional_attr((obj), (name), (out))
 #endif
 
 /* -------- Dict iteration with mutation check (fast path) -------- */
@@ -384,11 +384,11 @@ static PyObject* get_thread_local_memo(void) {
  */
 
 #ifndef COPIUM_STACKCHECK_STRIDE
-#define COPIUM_STACKCHECK_STRIDE 32u
+    #define COPIUM_STACKCHECK_STRIDE 32u
 #endif
 
 #ifndef COPIUM_STACK_SAFETY_MARGIN
-#define COPIUM_STACK_SAFETY_MARGIN (256u * 1024u)  // 256 KiB
+    #define COPIUM_STACK_SAFETY_MARGIN (256u * 1024u)  // 256 KiB
 #endif
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
@@ -404,7 +404,7 @@ static ALWAYS_INLINE void _copium_stack_init_if_needed(void) {
         return;
     _copium_tls_stack_inited = 1;
 
-#if defined(__APPLE__)
+    #if defined(__APPLE__)
     pthread_t t = pthread_self();
     size_t sz = pthread_get_stacksize_np(t);
     void* base = pthread_get_stackaddr_np(t);
@@ -417,7 +417,7 @@ static ALWAYS_INLINE void _copium_stack_init_if_needed(void) {
 
     _copium_tls_stack_low = low;
     _copium_tls_stack_high = high;
-#elif defined(__linux__)
+    #elif defined(__linux__)
     pthread_attr_t attr;
     if (pthread_getattr_np(pthread_self(), &attr) == 0) {
         void* addr = NULL;
@@ -432,10 +432,10 @@ static ALWAYS_INLINE void _copium_stack_init_if_needed(void) {
         }
         pthread_attr_destroy(&attr);
     }
-#else
+    #else
     _copium_tls_stack_low = NULL;
     _copium_tls_stack_high = NULL;
-#endif
+    #endif
 #endif
 }
 
@@ -487,7 +487,7 @@ static ALWAYS_INLINE int _copium_recdepth_enter(void) {
         return 0;
     }
 
-#ifdef _WIN32
+    #ifdef _WIN32
     if (UNLIKELY((next & (COPIUM_STACKCHECK_STRIDE - 1u)) == 0u)) {
         typedef VOID(WINAPI * GetStackLimitsFn)(PULONG_PTR, PULONG_PTR);
         static GetStackLimitsFn _copium_pGetCurrentThreadStackLimits = NULL;
@@ -518,7 +518,7 @@ static ALWAYS_INLINE int _copium_recdepth_enter(void) {
             }
         }
     }
-#endif
+    #endif
 
     int limit = Py_GetRecursionLimit();
     if (limit > 10000)
@@ -576,7 +576,9 @@ static PyObject* custom_memo_lookup(PyObject* memo, void* key_ptr) {
         /* For custom memos, call memo.get(key, sentinel) using PyObject_CallMethodObjArgs.
            This is more efficient than PyObject_CallMethod because it uses a cached
            interned string object instead of creating a new string each time. */
-        res = PyObject_CallMethodObjArgs(memo, module_state.str_get, pykey, module_state.sentinel, NULL);
+        res = PyObject_CallMethodObjArgs(
+            memo, module_state.str_get, pykey, module_state.sentinel, NULL
+        );
         Py_DECREF(pykey);
         if (UNLIKELY(!res))
             return NULL;
@@ -629,7 +631,9 @@ static ALWAYS_INLINE int ensure_keep_list_for_pymemo(PyObject* memo, PyObject** 
 /* ----------------------------- Predecl for c/py paths ---------------------- */
 
 static ALWAYS_INLINE PyObject* deepcopy_c(PyObject* obj, MemoObject* mo);
-static ALWAYS_INLINE PyObject* deepcopy_py(PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr);
+static ALWAYS_INLINE PyObject* deepcopy_py(
+    PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr
+);
 
 /* ----------------------------- Type-special helpers ------------------------ */
 /* We define two sets of helpers: *_c operate with MemoObject*, *_py with dict. */
@@ -993,9 +997,7 @@ static ALWAYS_INLINE PyObject* deepcopy_bytearray_c(
     return copy;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_method_c(
-    PyObject* obj, MemoObject* mo, Py_ssize_t id_hash
-) {
+static MAYBE_INLINE PyObject* deepcopy_method_c(PyObject* obj, MemoObject* mo, Py_ssize_t id_hash) {
     PyObject* func = PyMethod_GET_FUNCTION(obj);
     PyObject* self = PyMethod_GET_SELF(obj);
     if (!func || !self)
@@ -1470,7 +1472,11 @@ static MAYBE_INLINE PyObject* deepcopy_method_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 );
 static MAYBE_INLINE PyObject* deepcopy_via_reduce_py(
-    PyObject* obj, PyTypeObject* tp, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
+    PyObject* obj,
+    PyTypeObject* tp,
+    PyObject* memo_dict,
+    PyObject** keep_list_ptr,
+    Py_ssize_t id_hash
 );
 
 static ALWAYS_INLINE PyObject* deepcopy_py(
@@ -1861,7 +1867,11 @@ static MAYBE_INLINE PyObject* deepcopy_method_py(
 }
 
 static MAYBE_INLINE PyObject* deepcopy_via_reduce_py(
-    PyObject* obj, PyTypeObject* tp, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
+    PyObject* obj,
+    PyTypeObject* tp,
+    PyObject* memo_dict,
+    PyObject** keep_list_ptr,
+    Py_ssize_t id_hash
 ) {
     PyObject* reduce_res = try_reduce_via_registry(obj, tp);
     if (!reduce_res) {

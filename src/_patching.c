@@ -15,17 +15,17 @@
 #include <stdint.h>
 
 #if PY_VERSION_HEX >= 0x030C0000
-/* =========================
+    /* =========================
  * CPython 3.12+ IMPLEMENTATION
  * ========================= */
-#include "cpython/funcobject.h"  // PyFunctionObject, PyVectorcall_Function
+    #include "cpython/funcobject.h"  // PyFunctionObject, PyVectorcall_Function
 
 static PyObject* KEY_TARGET = NULL;   // "_copium_target"
 static PyObject* KEY_SAVED = NULL;    // "_copium_saved_vec"
 static PyObject* KEY_WRAPPED = NULL;  // "__wrapped__"
 static int g_patching_initialized = 0;
 
-#define SAVED_VEC_CAPSULE_NAME "copium.vectorcall"
+    #define SAVED_VEC_CAPSULE_NAME "copium.vectorcall"
 
 static PyObject* fwd_vec(
     PyObject* callable, PyObject* const* args, size_t nargsf, PyObject* kwnames
@@ -226,10 +226,10 @@ static int _ensure_inited(void) {
 int _copium_patching_add_api(PyObject* module) {
     if (_ensure_inited() < 0)
         return -1;
-#if PY_VERSION_HEX >= 0x03080000
+    #if PY_VERSION_HEX >= 0x03080000
     if (PyModule_AddFunctions(module, patching_methods) < 0)
         return -1;
-#else
+    #else
     for (PyMethodDef* m = patching_methods; m && m->ml_name; ++m) {
         PyObject* func = PyCFunction_NewEx(m, NULL, PyModule_GetNameObject(module));
         if (!func || PyModule_AddObject(module, m->ml_name, func) < 0) {
@@ -237,7 +237,7 @@ int _copium_patching_add_api(PyObject* module) {
             return -1;
         }
     }
-#endif
+    #endif
     return 0;
 }
 
@@ -566,10 +566,10 @@ static int _ensure_inited(void) {
 int _copium_patching_add_api(PyObject* module) {
     if (_ensure_inited() < 0)
         return -1;
-#if PY_VERSION_HEX >= 0x03080000
+    #if PY_VERSION_HEX >= 0x03080000
     if (PyModule_AddFunctions(module, patching_methods) < 0)
         return -1;
-#else
+    #else
     for (PyMethodDef* m = patching_methods; m && m->ml_name; ++m) {
         PyObject* func = PyCFunction_NewEx(m, NULL, PyModule_GetNameObject(module));
         if (!func || PyModule_AddObject(module, m->ml_name, func) < 0) {
@@ -577,7 +577,7 @@ int _copium_patching_add_api(PyObject* module) {
             return -1;
         }
     }
-#endif
+    #endif
     return 0;
 }
 #endif /* version branch */

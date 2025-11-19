@@ -22,21 +22,20 @@
 //#include "_memo.h"
 
 #if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#define ALWAYS_INLINE inline __attribute__((always_inline))
+    #define LIKELY(x) __builtin_expect(!!(x), 1)
+    #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+    #define ALWAYS_INLINE inline __attribute__((always_inline))
 #elif defined(_MSC_VER)
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#define ALWAYS_INLINE __forceinline
+    #define LIKELY(x) (x)
+    #define UNLIKELY(x) (x)
+    #define ALWAYS_INLINE __forceinline
 #else
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#define ALWAYS_INLINE inline
+    #define LIKELY(x) (x)
+    #define UNLIKELY(x) (x)
+    #define ALWAYS_INLINE inline
 #endif
 
 /* ------------------------------ Memo table -------------------------------- */
-
 
 typedef struct {
     void* key;
@@ -62,7 +61,6 @@ typedef struct _MemoObject {
     KeepVector keep;
 } MemoObject;
 
-
 /* Forward decl to refer to Memo_Type in helpers */
 typedef struct _MemoObject MemoObject;
 
@@ -86,16 +84,16 @@ static ALWAYS_INLINE Py_ssize_t memo_hash_pointer(void* ptr) {
 
 /* Retention policy caps for TLS memo/keepalive reuse */
 #ifndef COPIUM_MEMO_RETAIN_MAX_SLOTS
-#define COPIUM_MEMO_RETAIN_MAX_SLOTS (1 << 17) /* 131072 slots (~2 MiB for 16B entries) */
+    #define COPIUM_MEMO_RETAIN_MAX_SLOTS (1 << 17) /* 131072 slots (~2 MiB for 16B entries) */
 #endif
 #ifndef COPIUM_MEMO_RETAIN_SHRINK_TO
-#define COPIUM_MEMO_RETAIN_SHRINK_TO (1 << 13) /* 8192 slots */
+    #define COPIUM_MEMO_RETAIN_SHRINK_TO (1 << 13) /* 8192 slots */
 #endif
 #ifndef COPIUM_KEEP_RETAIN_MAX
-#define COPIUM_KEEP_RETAIN_MAX (1 << 13) /* 8192 elements */
+    #define COPIUM_KEEP_RETAIN_MAX (1 << 13) /* 8192 elements */
 #endif
 #ifndef COPIUM_KEEP_RETAIN_TARGET
-#define COPIUM_KEEP_RETAIN_TARGET (1 << 10) /* 1024 elements */
+    #define COPIUM_KEEP_RETAIN_TARGET (1 << 10) /* 1024 elements */
 #endif
 
 /* ------------------------------ Keep vector impl --------------------------- */
@@ -353,7 +351,9 @@ static ALWAYS_INLINE PyObject* memo_table_lookup_h(MemoTable* table, void* key, 
     }
 }
 
-static ALWAYS_INLINE int memo_table_insert_h(MemoTable** table_ptr, void* key, PyObject* value, Py_ssize_t hash) {
+static ALWAYS_INLINE int memo_table_insert_h(
+    MemoTable** table_ptr, void* key, PyObject* value, Py_ssize_t hash
+) {
     if (memo_table_ensure(table_ptr) < 0)
         return -1;
     MemoTable* table = *table_ptr;
@@ -756,8 +756,6 @@ PyTypeObject Memo_Type = {
     .tp_iter = (getiterfunc)Memo_iter,
     .tp_methods = Memo_methods,
 };
-
-
 
 /* --------------------------- Type readiness helper ------------------------- */
 

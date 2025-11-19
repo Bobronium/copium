@@ -39,30 +39,30 @@
 
 /* Enable GNU extensions so pthread_getattr_np is declared on Linux */
 #ifndef _GNU_SOURCE
-#define _GNU_SOURCE 1
+    #define _GNU_SOURCE 1
 #endif
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
 #ifndef LIKELY
-#if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#endif
+    #if defined(__GNUC__) || defined(__clang__)
+        #define LIKELY(x) __builtin_expect(!!(x), 1)
+        #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+    #else
+        #define LIKELY(x) (x)
+        #define UNLIKELY(x) (x)
+    #endif
 #endif
 
 #ifndef ALWAYS_INLINE
-#if (defined(__GNUC__) || defined(__clang__)) && defined(__OPTIMIZE__)
-#define ALWAYS_INLINE inline __attribute__((always_inline))
-#elif defined(_MSC_VER)
-#define ALWAYS_INLINE __forceinline
-#else
-#define ALWAYS_INLINE inline
-#endif
+    #if (defined(__GNUC__) || defined(__clang__)) && defined(__OPTIMIZE__)
+        #define ALWAYS_INLINE inline __attribute__((always_inline))
+    #elif defined(_MSC_VER)
+        #define ALWAYS_INLINE __forceinline
+    #else
+        #define ALWAYS_INLINE inline
+    #endif
 #endif
 
 #include "_memo.c"
@@ -261,18 +261,22 @@ static PyMethodDef main_methods[] = {
     {"copy",
      (PyCFunction)py_copy,
      METH_O,
-     PyDoc_STR("copy(obj, /)\n--\n\n"
-               "Return a shallow copy of obj.\n\n"
-               ":param x: object to copy.\n"
-               ":return: shallow copy of the `x`.")},
+     PyDoc_STR(
+         "copy(obj, /)\n--\n\n"
+         "Return a shallow copy of obj.\n\n"
+         ":param x: object to copy.\n"
+         ":return: shallow copy of the `x`."
+     )},
     {"deepcopy",
      (PyCFunction)(void*)py_deepcopy,
      METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR("deepcopy(x, memo=None, /)\n--\n\n"
-               "Return a deep copy of obj.\n\n"
-               ":param x: object to deepcopy\n"
-               ":param memo: treat as opaque.\n"
-               ":return: deep copy of the `x`.")},
+     PyDoc_STR(
+         "deepcopy(x, memo=None, /)\n--\n\n"
+         "Return a deep copy of obj.\n\n"
+         ":param x: object to deepcopy\n"
+         ":param memo: treat as opaque.\n"
+         ":return: deep copy of the `x`."
+     )},
 #if PY_VERSION_HEX >= 0x030D0000
     {"replace",
      (PyCFunction)(void*)py_replace,
@@ -290,15 +294,19 @@ static PyMethodDef extra_methods[] = {
     {"replicate",
      (PyCFunction)(void*)py_replicate,
      METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR("replicate(obj, n, /, *, compile_after=20)\n--\n\n"
-               "Returns n copies of the object in a list.\n\n"
-               "Equivalent of [deepcopy(obj) for _ in range(n)], but faster.")},
+     PyDoc_STR(
+         "replicate(obj, n, /, *, compile_after=20)\n--\n\n"
+         "Returns n copies of the object in a list.\n\n"
+         "Equivalent of [deepcopy(obj) for _ in range(n)], but faster."
+     )},
     {"repeatcall",
      (PyCFunction)(void*)py_repeatcall,
      METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR("repeatcall(function, size, /)\n--\n\n"
-               "Call function repeatedly size times and return the list of results.\n\n"
-               "Equivalent of [function() for _ in range(size)], but faster.")},
+     PyDoc_STR(
+         "repeatcall(function, size, /)\n--\n\n"
+         "Call function repeatedly size times and return the list of results.\n\n"
+         "Equivalent of [function() for _ in range(size)], but faster."
+     )},
     {NULL, NULL, 0, NULL}
 };
 
@@ -307,21 +315,27 @@ static PyMethodDef patch_methods[] = {
     {"enable",
      (PyCFunction)py_enable,
      METH_NOARGS,
-     PyDoc_STR("enable()\n--\n\n"
-               "Patch copy.deepcopy to forward to copium.deepcopy.\n\n"
-               ":return: True if copium was enabled, False if it was already enabled.")},
+     PyDoc_STR(
+         "enable()\n--\n\n"
+         "Patch copy.deepcopy to forward to copium.deepcopy.\n\n"
+         ":return: True if copium was enabled, False if it was already enabled."
+     )},
     {"disable",
      (PyCFunction)py_disable,
      METH_NOARGS,
-     PyDoc_STR("disable()\n--\n\n"
-               "Undo enable(): restore original copy.deepcopy if applied.\n\n"
-               ":return: True if copium was disabled, False if it was already disabled.")},
+     PyDoc_STR(
+         "disable()\n--\n\n"
+         "Undo enable(): restore original copy.deepcopy if applied.\n\n"
+         ":return: True if copium was disabled, False if it was already disabled."
+     )},
     {"enabled",
      (PyCFunction)py_enabled,
      METH_NOARGS,
-     PyDoc_STR("enabled()\n--\n\n"
-               "Return True if copy.deepcopy is currently applied to copium.\n\n"
-               ":return: Whether copium is currently enabled.")},
+     PyDoc_STR(
+         "enabled()\n--\n\n"
+         "Return True if copy.deepcopy is currently applied to copium.\n\n"
+         ":return: Whether copium is currently enabled."
+     )},
     {NULL, NULL, 0, NULL}
 };
 
@@ -331,8 +345,10 @@ static PyMethodDef experimental_methods[] = {
     {"unpin",
      (PyCFunction)(void*)py_unpin,
      METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR("unpin(obj, /, *, strict=False)\n--\n\n"
-               "Remove the pin for obj. If strict is True, raise if obj is not pinned.")},
+     PyDoc_STR(
+         "unpin(obj, /, *, strict=False)\n--\n\n"
+         "Remove the pin for obj. If strict is True, raise if obj is not pinned."
+     )},
     {"pinned",
      (PyCFunction)py_pinned,
      METH_O,
@@ -412,19 +428,19 @@ static struct PyModuleDef experimental_module_def = {
 
 /* Version macros injected at build time */
 #ifndef COPIUM_VERSION
-#define COPIUM_VERSION "0.0.0+unknown"
+    #define COPIUM_VERSION "0.0.0+unknown"
 #endif
 
 #ifndef COPIUM_VERSION_MAJOR
-#define COPIUM_VERSION_MAJOR 0
+    #define COPIUM_VERSION_MAJOR 0
 #endif
 
 #ifndef COPIUM_VERSION_MINOR
-#define COPIUM_VERSION_MINOR 0
+    #define COPIUM_VERSION_MINOR 0
 #endif
 
 #ifndef COPIUM_VERSION_PATCH
-#define COPIUM_VERSION_PATCH 0
+    #define COPIUM_VERSION_PATCH 0
 #endif
 
 /* COPIUM_VERSION_PRERELEASE is only defined if present (otherwise None) */
@@ -445,7 +461,7 @@ static struct PyModuleDef experimental_module_def = {
  */
 static PyObject* _create_version_info(PyObject* version_cls) {
 #ifndef COPIUM_BUILD_HASH
-#error "COPIUM_BUILD_HASH must be defined by the build backend"
+    #error "COPIUM_BUILD_HASH must be defined by the build backend"
 #endif
     PyObject* major = PyLong_FromLong(COPIUM_VERSION_MAJOR);
     if (!major)
@@ -730,7 +746,7 @@ static int copium_exec(PyObject* module) {
 
     /* Add __build_hash__ (required string) */
 #ifndef COPIUM_BUILD_HASH
-#error "COPIUM_BUILD_HASH must be defined by the build backend"
+    #error "COPIUM_BUILD_HASH must be defined by the build backend"
 #endif
     if (PyModule_AddStringConstant(about_module, "__build_hash__", COPIUM_BUILD_HASH) < 0) {
         Py_DECREF(namedtuple);
