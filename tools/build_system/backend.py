@@ -466,12 +466,141 @@ def _wheel_fingerprint(build_type: str) -> str:
 
 
 # ============================================================================
+# Cache Retention Policy
+# ============================================================================
+
+
+def _cleanup_cache() -> None:
+    """
+    Clean up old cache entries based on retention policy.
+
+    Policy:
+    - Keep last 5 builds per build type
+    - Keep all builds from last 24 hours
+    - Remove everything else
+    """
+    retention_hours = 24
+    retention_count = 5
+    now = time.time()
+    cutoff_time = now - (retention_hours * 3600)
+
+    def _cleanup_dir(cache_dir: Path, pattern: str) -> None:
+        """Clean up a cache directory based on retention policy."""
+        if not cache_dir.exists():
+            return
+
+        # Collect all cache entries with their modification times
+        entries: list[tuple[Path, float]] = []
+        for entry in cache_dir.iterdir():
+            if entry.is_dir() and entry.name.startswith(pattern):
+                try:
+                    mtime = entry.stat().st_mtime
+                    entries.append((entry, mtime))
+                except OSError:
+                    continue
+
+        # Sort by modification time (newest first)
+        entries.sort(key=lambda x: x[1], reverse=True)
+
+        # Keep the newest N entries and anything within the time window
+        for i, (entry, mtime) in enumerate(entries):
+            # Keep if in top N or within time window
+            if i < retention_count or mtime >= cutoff_time:
+                continue
+
+            # Remove old entry
+            try:
+                shutil.rmtree(entry)
+                echo(f"Cleaned up old cache: {entry.name}")
+            except OSError as e:
+                echo(f"Failed to remove {entry.name}: {e}")
+
+    def _cleanup_requires_cache() -> None:
+        """Clean up requires cache JSON files."""
+        if not REQUIRES_CACHE.exists():
+            return
+
+        # Group files by build type
+        by_type: dict[str, list[tuple[Path, float]]] = {}
+
+        for entry in REQUIRES_CACHE.iterdir():
+            if entry.is_file() and entry.suffix == ".json":
+                try:
+                    # Read timestamp from JSON
+                    data = json.loads(entry.read_text())
+                    timestamp = data.get("timestamp", 0)
+
+                    # Extract build type from filename (e.g., "wheel-hash.json" -> "wheel")
+                    build_type = entry.stem.split("-")[0]
+
+                    if build_type not in by_type:
+                        by_type[build_type] = []
+                    by_type[build_type].append((entry, timestamp))
+                except (OSError, json.JSONDecodeError, KeyError):
+                    continue
+
+        # Clean up each build type
+        for build_type, entries in by_type.items():
+            # Sort by timestamp (newest first)
+            entries.sort(key=lambda x: x[1], reverse=True)
+
+            for i, (entry, timestamp) in enumerate(entries):
+                # Keep if in top N or within time window
+                if i < retention_count or timestamp >= cutoff_time:
+                    continue
+
+                # Remove old entry
+                try:
+                    entry.unlink()
+                    echo(f"Cleaned up old requires cache: {entry.name}")
+                except OSError as e:
+                    echo(f"Failed to remove {entry.name}: {e}")
+
+    # Clean up each cache type
+    _cleanup_dir(WHEEL_CACHE, "wheel-")
+    _cleanup_dir(WHEEL_CACHE, "editable-")
+    _cleanup_dir(METADATA_CACHE, "wheel-")
+    _cleanup_dir(METADATA_CACHE, "editable-")
+    _cleanup_requires_cache()
+
+
+def _ensure_cleanup_once() -> None:
+    """
+    Run cache cleanup if it hasn't been run in the last minute.
+
+    Uses a filesystem timestamp file to coordinate across multiple build processes.
+    """
+    cleanup_marker = CACHE_ROOT / ".last_cleanup"
+    cleanup_interval = 60  # seconds
+
+    # Check if cleanup was recently performed
+    if cleanup_marker.exists():
+        try:
+            last_cleanup = cleanup_marker.stat().st_mtime
+            if time.time() - last_cleanup < cleanup_interval:
+                # Cleanup was performed recently, skip
+                return
+        except OSError:
+            pass
+
+    # Perform cleanup
+    _cleanup_cache()
+
+    # Update timestamp marker
+    try:
+        cleanup_marker.touch()
+    except OSError:
+        pass
+
+
+# ============================================================================
 # PEP 517 Backend Hooks
 # ============================================================================
 
 
 def get_requires_for_build_wheel(config_settings: dict[str, Any] | None = None) -> list[str]:
     """Get build requirements for wheel."""
+    _ensure_cleanup_once()
     cache_key = f"wheel-{_project_fingerprint()}"
     cache_file = REQUIRES_CACHE / f"{cache_key}.json"
 
@@ -501,6 +630,7 @@ def get_requires_for_build_wheel(config_settings: dict[str, Any] | None = None) 
 
 def get_requires_for_build_editable(config_settings: dict[str, Any] | None = None) -> list[str]:
     """Get build requirements for editable install."""
+    _ensure_cleanup_once()
     cache_key = f"editable-{_project_fingerprint()}"
     cache_file = REQUIRES_CACHE / f"{cache_key}.json"
 
@@ -592,9 +722,9 @@ def prepare_metadata_for_build_wheel(
 
     # Generate
     echo("Generating metadata...")
-    original = _inject_extensions(build_type="editable")
+    original = _inject_extensions(build_type="wheel")
     try:
-        result = setuptools_build_meta.prepare_metadata_for_build_editable(
+        result = setuptools_build_meta.prepare_metadata_for_build_wheel(
             metadata_directory, config_settings
         )
     finally:
@@ -651,7 +781,7 @@ def prepare_metadata_for_build_editable(
 
     # Generate
     echo("Generating metadata...")
-    original = _inject_extensions()
+    original = _inject_extensions(build_type="editable")
     try:
         result = setuptools_build_meta.prepare_metadata_for_build_editable(
             metadata_directory, config_settings
@@ -679,9 +809,10 @@ def build_wheel(
     metadata_directory: str | None = None,
 ) -> str:
     """Build a wheel."""
+    _ensure_cleanup_once()
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
-        original = _inject_extensions()
+        original = _inject_extensions(build_type="wheel")
         try:
             return setuptools_build_meta.build_wheel(
                 wheel_directory, config_settings, metadata_directory
@@ -751,9 +882,10 @@ def build_editable(
     metadata_directory: str | None = None,
 ) -> str:
     """Build an editable wheel."""
+    _ensure_cleanup_once()
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
-        original = _inject_extensions()
+        original = _inject_extensions(build_type="editable")
         try:
             return setuptools_build_meta.build_editable(
                 wheel_directory, config_settings, metadata_directory
