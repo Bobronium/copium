@@ -1151,6 +1151,7 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
             return NULL;
     }
 
+    PyObject* inst = NULL;
     PyObject *callable, *argtup, *state, *listitems, *dictitems;
     int valid =
         validate_reduce_tuple(reduce_result, &callable, &argtup, &state, &listitems, &dictitems);
@@ -1160,8 +1161,6 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
         Py_DECREF(reduce_result);
         return Py_NewRef(obj);
     }
-
-    PyObject* inst = NULL;
 
     // Handle __newobj__
     if (callable == module_state.copyreg_newobj) {
@@ -1289,27 +1288,27 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
 
     // Memoize
     if (MEMO_STORE_C((void*)obj, inst, id_hash) < 0)
-        goto error_with_inst;
+        goto error;
 
     // Handle state (BUILD semantics)
     if (state) {
         PyObject* setstate;
         if (PyObject_GetOptionalAttr(inst, module_state.str_setstate, &setstate) < 0)
-            goto error_with_inst;
+            goto error;
 
         if (setstate) {
             // Explicit __setstate__
             PyObject* state_copy = deepcopy_c(state, mo);
             if (!state_copy) {
                 Py_DECREF(setstate);
-                goto error_with_inst;
+                goto error;
             }
 
             PyObject* result = PyObject_CallOneArg(setstate, state_copy);
             Py_DECREF(state_copy);
             Py_DECREF(setstate);
             if (!result)
-                goto error_with_inst;
+                goto error;
             Py_DECREF(result);
         } else {
             // Default __setstate__: handle inst.__dict__ and slotstate
@@ -1327,17 +1326,17 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
             if (dict_state && dict_state != Py_None) {
                 if (!PyDict_Check(dict_state)) {
                     PyErr_SetString(PyExc_TypeError, "state is not a dictionary");
-                    goto error_with_inst;
+                    goto error;
                 }
 
                 PyObject* dict_state_copy = deepcopy_c(dict_state, mo);
                 if (!dict_state_copy)
-                    goto error_with_inst;
+                    goto error;
 
                 PyObject* inst_dict = PyObject_GetAttr(inst, module_state.str_dict);
                 if (!inst_dict) {
                     Py_DECREF(dict_state_copy);
-                    goto error_with_inst;
+                    goto error;
                 }
 
                 PyObject *d_key, *d_value;
@@ -1346,7 +1345,7 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
                     if (PyObject_SetItem(inst_dict, d_key, d_value) < 0) {
                         Py_DECREF(inst_dict);
                         Py_DECREF(dict_state_copy);
-                        goto error_with_inst;
+                        goto error;
                     }
                 }
 
@@ -1358,19 +1357,19 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
             if (slotstate && slotstate != Py_None) {
                 if (!PyDict_Check(slotstate)) {
                     PyErr_SetString(PyExc_TypeError, "slot state is not a dictionary");
-                    goto error_with_inst;
+                    goto error;
                 }
 
                 PyObject* slotstate_copy = deepcopy_c(slotstate, mo);
                 if (!slotstate_copy)
-                    goto error_with_inst;
+                    goto error;
 
                 PyObject *d_key, *d_value;
                 Py_ssize_t pos = 0;
                 while (PyDict_Next(slotstate_copy, &pos, &d_key, &d_value)) {
                     if (PyObject_SetAttr(inst, d_key, d_value) < 0) {
                         Py_DECREF(slotstate_copy);
-                        goto error_with_inst;
+                        goto error;
                     }
                 }
 
@@ -1383,12 +1382,12 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
     if (listitems) {
         PyObject* append = PyObject_GetAttr(inst, module_state.str_append);
         if (!append)
-            goto error_with_inst;
+            goto error;
 
         PyObject* it = PyObject_GetIter(listitems);
         if (!it) {
             Py_DECREF(append);
-            goto error_with_inst;
+            goto error;
         }
 
         PyObject* item;
@@ -1398,7 +1397,7 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
             if (!item_copy) {
                 Py_DECREF(it);
                 Py_DECREF(append);
-                goto error_with_inst;
+                goto error;
             }
 
             PyObject* result = PyObject_CallOneArg(append, item_copy);
@@ -1406,7 +1405,7 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
             if (!result) {
                 Py_DECREF(it);
                 Py_DECREF(append);
-                goto error_with_inst;
+                goto error;
             }
             Py_DECREF(result);
         }
@@ -1414,14 +1413,14 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
         Py_DECREF(it);
         Py_DECREF(append);
         if (PyErr_Occurred())
-            goto error_with_inst;
+            goto error;
     }
 
     // Handle dictitems
     if (dictitems) {
         PyObject* it = PyObject_GetIter(dictitems);
         if (!it)
-            goto error_with_inst;
+            goto error;
 
         PyObject* pair;
         while ((pair = PyIter_Next(it)) != NULL) {
@@ -1429,7 +1428,7 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
                 Py_DECREF(pair);
                 Py_DECREF(it);
                 PyErr_SetString(PyExc_ValueError, "dictiter must yield (key, value) pairs");
-                goto error_with_inst;
+                goto error;
             }
 
             PyObject* key = PyTuple_GET_ITEM(pair, 0);
@@ -1439,7 +1438,7 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
             if (!key_copy) {
                 Py_DECREF(pair);
                 Py_DECREF(it);
-                goto error_with_inst;
+                goto error;
             }
 
             PyObject* value_copy = deepcopy_c(value, mo);
@@ -1447,7 +1446,7 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
                 Py_DECREF(key_copy);
                 Py_DECREF(pair);
                 Py_DECREF(it);
-                goto error_with_inst;
+                goto error;
             }
 
             int status = PyObject_SetItem(inst, key_copy, value_copy);
@@ -1457,27 +1456,26 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_c(
 
             if (status < 0) {
                 Py_DECREF(it);
-                goto error_with_inst;
+                goto error;
             }
         }
 
         Py_DECREF(it);
         if (PyErr_Occurred())
-            goto error_with_inst;
+            goto error;
     }
 
     // Keep alive original object if reconstruction returned different object
     if (inst != obj) {
         if (keepvector_append(&mo->keep, obj) < 0)
-            goto error_with_inst;
+            goto error;
     }
 
     Py_DECREF(reduce_result);
     return inst;
 
-error_with_inst:
-    Py_DECREF(inst);
 error:
+    Py_XDECREF(inst);
     Py_DECREF(reduce_result);
     return NULL;
 }
@@ -1935,6 +1933,7 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_py(
             return NULL;
     }
 
+    PyObject* inst = NULL;
     PyObject *callable, *argtup, *state, *listitems, *dictitems;
     int valid =
         validate_reduce_tuple(reduce_result, &callable, &argtup, &state, &listitems, &dictitems);
@@ -1944,8 +1943,6 @@ static MAYBE_INLINE PyObject* deepcopy_via_reduce_py(
         Py_DECREF(reduce_result);
         return Py_NewRef(obj);
     }
-
-    PyObject* inst = NULL;
 
     // Handle __newobj__
     if (callable == module_state.copyreg_newobj) {
