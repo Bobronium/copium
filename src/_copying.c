@@ -364,9 +364,9 @@ static ALWAYS_INLINE int is_atomic_immutable(PyTypeObject* tp) {
 /* ------------------------ TLS memo & recursion guard ------------------------
  */
 
-static PyObject* get_thread_local_memo(void) {
+static ALWAYS_INLINE PyObject* get_tss_memo(void) {
     void* val = PyThread_tss_get(&module_state.memo_tss);
-    if (val == NULL || Py_REFCNT((PyObject*)val) > 1) {
+    if (val == NULL) {
         PyObject* memo = Memo_New();
         if (memo == NULL)
             return NULL;
@@ -376,7 +376,42 @@ static PyObject* get_thread_local_memo(void) {
         }
         return memo;
     }
-    return (PyObject*)val;
+
+    PyObject* existing = (PyObject*)val;
+    if (Py_REFCNT(existing) > 1) {
+        // memo got stolen in between runs somehow
+        // highly unlikely, but we'll detach it anyway
+        // and enable gc tracking for it
+        PyObject_GC_Track(existing);
+
+        PyObject* memo = Memo_New();
+        if (memo == NULL)
+            return NULL;
+
+        if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
+            Py_DECREF(memo);
+            return NULL;
+        }
+        return memo;
+    }
+
+    return existing;
+}
+
+static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* mo, PyObject* memo_local) {
+    Py_ssize_t refcount = Py_REFCNT(memo_local);
+
+    if (refcount == 1) {
+        keepvector_clear(&mo->keep);
+        keepvector_shrink_if_large(&mo->keep);
+        memo_table_reset(&mo->table);
+        return 1;
+    } else {
+        PyObject_GC_Track(memo_local);
+        PyThread_tss_set(&module_state.memo_tss, NULL);
+        Py_DECREF(memo_local);
+        return 0;
+    }
 }
 
 /* ------------------------- Recursion depth guard (stack cap) ----------------
@@ -2393,20 +2428,13 @@ have_args:
         if (is_atomic_immutable(tp)) {
             return Py_NewRef(obj);
         }
-        PyObject* memo_local = get_thread_local_memo();
+        PyObject* memo_local = get_tss_memo();
         if (!memo_local)
             return NULL;
         MemoObject* mo = (MemoObject*)memo_local;
 
-        /* Lagged-keep policy: observe keep size at entry. */
         PyObject* result = deepcopy_c(obj, mo);
-
-        if ((int)Py_REFCNT(memo_local) == 1) {
-            keepvector_clear(&mo->keep);
-            keepvector_shrink_if_large(&mo->keep);
-            memo_table_reset(&mo->table);
-        }
-        /* memo_local is owned by TLS; no DECREF */
+        cleanup_tss_memo(mo, memo_local);
         return result;
     }
 
@@ -2564,7 +2592,7 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
         if (!out)
             return NULL;
 
-        PyObject* memo_local = get_thread_local_memo();
+        PyObject* memo_local = get_tss_memo();
         if (!memo_local)
             return NULL;
         MemoObject* mo = (MemoObject*)memo_local;
@@ -2572,12 +2600,8 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
         for (Py_ssize_t i = 0; i < n; i++) {
             PyObject* copy_i = deepcopy_c(obj, mo);
 
-            if ((int)Py_REFCNT(memo_local) == 1) {
-                keepvector_clear(&mo->keep);
-                keepvector_shrink_if_large(&mo->keep);
-                memo_table_reset(&mo->table);
-            } else {
-                PyObject* memo_local = get_thread_local_memo();
+            if (!cleanup_tss_memo(mo, memo_local)) {
+                PyObject* memo_local = get_tss_memo();
                 if (!memo_local)
                     return NULL;
                 mo = (MemoObject*)memo_local;
