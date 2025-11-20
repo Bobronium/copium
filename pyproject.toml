@@ -20,7 +20,7 @@ archs = ["auto64", "auto32"]
 build-frontend = "build[uv]"
 test-command = "pytest -vvv"
 test-extras = ["test"]
-test-sources = ["tests", "pyproject.toml"]
+test-sources = ["datamodelzoo", "tests", "pyproject.toml"]
 
 
 [project]
