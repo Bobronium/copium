@@ -74,7 +74,7 @@ test = [
     "pytest-assert-type>=0.1.5",
     "indifference>=0.1.0",
     "typing-extensions; python_version < '3.12'",
-    "datamodelzoo",
+    "datamodelzoo @ file:///${PROJECT_ROOT}/datamodelzoo",
     "pytest-codspeed>=4.2.0",
     "pytest-test-groups>=1.2.1",
     "psutil>=5.9.0",
@@ -90,7 +90,7 @@ benchmark = [
     "tyro>=0.9.33",
     "pyperf>=2.9.0",
     "ipython>=8.37.0",
-    "datamodelzoo",
+    "datamodelzoo @ file:///${PROJECT_ROOT}/datamodelzoo",
 ]
 build = [
     "build>=1.3.0",

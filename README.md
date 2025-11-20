@@ -42,8 +42,7 @@ Fast drop-in replacement for `copy.deepcopy()`.
 - ⚡ 4-28x faster than `copy.deepcopy()` on builtin types
 - 🧠 uses ~44% less memory than `copy.deepcopy()` on average
 - 🧪 passes all tests in `CPython/Lib/test/test_copy.py`
-- 🎯 behaves exactly the same as `copy.deepcopy()` in all cases declared in
-  [datamodelzoo](https://github.com/Bobronium/datamodelzoo)
+- 🎯 behaves exactly the same as `copy.deepcopy()` for all [`datamodelzoo.CASES`](https://github.com/Bobronium/datamodelzoo/blob/00ec1632b4037670628c865a0db2c8bc259abb75/src/datamodelzoo/__init__.py#L18)
 - 🛡️ tested for refcount, recursion, threading and memo edge cases
 - 🐍 pre-built wheels for Python 3.10-3.14 on Linux/macOS/Windows (x64/ARM64)
 - 🔓 passes all tests on free-threaded Python builds

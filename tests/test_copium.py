@@ -12,13 +12,16 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from types import MappingProxyType
 from typing import Any
+from typing import Literal
 
 import pytest
 from indifference import assert_equivalent_transformations
 
 import copium
-from datamodelzoo import CASES
+from datamodelzoo import Case
 from tests.conftest import CASE_PARAMS
+from tests.conftest import EVIL_CASE_PARAMS
+from tests.conftest import CopyModule
 
 
 def test_deepcopy_keepalive_internal(copy) -> None:
@@ -86,62 +89,82 @@ def test_mutable_keys(copy):
     assert original_key not in copied
 
 
-memo_options = ["absent", "dict", "None", "mutable_mapping", "mapping", "invalid"]
+MemoOption = Literal["absent", "dict", "None", "mutable_mapping", "mappingproxy", "invalid"]
+MEMO_PARAMS = [pytest.param(option, id=f"memo_{option}") for option in MemoOption.__args__]
 
 
-@pytest.mark.parametrize("memo", memo_options, ids=[f"memo_{option}" for option in memo_options])
-@pytest.mark.parametrize("case", CASE_PARAMS)
-def test_duper_deepcopy_parity(case: Any, copy, memo) -> None:
-    builtin_deepcopy_error = None
+def memo_kwargs(memo: MemoOption) -> dict[str, Any]:
+    if memo == "dict":
+        kwargs = {"memo": {}}
+    elif memo == "None":
+        kwargs = {"memo": None}
+    elif memo == "memo_mappingproxy":
+        kwargs = {"memo": MappingProxyType({})}  # expected to throw
+    elif memo == "mutable_mapping":
+        kwargs = {"memo": collections.UserDict()}
+    elif memo == "invalid":
+        kwargs = {"memo": "not a memo"}
+    else:
+        kwargs = {}
+    return kwargs
 
 
+EXPECTED_ERROR_DIVERGENCES = {
+    repr(TypeError("EvilReduceArgs() takes no arguments")): repr(
+        TypeError("second item of the tuple returned by __reduce__ must be a tuple, not str")
+    ),
+    repr(TypeError("'int' object is not callable")): repr(
+        TypeError("first item of the tuple returned by __reduce__ must be callable, not int")
+    ),
+    repr(TypeError("_reconstruct() missing 1 required positional argument: 'args'")): repr(
+        TypeError("tuple returned by __reduce__ must contain 2 through 5 elements")
+    ),
+    repr(AttributeError("'EvilStateSlotsMapping' object has no attribute 'items'")): repr(
+        TypeError("slot state is not a dictionary")
+    ),
+    repr(ValueError("not enough values to unpack (expected 2, got 1)")): repr(
+        ValueError("dictiter must yield (key, value) pairs")
+    ),
+}
 
-    def get_kwargs():
-        if memo == "dict":
-            kwargs = {"memo": {}}
-        elif memo == "None":
-            kwargs = {"memo": None}
-        elif memo == "mapping":
-            kwargs = {"memo": collections.UserDict()}
-        elif memo == "mutable_mapping":
-            kwargs = {"memo": MappingProxyType({})}  # expected to throw
-        elif memo == "invalid":
-            kwargs = {"memo": "not a memo"}
-        else:
-            kwargs = {}
-        return kwargs
 
-    try:
-        baseline = stdlib_copy.deepcopy(case.obj, **get_kwargs())
-    except Exception as e:
-        baseline = None
-        builtin_deepcopy_error = e
-
+@pytest.mark.parametrize("memo", MEMO_PARAMS)
+@pytest.mark.parametrize("case", CASE_PARAMS + EVIL_CASE_PARAMS)
+def test_duper_deepcopy_parity(case: Case, copy: CopyModule, memo: MemoOption) -> None:
     candidate_name = f"{copy.deepcopy.__module__}.{copy.deepcopy.__name__}"
     try:
-        candidate = copy.deepcopy(case.obj, **get_kwargs())
-    except Exception as e:
-        if builtin_deepcopy_error is None:
+        baseline_value = stdlib_copy.deepcopy(case.obj, **memo_kwargs(memo))
+    except Exception as baseline_error:
+        try:
+            candidate_value = copy.deepcopy(case.obj, **memo_kwargs(memo))
+        except Exception as candidate_error:
+            if "evil" in case.name:
+                # relax 1:1 error requirement for cases that intentionally break protocol
+                # still, good to track how we diverge from stdlib exactly
+                expected_errors = {baseline_error_repr := repr(baseline_error)}
+                if baseline_error_repr in EXPECTED_ERROR_DIVERGENCES:
+                    expected_errors.add(EXPECTED_ERROR_DIVERGENCES[baseline_error_repr])
+
+                assert repr(candidate_error) in expected_errors
+            else:
+                assert repr(candidate_error) == repr(baseline_error)
+        else:
+            raise AssertionError(
+                f"{candidate_name} expected to produce {baseline_error!r} exception,"
+                f" but instead returned {candidate_value!r}"
+            ) from baseline_error
+    else:
+        try:
+            candidate_value = copy.deepcopy(case.obj, **memo_kwargs(memo))
+        except Exception as unexpected_candidate_error:
             raise AssertionError(
                 f"{candidate_name} failed unexpectedly when copy.deepcopy didn't"
-            ) from e
-        assert type(e) is type(builtin_deepcopy_error), (
-            f"{candidate_name} failed with different error"
-        )
-        assert e.args == builtin_deepcopy_error.args, (
-            f"{candidate_name} failed with different error message"
-        )
-    else:
-        if builtin_deepcopy_error is not None:
-            raise AssertionError(
-                f"{candidate_name} expected to produce {builtin_deepcopy_error!r} exception,"
-                f" but didn't"
-            ) from builtin_deepcopy_error
+            ) from unexpected_candidate_error
 
         assert_equivalent_transformations(
             case.obj,
-            baseline,
-            candidate,
+            baseline_value,
+            candidate_value,
         )
 
 

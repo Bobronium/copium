@@ -15,6 +15,8 @@ jobs:
         python: ["3.13", "3.14"]  # Run on fewer versions to save CI time
     steps:
       - uses: actions/checkout@v5
+        with: 
+          submodules: recursive
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}

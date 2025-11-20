@@ -8,6 +8,7 @@ import pytest
 
 import copium
 from datamodelzoo import CASES
+from datamodelzoo import EVIL_CASES
 
 
 def pytest_addoption(parser):
@@ -36,7 +37,8 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_memory)
 
 
-CASE_PARAMS = [pytest.param(case, id=case.name) for case in CASES]
+CASE_PARAMS = [case.as_pytest_param() for case in CASES]
+EVIL_CASE_PARAMS = [case.as_pytest_param() for case in EVIL_CASES]
 
 
 class CopyModule:  # just for typing
