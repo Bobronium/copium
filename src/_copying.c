@@ -364,9 +364,9 @@ static ALWAYS_INLINE int is_atomic_immutable(PyTypeObject* tp) {
 /* ------------------------ TLS memo & recursion guard ------------------------
  */
 
-static PyObject* get_thread_local_memo(void) {
+static ALWAYS_INLINE PyObject* get_thread_local_memo(void) {
     void* val = PyThread_tss_get(&module_state.memo_tss);
-    if (val == NULL || Py_REFCNT((PyObject*)val) > 1) {
+    if (val == NULL) {
         PyObject* memo = Memo_New();
         if (memo == NULL)
             return NULL;
@@ -376,7 +376,42 @@ static PyObject* get_thread_local_memo(void) {
         }
         return memo;
     }
-    return (PyObject*)val;
+
+    PyObject* existing = (PyObject*)val;
+    if (Py_REFCNT(existing) > 1) {
+        // memo got stolen in between runs somehow
+        // highly unlikely, but we'll detach it anyway
+        // and enable gc tracking for it
+        PyObject_GC_Track(existing);
+
+        PyObject* memo = Memo_New();
+        if (memo == NULL)
+            return NULL;
+
+        if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
+            Py_DECREF(memo);
+            return NULL;
+        }
+        return memo;
+    }
+
+    return existing;
+}
+
+static ALWAYS_INLINE int cleanup_tls_memo(MemoObject* mo, PyObject* memo_local) {
+    Py_ssize_t refcount = Py_REFCNT(memo_local);
+
+    if (refcount == 1) {
+        keepvector_clear(&mo->keep);
+        keepvector_shrink_if_large(&mo->keep);
+        memo_table_reset(&mo->table);
+        return 1;
+    } else {
+        PyObject_GC_Track(memo_local);
+        PyThread_tss_set(&module_state.memo_tss, NULL);
+        Py_DECREF(memo_local);
+        return 0;
+    }
 }
 
 /* ------------------------- Recursion depth guard (stack cap) ----------------
@@ -1829,6 +1864,13 @@ static MAYBE_INLINE PyObject* deepcopy_set_py(
 static MAYBE_INLINE PyObject* deepcopy_frozenset_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
+    // stdlib deepcopy would use memo here to memoize list of args for frozenset
+    // in case this would be our first memo usage, invoke memo now
+    // to catch any errors related to invalid memo objects early, like stdlib would
+    if (ensure_keep_list_for_pymemo(memo_dict, keep_list_ptr) < 0) {
+        return NULL;
+    }
+
     /* Pre-size snapshot: frozenset is immutable, so size won't change mid-loop. */
     Py_ssize_t n = PySet_Size(obj);
     if (n == -1)
@@ -2401,11 +2443,7 @@ have_args:
         /* Lagged-keep policy: observe keep size at entry. */
         PyObject* result = deepcopy_c(obj, mo);
 
-        if ((int)Py_REFCNT(memo_local) == 1) {
-            keepvector_clear(&mo->keep);
-            keepvector_shrink_if_large(&mo->keep);
-            memo_table_reset(&mo->table);
-        }
+        cleanup_tls_memo(mo, memo_local);
         /* memo_local is owned by TLS; no DECREF */
         return result;
     }
@@ -2572,11 +2610,7 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
         for (Py_ssize_t i = 0; i < n; i++) {
             PyObject* copy_i = deepcopy_c(obj, mo);
 
-            if ((int)Py_REFCNT(memo_local) == 1) {
-                keepvector_clear(&mo->keep);
-                keepvector_shrink_if_large(&mo->keep);
-                memo_table_reset(&mo->table);
-            } else {
+            if (!cleanup_tls_memo(mo, memo_local)) {
                 PyObject* memo_local = get_thread_local_memo();
                 if (!memo_local)
                     return NULL;

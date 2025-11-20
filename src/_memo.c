@@ -538,21 +538,46 @@ static PyTypeObject KeepList_Type = {
 /* --------------------------- Memo object impl ------------------------------ */
 
 static void Memo_dealloc(MemoObject* self) {
-    /* Ensure Python-level __del__ (if any) is honored. If it resurrects the object,
-       bail out of deallocation per CPython contract. */
+    PyObject_GC_UnTrack(self);  // Stop tracking before destruction
     if (PyObject_CallFinalizerFromDealloc((PyObject*)self)) {
         return;
     }
     memo_table_free(self->table);
     keepvector_free(&self->keep);
-    Py_TYPE(self)->tp_free((PyObject*)self);
+    PyObject_GC_Del(self);  // Use GC-aware free
+}
+
+static int Memo_traverse(MemoObject* self, visitproc visit, void* arg) {
+    if (self->table) {
+        for (Py_ssize_t i = 0; i < self->table->size; i++) {
+            void* key = self->table->slots[i].key;
+            if (key && key != MEMO_TOMBSTONE) {
+                Py_VISIT(self->table->slots[i].value);
+            }
+        }
+    }
+    for (Py_ssize_t i = 0; i < self->keep.size; i++) {
+        Py_VISIT(self->keep.items[i]);
+    }
+    return 0;
+}
+
+static int Memo_clear_gc(MemoObject* self) {
+    // Break all references
+    if (self->table) {
+        memo_table_clear(self->table);
+    }
+    keepvector_clear(&self->keep);
+    return 0;
 }
 
 PyObject* Memo_New(void) {
-    MemoObject* self = PyObject_New(MemoObject, &Memo_Type);
+    MemoObject* self = PyObject_GC_New(MemoObject, &Memo_Type);
     if (!self)
         return NULL;
     self->table = NULL;
+    // Since memo is designed to be reused, unless stolen, don't call PyObject_GC_Track just yet.
+    // Instead, call it once we know that somebody stole the ref.
     keepvector_init(&self->keep);
     return (PyObject*)self;
 }
@@ -751,10 +776,12 @@ PyTypeObject Memo_Type = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium._copying._Memo",
     .tp_basicsize = sizeof(MemoObject),
     .tp_dealloc = (destructor)Memo_dealloc,
-    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
     .tp_as_mapping = &Memo_as_mapping,
     .tp_iter = (getiterfunc)Memo_iter,
     .tp_methods = Memo_methods,
+    .tp_traverse = (traverseproc)Memo_traverse,
+    .tp_clear = (inquiry)Memo_clear_gc,
 };
 
 /* --------------------------- Type readiness helper ------------------------- */

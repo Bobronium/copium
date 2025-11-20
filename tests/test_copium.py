@@ -4,7 +4,9 @@
 
 import collections
 import copy as stdlib_copy
+import gc
 import sys
+import time
 import weakref
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -335,3 +337,36 @@ def test_holding_extra_refs_post_deepcopy(copy):
 
     assert sum(original_refcounts_after_copying) - sum(original_refcounts_before_copying) == 6
     assert sum(original_refcounts_after_copying) - sum(copied_refcounts) == 3
+
+
+def test_memo_stolen_ref_cycle_garbage_collected(copy):
+    collected = set()
+
+    class Thief:
+        def __deepcopy__(self, memo):
+            # creates cycle and prevents
+            self.memo = memo
+
+        def __del__(self):
+            # won't run if memo is not tracked by gc
+            collected.add(id(self))
+
+    copy.deepcopy(thief := Thief())
+
+    thief_id = id(thief)
+
+    assert thief_id not in collected
+
+    gc.disable()
+    time.sleep(0.01)
+
+    assert thief_id not in collected
+
+    del thief
+
+    gc.enable()
+    gc.collect()
+
+    assert thief_id in collected
+
+    assert copy.deepcopy([]) == []
