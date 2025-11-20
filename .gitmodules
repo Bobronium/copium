@@ -1,0 +1,3 @@
+[submodule "datamodelzoo"]
+	path = datamodelzoo
+	url = https://github.com/Bobronium/datamodelzoo
