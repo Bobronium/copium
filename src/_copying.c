@@ -876,9 +876,9 @@ static MAYBE_INLINE PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_
     Py_ssize_t sz = Py_SIZE(obj);
     copy = _PyDict_NewPresized(sz);
     if (!copy)
-        goto error;
+        goto error_no_cleanup;
     if (MEMO_STORE_C((void*)obj, copy, id_hash) < 0)
-        goto error;
+        goto error_no_cleanup;
 
     DictIterGuard di;
     dict_iter_init(&di, obj);
@@ -899,13 +899,17 @@ static MAYBE_INLINE PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_
         Py_DECREF(cvalue);
         cvalue = NULL;
     }
-    if (ret < 0) /* mutation detected -> error already set */
-        goto error;
+    if (ret < 0)
+        goto error_no_cleanup;
 
     KEEP_APPEND_AFTER_COPY_C(obj);
     return copy;
 
 error:
+#if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
+    dict_iter_cleanup(&di);
+#endif
+error_no_cleanup:
     Py_XDECREF(copy);
     Py_XDECREF(ckey);
     Py_XDECREF(cvalue);
@@ -1841,9 +1845,9 @@ static MAYBE_INLINE PyObject* deepcopy_dict_py(
     Py_ssize_t sz = Py_SIZE(obj);
     copy = _PyDict_NewPresized(sz);
     if (!copy)
-        goto error;
+        goto error_no_cleanup;
     if (MEMO_STORE_PY((void*)obj, copy, id_hash) < 0)
-        goto error;
+        goto error_no_cleanup;
 
     DictIterGuard di;
     dict_iter_init(&di, obj);
@@ -1865,12 +1869,16 @@ static MAYBE_INLINE PyObject* deepcopy_dict_py(
         cvalue = NULL;
     }
     if (ret < 0) /* mutation detected -> error already set */
-        goto error;
+        goto error_no_cleanup;
 
     KEEP_APPEND_AFTER_COPY_PY(obj);
     return copy;
 
 error:
+#if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
+    dict_iter_cleanup(&di);
+#endif
+error_no_cleanup:
     Py_XDECREF(copy);
     Py_XDECREF(ckey);
     Py_XDECREF(cvalue);
