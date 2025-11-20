@@ -32,7 +32,9 @@ jobs:
     name: "Python ${{ matrix.python.display }} / ${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }} / ${{ matrix.build.arch_label }}"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with: 
+            submodules: recursive
 
       - name: Set up QEMU
         if: runner.os == 'Linux' && runner.arch == 'X64'
