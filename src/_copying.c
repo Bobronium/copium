@@ -1100,22 +1100,26 @@ static MAYBE_INLINE PyObject* try_reduce_via_registry(PyObject* obj, PyTypeObjec
 }
 
 static MAYBE_INLINE PyObject* call_reduce_method_preferring_ex(PyObject* obj) {
-    PyObject* reduce_ex = PyObject_GetAttr(obj, module_state.str_reduce_ex);
-    if (reduce_ex) {
+    PyObject* reduce_ex = NULL;
+    int has_reduce_ex = PyObject_GetOptionalAttr(obj, module_state.str_reduce_ex, &reduce_ex);
+    if (has_reduce_ex > 0) {
         PyObject* res = PyObject_CallFunction(reduce_ex, "i", 4);
         Py_DECREF(reduce_ex);
-        if (res)
-            return res;
-        return NULL;
+        return res;
     }
-    PyErr_Clear();
-    PyObject* reduce = PyObject_GetAttr(obj, module_state.str_reduce);
-    if (reduce) {
+    if (has_reduce_ex < 0)
+        return NULL;
+
+    PyObject* reduce = NULL;
+    int has_reduce = PyObject_GetOptionalAttr(obj, module_state.str_reduce, &reduce);
+    if (has_reduce > 0) {
         PyObject* res = PyObject_CallNoArgs(reduce);
         Py_DECREF(reduce);
         return res;
     }
-    PyErr_Clear();
+    if (has_reduce < 0)
+        return NULL;
+
     PyErr_SetString(
         (PyObject*)module_state.copy_Error, "un(deep)copyable object (no reduce protocol)"
     );
