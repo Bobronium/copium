@@ -224,3 +224,11 @@ error_summary = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disable_error_code = ["no-untyped-def"]
+
+[tool.uv.workspace]
+members = [
+    "datamodelzoo",
+]
+
+[tool.uv.sources]
+datamodelzoo = { workspace = true }
