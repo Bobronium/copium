@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with: 
-            submodules: recursive
+          submodules: recursive
 
       - name: Set up QEMU
         if: runner.os == 'Linux' && runner.arch == 'X64'

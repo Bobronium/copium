@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with: 
-            submodules: recursive
+          submodules: recursive
 
       - name: Clone pyperformance
         run: git clone https://github.com/python/pyperformance.git --depth 1
