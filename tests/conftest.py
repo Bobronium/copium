@@ -37,7 +37,7 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_memory)
 
 
-CASE_PARAMS = [case.as_pytest_param() for case in CASES + EVIL_CASES]
+CASE_PARAMS = [case.as_pytest_param() for case in CASES]
 EVIL_CASE_PARAMS = [case.as_pytest_param() for case in EVIL_CASES]
 
 
