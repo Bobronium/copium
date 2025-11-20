@@ -364,7 +364,7 @@ static ALWAYS_INLINE int is_atomic_immutable(PyTypeObject* tp) {
 /* ------------------------ TLS memo & recursion guard ------------------------
  */
 
-static ALWAYS_INLINE PyObject* get_thread_local_memo(void) {
+static ALWAYS_INLINE PyObject* get_tss_memo(void) {
     void* val = PyThread_tss_get(&module_state.memo_tss);
     if (val == NULL) {
         PyObject* memo = Memo_New();
@@ -398,7 +398,7 @@ static ALWAYS_INLINE PyObject* get_thread_local_memo(void) {
     return existing;
 }
 
-static ALWAYS_INLINE int cleanup_tls_memo(MemoObject* mo, PyObject* memo_local) {
+static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* mo, PyObject* memo_local) {
     Py_ssize_t refcount = Py_REFCNT(memo_local);
 
     if (refcount == 1) {
@@ -2428,16 +2428,13 @@ have_args:
         if (is_atomic_immutable(tp)) {
             return Py_NewRef(obj);
         }
-        PyObject* memo_local = get_thread_local_memo();
+        PyObject* memo_local = get_tss_memo();
         if (!memo_local)
             return NULL;
         MemoObject* mo = (MemoObject*)memo_local;
 
-        /* Lagged-keep policy: observe keep size at entry. */
         PyObject* result = deepcopy_c(obj, mo);
-
-        cleanup_tls_memo(mo, memo_local);
-        /* memo_local is owned by TLS; no DECREF */
+        cleanup_tss_memo(mo, memo_local);
         return result;
     }
 
@@ -2595,7 +2592,7 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
         if (!out)
             return NULL;
 
-        PyObject* memo_local = get_thread_local_memo();
+        PyObject* memo_local = get_tss_memo();
         if (!memo_local)
             return NULL;
         MemoObject* mo = (MemoObject*)memo_local;
@@ -2603,8 +2600,8 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
         for (Py_ssize_t i = 0; i < n; i++) {
             PyObject* copy_i = deepcopy_c(obj, mo);
 
-            if (!cleanup_tls_memo(mo, memo_local)) {
-                PyObject* memo_local = get_thread_local_memo();
+            if (!cleanup_tss_memo(mo, memo_local)) {
+                PyObject* memo_local = get_tss_memo();
                 if (!memo_local)
                     return NULL;
                 mo = (MemoObject*)memo_local;
