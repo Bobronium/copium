@@ -1864,13 +1864,6 @@ static MAYBE_INLINE PyObject* deepcopy_set_py(
 static MAYBE_INLINE PyObject* deepcopy_frozenset_py(
     PyObject* obj, PyObject* memo_dict, PyObject** keep_list_ptr, Py_ssize_t id_hash
 ) {
-    // stdlib deepcopy would use memo here to memoize list of args for frozenset
-    // in case this would be our first memo usage, invoke memo now
-    // to catch any errors related to invalid memo objects early, like stdlib would
-    if (ensure_keep_list_for_pymemo(memo_dict, keep_list_ptr) < 0) {
-        return NULL;
-    }
-
     /* Pre-size snapshot: frozenset is immutable, so size won't change mid-loop. */
     Py_ssize_t n = PySet_Size(obj);
     if (n == -1)
