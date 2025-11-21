@@ -264,6 +264,7 @@ static ALWAYS_INLINE int dict_iter_init(DictIterGuard* di, PyObject* dict) {
     di->pos = 0;
     di->ver0 = ((PyDictObject*)dict)->ma_version_tag;
     di->used0 = ((PyDictObject*)dict)->ma_used;
+    return 0;
 }
 
 static ALWAYS_INLINE int dict_iter_next(DictIterGuard* di, PyObject** key, PyObject** value) {
