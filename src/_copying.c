@@ -165,7 +165,7 @@ static int _copium_dict_watcher_cb(
     return 0; /* never raise; per docs this would become unraisable */
 }
 
-static ALWAYS_INLINE void dict_iter_init(DictIterGuard* di, PyObject* dict) {
+static ALWAYS_INLINE int dict_iter_init(DictIterGuard* di, PyObject* dict) {
     di->dict = dict;
     di->pos = 0;
     di->size0 = PyDict_Size(dict); /* snapshot initial size (errors unlikely; -1 harmless) */
@@ -176,18 +176,24 @@ static ALWAYS_INLINE void dict_iter_init(DictIterGuard* di, PyObject* dict) {
     di->prev = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
 
     /* Push onto TLS stack first so any same-thread mutation after Watch sees this guard. */
-    PyThread_tss_set(&g_dictiter_tss, di);
+    if (PyThread_tss_set(&g_dictiter_tss, di) != 0) {
+        PyErr_SetString(PyExc_SystemError, "copium: failed to set dict iterator guard in TLS");
+        return -1;
+    }
 
     if (g_dict_watcher_registered && PyDict_Watch(g_dict_watcher_id, dict) == 0) {
         di->watching = 1;
     }
+    return 0;
 }
 
 static ALWAYS_INLINE void dict_iter_cleanup(DictIterGuard* di) {
     /* Pop from TLS stack (defensive unlink in case of nested/early exits). */
     DictIterGuard* top = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
     if (top == di) {
-        PyThread_tss_set(&g_dictiter_tss, di->prev);
+        if (PyThread_tss_set(&g_dictiter_tss, di->prev) != 0) {
+            PyErr_WriteUnraisable(NULL);
+        }
     } else {
         DictIterGuard* cur = top;
         while (cur && cur->prev != di)
@@ -408,7 +414,13 @@ static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* mo, PyObject* memo_local) 
         return 1;
     } else {
         PyObject_GC_Track(memo_local);
-        PyThread_tss_set(&module_state.memo_tss, NULL);
+        if (PyThread_tss_set(&module_state.memo_tss, NULL) != 0) {
+            Py_DECREF(memo_local);
+            PyErr_SetString(
+                PyExc_SystemError, "copium: failed to detach memo from TSS during cleanup"
+            );
+            return -1;
+        }
         Py_DECREF(memo_local);
         return 0;
     }
@@ -508,7 +520,14 @@ static ALWAYS_INLINE int _copium_recdepth_enter(void) {
                 );
                 return -1;
             }
-            (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)next);
+            if (PyThread_tss_set(&module_state.recdepth_tss, (void*)next) != 0) {
+                _copium_tls_depth--;
+                PyErr_SetString(
+                    PyExc_SystemError, "copium: failed to update recursion depth in TLS"
+                );
+                return -1;
+            }
+            /* ======================================================== */
         }
     }
     return 0;
@@ -518,7 +537,11 @@ static ALWAYS_INLINE int _copium_recdepth_enter(void) {
 
     /* Fast warmup for shallow recursion on non-C11 builds as well. */
     if (LIKELY(next < 16u)) {
-        (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)next);
+        if (PyThread_tss_set(&module_state.recdepth_tss, (void*)next) != 0) {
+            PyErr_SetString(PyExc_SystemError, "copium: failed to update recursion depth in TLS");
+            return -1;
+        }
+        /* ======================================================== */
         return 0;
     }
 
@@ -564,30 +587,45 @@ static ALWAYS_INLINE int _copium_recdepth_enter(void) {
         );
         return -1;
     }
-    (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)next);
+    if (PyThread_tss_set(&module_state.recdepth_tss, (void*)next) != 0) {
+        PyErr_SetString(PyExc_SystemError, "copium: failed to update recursion depth in TLS");
+        return -1;
+    }
+    /* ======================================================== */
     return 0;
 #endif
 }
 
-static ALWAYS_INLINE void _copium_recdepth_leave(void) {
+static ALWAYS_INLINE int _copium_recdepth_leave(void) {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
     if (_copium_tls_depth > 0)
         _copium_tls_depth--;
+    return 0;
 #else
     uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
-    if (depth_u > 0)
-        (void)PyThread_tss_set(&module_state.recdepth_tss, (void*)(depth_u - 1));
+    if (depth_u > 0) {
+        if (PyThread_tss_set(&module_state.recdepth_tss, (void*)(depth_u - 1)) != 0) {
+            PyErr_SetString(
+                PyExc_SystemError, "copium: failed to decrement recursion depth in TLS"
+            );
+            return -1;
+        }
+    }
+    return 0;
 #endif
 }
 
 /* -------------------- Guarded return macros for recursion ------------------- */
-#define RETURN_GUARDED(expr)                        \
-    do {                                            \
-        if (UNLIKELY(_copium_recdepth_enter() < 0)) \
-            return NULL;                            \
-        PyObject* _ret = (expr);                    \
-        _copium_recdepth_leave();                   \
-        return _ret;                                \
+#define RETURN_GUARDED(expr)                          \
+    do {                                              \
+        if (UNLIKELY(_copium_recdepth_enter() < 0))   \
+            return NULL;                              \
+        PyObject* _ret = (expr);                      \
+        if (UNLIKELY(_copium_recdepth_leave() < 0)) { \
+            Py_XDECREF(_ret);                         \
+            return NULL;                              \
+        }                                             \
+        return _ret;                                  \
     } while (0)
 
 #define RETURN_GUARDED_PY(expr) RETURN_GUARDED(expr)
@@ -881,7 +919,8 @@ static MAYBE_INLINE PyObject* deepcopy_dict_c(PyObject* obj, MemoObject* mo, Py_
         goto error_no_cleanup;
 
     DictIterGuard di;
-    dict_iter_init(&di, obj);
+    if (dict_iter_init(&di, obj) < 0)
+        goto error_no_cleanup;
 
     PyObject *key, *value;
     int ret;
@@ -1854,7 +1893,8 @@ static MAYBE_INLINE PyObject* deepcopy_dict_py(
         goto error_no_cleanup;
 
     DictIterGuard di;
-    dict_iter_init(&di, obj);
+    if (dict_iter_init(&di, obj) < 0)
+        goto error_no_cleanup;
 
     PyObject *key, *value;
     int ret;
@@ -2605,7 +2645,11 @@ have_args:
         MemoObject* mo = (MemoObject*)memo_local;
 
         PyObject* result = deepcopy_c(obj, mo);
-        cleanup_tss_memo(mo, memo_local);
+        int cleanup_result = cleanup_tss_memo(mo, memo_local);
+        if (cleanup_result < 0) {
+            Py_XDECREF(result);
+            return NULL;
+        }
         return result;
     }
 
@@ -2771,10 +2815,17 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
         for (Py_ssize_t i = 0; i < n; i++) {
             PyObject* copy_i = deepcopy_c(obj, mo);
 
-            if (!cleanup_tss_memo(mo, memo_local)) {
+            int cleanup_result = cleanup_tss_memo(mo, memo_local);
+            if (cleanup_result < 0) {
+                Py_DECREF(out);
+                return NULL;
+            }
+            if (cleanup_result == 0) {
                 PyObject* memo_local = get_tss_memo();
-                if (!memo_local)
+                if (!memo_local) {
+                    Py_DECREF(out);
                     return NULL;
+                }
                 mo = (MemoObject*)memo_local;
             }
 
