@@ -259,7 +259,7 @@ typedef struct {
     Py_ssize_t used0;
 } DictIterGuard;
 
-static ALWAYS_INLINE void dict_iter_init(DictIterGuard* di, PyObject* dict) {
+static ALWAYS_INLINE int dict_iter_init(DictIterGuard* di, PyObject* dict) {
     di->dict = dict;
     di->pos = 0;
     di->ver0 = ((PyDictObject*)dict)->ma_version_tag;
