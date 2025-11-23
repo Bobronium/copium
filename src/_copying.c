@@ -2727,8 +2727,7 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
         for (Py_ssize_t i = 0; i < n; i++) {
             PyObject* copy_i = deepcopy_c(obj, mo);
 
-            int cleanup_result = cleanup_tss_memo(mo, memo_local);
-            if (cleanup_result == 0) {
+            if (!cleanup_tss_memo(mo, memo_local)) {
                 PyObject* memo_local = get_tss_memo();
                 if (!memo_local) {
                     Py_DECREF(out);
