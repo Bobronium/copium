@@ -17,14 +17,9 @@ jobs:
     if: github.ref_type == 'tag'
     uses: ./.github/workflows/cd-verify-charts.yaml
 
-  # Build wheels (runs for all events)
+  # Build wheels and test them (runs for all events)
   build:
     uses: ./.github/workflows/cd-build.yaml
-
-  # Test wheels (runs for all events)
-  test-wheels:
-    needs: build
-    uses: ./.github/workflows/cd-test.yaml
 
   # Main branch only: benchmarks
   pyperformance:
