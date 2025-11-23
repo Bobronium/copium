@@ -488,15 +488,13 @@ static void _copium_init_stack_bounds(void) {
 #endif
 }
 
-static ALWAYS_INLINE void _copium_recdepth_enter(void) {
+static ALWAYS_INLINE int _copium_recdepth_enter(void) {
     unsigned int d = ++_copium_tls_depth;
 
-    /* Fast path: first N levels, no checks */
     if (LIKELY(d < COPIUM_STACKCHECK_STRIDE)) {
-        return;
+        return 0;
     }
 
-    /* Sampled check: every STRIDE calls, verify stack bounds */
     if ((d & (COPIUM_STACKCHECK_STRIDE - 1u)) == 0u) {
         if (UNLIKELY(!_copium_stack_inited)) {
             _copium_init_stack_bounds();
@@ -509,10 +507,11 @@ static ALWAYS_INLINE void _copium_recdepth_enter(void) {
                 _copium_tls_depth--;
                 PyErr_SetString(PyExc_RecursionError,
                     "maximum recursion depth exceeded in copium.deepcopy (stack overflow)");
+                return -1;
             }
         }
-        /* If _copium_stack_low is NULL, platform doesn't support checking - no limit */
     }
+    return 0;
 }
 
 static ALWAYS_INLINE void _copium_recdepth_leave(void) {
@@ -523,8 +522,7 @@ static ALWAYS_INLINE void _copium_recdepth_leave(void) {
 /* -------------------- Guarded return macros for recursion ------------------- */
 #define RETURN_GUARDED(expr)                          \
     do {                                              \
-        _copium_recdepth_enter();                     \
-        if (PyErr_Occurred())                         \
+        if (UNLIKELY(_copium_recdepth_enter() < 0))   \
             return NULL;                              \
         PyObject* _ret = (expr);                      \
         _copium_recdepth_leave();                     \
