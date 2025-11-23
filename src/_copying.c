@@ -810,8 +810,6 @@ static MAYBE_INLINE PyObject* deepcopy_tuple_c(PyObject* obj, MemoObject* mo, Py
         Py_DECREF(copy);
         return Py_NewRef(existing);
     }
-    if (PyErr_Occurred())
-        goto error;
 
     if (MEMO_STORE_C((void*)obj, copy, id_hash) < 0)
         goto error;
@@ -906,8 +904,6 @@ static MAYBE_INLINE PyObject* deepcopy_set_c(PyObject* obj, MemoObject* mo, Py_s
             /* If the set grows during snapshotting, ignore extras to avoid overflow. */
         }
     }
-    if (PyErr_Occurred())
-        goto error;
 
     for (Py_ssize_t j = 0; j < i; j++) {
         PyObject* elem = PyTuple_GET_ITEM(snap, j); /* borrowed from snapshot */
@@ -960,8 +956,6 @@ static MAYBE_INLINE PyObject* deepcopy_frozenset_c(
         citem = NULL;                      // ownership transferred
         i++;
     }
-    if (PyErr_Occurred())
-        goto error;
 
     copy = PyFrozenSet_New(temp);
     Py_DECREF(temp);
@@ -1881,8 +1875,6 @@ static MAYBE_INLINE PyObject* deepcopy_set_py(
             /* If the set grows during snapshotting, ignore extras to avoid overflow. */
         }
     }
-    if (PyErr_Occurred())
-        goto error;
 
     /* Deepcopy from the stable snapshot prefix. */
     for (Py_ssize_t j = 0; j < i; j++) {
@@ -1936,8 +1928,6 @@ static MAYBE_INLINE PyObject* deepcopy_frozenset_py(
         citem = NULL;                      // ownership transferred
         i++;
     }
-    if (PyErr_Occurred())
-        goto error;
 
     copy = PyFrozenSet_New(temp);
     Py_DECREF(temp);
