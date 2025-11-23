@@ -316,9 +316,6 @@ typedef struct {
     PyObject* copyreg_newobj_ex;                 // copyreg.__newobj_ex__ (or sentinel)
     PyObject* create_precompiler_reconstructor;  // duper.snapshots.create_precompiler_reconstructor
 
-    // recursion depth guard (thread-local counter for safe deepcopy)
-    Py_tss_t recdepth_tss;
-
     // thread-local memo for implicit use
     Py_tss_t memo_tss;
 
@@ -433,129 +430,105 @@ static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* mo, PyObject* memo_local) 
     #define COPIUM_STACK_SAFETY_MARGIN (256u * 1024u)  // 256 KiB
 #endif
 
-/* Unified recursion tracking using TSS only - simpler and eliminates dual-path bugs */
 
-static ALWAYS_INLINE void _copium_recdepth_enter(void) {
-    uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
-    uintptr_t next = depth_u + 1;
+/* ------------------------- Thread-local storage ----------------------------- */
+#ifdef _MSC_VER
+    #define COPIUM_THREAD_LOCAL __declspec(thread)
+#else
+    #define COPIUM_THREAD_LOCAL _Thread_local
+#endif
 
-    /* Fast path for shallow recursion - no checks needed */
-    if (LIKELY(next < 16u)) {
-        if (PyThread_tss_set(&module_state.recdepth_tss, (void*)next) != 0) {
-            Py_FatalError("copium: unexpected TTS state - failed to increment recursion depth");
+/* ------------------------- Stack overflow protection ------------------------ */
+static COPIUM_THREAD_LOCAL unsigned int _copium_tls_depth = 0;
+static COPIUM_THREAD_LOCAL char* _copium_stack_low = NULL;
+static COPIUM_THREAD_LOCAL int _copium_stack_inited = 0;
+
+static void _copium_init_stack_bounds(void) {
+    _copium_stack_inited = 1;
+
+#if defined(__APPLE__)
+    pthread_t t = pthread_self();
+    size_t sz = pthread_get_stacksize_np(t);
+    void* base = pthread_get_stackaddr_np(t);
+    char* high = (char*)base;
+    char* low = high - (ptrdiff_t)sz;
+    if (sz > COPIUM_STACK_SAFETY_MARGIN)
+        low += COPIUM_STACK_SAFETY_MARGIN;
+    _copium_stack_low = low;
+
+#elif defined(__linux__)
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+        void* addr = NULL;
+        size_t sz = 0;
+        if (pthread_attr_getstack(&attr, &addr, &sz) == 0 && addr && sz) {
+            char* low = (char*)addr;
+            if (sz > COPIUM_STACK_SAFETY_MARGIN)
+                low += COPIUM_STACK_SAFETY_MARGIN;
+            _copium_stack_low = low;
         }
-        return;
+        pthread_attr_destroy(&attr);
     }
 
-    /* Sampled checks for deeper recursion */
-    if (UNLIKELY((next & (COPIUM_STACKCHECK_STRIDE - 1u)) == 0u)) {
-/* Stack overflow check on supported platforms */
-#if defined(_WIN32)
-        typedef VOID(WINAPI * GetStackLimitsFn)(PULONG_PTR, PULONG_PTR);
-        static GetStackLimitsFn _copium_pGetCurrentThreadStackLimits = NULL;
-        static int _copium_stacklimits_resolved = 0;
-        if (!_copium_stacklimits_resolved) {
-            HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
-            if (hKernel32) {
-                _copium_pGetCurrentThreadStackLimits =
-                    (GetStackLimitsFn)GetProcAddress(hKernel32, "GetCurrentThreadStackLimits");
-            }
-            _copium_stacklimits_resolved = 1;
-        }
-        if (_copium_pGetCurrentThreadStackLimits) {
+#elif defined(_WIN32)
+    typedef VOID(WINAPI * GetStackLimitsFn)(PULONG_PTR, PULONG_PTR);
+    HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+    if (hKernel32) {
+        GetStackLimitsFn fn = (GetStackLimitsFn)GetProcAddress(hKernel32, "GetCurrentThreadStackLimits");
+        if (fn) {
             ULONG_PTR low = 0, high = 0;
-            _copium_pGetCurrentThreadStackLimits(&low, &high);
-            char sp_probe;
-            char* sp = (char*)&sp_probe;
-            char* lowc = (char*)low;
+            fn(&low, &high);
             size_t sz = (size_t)(high - low);
+            char* lowc = (char*)low;
             if (sz > COPIUM_STACK_SAFETY_MARGIN)
                 lowc += COPIUM_STACK_SAFETY_MARGIN;
-            if (UNLIKELY(sp <= lowc)) {
-                PyErr_SetString(
-                    PyExc_RecursionError,
-                    "maximum recursion depth exceeded in copium.deepcopy (stack safety cap)"
-                );
-                return;
-            }
+            _copium_stack_low = lowc;
         }
-#elif defined(__APPLE__)
-        pthread_t t = pthread_self();
-        size_t sz = pthread_get_stacksize_np(t);
-        void* base = pthread_get_stackaddr_np(t);
-        char* high = (char*)base;
-        char* low = high - (ptrdiff_t)sz;
-        if ((size_t)sz > COPIUM_STACK_SAFETY_MARGIN)
-            low += COPIUM_STACK_SAFETY_MARGIN;
-        char sp_probe;
-        char* sp = (char*)&sp_probe;
-        if (UNLIKELY(sp <= low)) {
-            PyErr_SetString(
-                PyExc_RecursionError,
-                "maximum recursion depth exceeded in copium.deepcopy (stack safety cap)"
-            );
-            return;
-        }
-#elif defined(__linux__)
-        pthread_attr_t attr;
-        if (pthread_getattr_np(pthread_self(), &attr) == 0) {
-            void* addr = NULL;
-            size_t sz = 0;
-            if (pthread_attr_getstack(&attr, &addr, &sz) == 0 && addr && sz) {
-                char* low = (char*)addr;
-                char* high = low + (ptrdiff_t)sz;
-                if (sz > COPIUM_STACK_SAFETY_MARGIN)
-                    low += COPIUM_STACK_SAFETY_MARGIN;
-                char sp_probe;
-                char* sp = (char*)&sp_probe;
-                if (UNLIKELY(sp <= low)) {
-                    pthread_attr_destroy(&attr);
-                    PyErr_SetString(
-                        PyExc_RecursionError,
-                        "maximum recursion depth exceeded in copium.deepcopy (stack safety cap)"
-                    );
-                    return;
-                }
-            }
-            pthread_attr_destroy(&attr);
-        }
-#endif
     }
+#endif
+}
 
-    /* Recursion depth limit check */
-    int limit = Py_GetRecursionLimit();
-    if (limit > 10000)
-        limit = 10000;
-    if (UNLIKELY((int)next > limit)) {
-        PyErr_SetString(
-            PyExc_RecursionError, "maximum recursion depth exceeded in copium.deepcopy"
-        );
+static ALWAYS_INLINE void _copium_recdepth_enter(void) {
+    unsigned int d = ++_copium_tls_depth;
+
+    /* Fast path: first N levels, no checks */
+    if (LIKELY(d < COPIUM_STACKCHECK_STRIDE)) {
         return;
     }
 
-    if (PyThread_tss_set(&module_state.recdepth_tss, (void*)next) != 0) {
-        Py_FatalError("copium: unexpected TTS state - failed to update recursion depth");
+    /* Sampled check: every STRIDE calls, verify stack bounds */
+    if ((d & (COPIUM_STACKCHECK_STRIDE - 1u)) == 0u) {
+        if (UNLIKELY(!_copium_stack_inited)) {
+            _copium_init_stack_bounds();
+        }
+
+        if (_copium_stack_low) {
+            char sp_probe;
+            char* sp = (char*)&sp_probe;
+            if (UNLIKELY(sp <= _copium_stack_low)) {
+                _copium_tls_depth--;
+                PyErr_SetString(PyExc_RecursionError,
+                    "maximum recursion depth exceeded in copium.deepcopy (stack overflow)");
+            }
+        }
+        /* If _copium_stack_low is NULL, platform doesn't support checking - no limit */
     }
 }
 
 static ALWAYS_INLINE void _copium_recdepth_leave(void) {
-    uintptr_t depth_u = (uintptr_t)PyThread_tss_get(&module_state.recdepth_tss);
-    if (depth_u > 0) {
-        if (PyThread_tss_set(&module_state.recdepth_tss, (void*)(depth_u - 1)) != 0) {
-            Py_FatalError("copium: unexpected TTS state - failed to decrement recursion depth");
-        }
-    }
+    if (_copium_tls_depth > 0)
+        _copium_tls_depth--;
 }
 
 /* -------------------- Guarded return macros for recursion ------------------- */
-#define RETURN_GUARDED(expr)      \
-    do {                          \
-        _copium_recdepth_enter(); \
-        if (PyErr_Occurred())     \
-            return NULL;          \
-        PyObject* _ret = (expr);  \
-        _copium_recdepth_leave(); \
-        return _ret;              \
+#define RETURN_GUARDED(expr)                          \
+    do {                                              \
+        _copium_recdepth_enter();                     \
+        if (PyErr_Occurred())                         \
+            return NULL;                              \
+        PyObject* _ret = (expr);                      \
+        _copium_recdepth_leave();                     \
+        return _ret;                                  \
     } while (0)
 
 #define RETURN_GUARDED_PY(expr) RETURN_GUARDED(expr)
@@ -3217,9 +3190,6 @@ static void cleanup_on_init_failure(void) {
     if (PyThread_tss_is_created(&module_state.memo_tss)) {
         PyThread_tss_delete(&module_state.memo_tss);
     }
-    if (PyThread_tss_is_created(&module_state.recdepth_tss)) {
-        PyThread_tss_delete(&module_state.recdepth_tss);
-    }
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
     if (PyThread_tss_is_created(&g_dictiter_tss)) {
         PyThread_tss_delete(&g_dictiter_tss);
@@ -3384,20 +3354,6 @@ int _copium_copying_init(PyObject* module) {
     module_state.sentinel = PyList_New(0);
     if (!module_state.sentinel) {
         PyErr_SetString(PyExc_ImportError, "copium: failed to create sentinel list");
-        Py_XDECREF(mod_types);
-        Py_XDECREF(mod_builtins);
-        Py_XDECREF(mod_weakref);
-        Py_XDECREF(mod_copyreg);
-        Py_XDECREF(mod_re);
-        Py_XDECREF(mod_decimal);
-        Py_XDECREF(mod_fractions);
-        cleanup_on_init_failure();
-        return -1;
-    }
-
-    // Create thread-local recursion depth guard
-    if (PyThread_tss_create(&module_state.recdepth_tss) != 0) {
-        PyErr_SetString(PyExc_ImportError, "copium: failed to create recursion TSS");
         Py_XDECREF(mod_types);
         Py_XDECREF(mod_builtins);
         Py_XDECREF(mod_weakref);
