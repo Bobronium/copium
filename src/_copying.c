@@ -430,7 +430,6 @@ static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* mo, PyObject* memo_local) 
     #define COPIUM_STACK_SAFETY_MARGIN (256u * 1024u)  // 256 KiB
 #endif
 
-
 /* ------------------------- Thread-local storage ----------------------------- */
 #ifdef _MSC_VER
     #define COPIUM_THREAD_LOCAL __declspec(thread)
@@ -474,7 +473,8 @@ static void _copium_init_stack_bounds(void) {
     typedef VOID(WINAPI * GetStackLimitsFn)(PULONG_PTR, PULONG_PTR);
     HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
     if (hKernel32) {
-        GetStackLimitsFn fn = (GetStackLimitsFn)GetProcAddress(hKernel32, "GetCurrentThreadStackLimits");
+        GetStackLimitsFn fn =
+            (GetStackLimitsFn)GetProcAddress(hKernel32, "GetCurrentThreadStackLimits");
         if (fn) {
             ULONG_PTR low = 0, high = 0;
             fn(&low, &high);
@@ -505,8 +505,25 @@ static ALWAYS_INLINE int _copium_recdepth_enter(void) {
             char* sp = (char*)&sp_probe;
             if (UNLIKELY(sp <= _copium_stack_low)) {
                 _copium_tls_depth--;
-                PyErr_SetString(PyExc_RecursionError,
-                    "maximum recursion depth exceeded in copium.deepcopy (stack overflow)");
+                PyErr_Format(
+                    PyExc_RecursionError,
+                    "Stack overflow (depth %u) while deep copying an object",
+                    d
+                );
+                return -1;
+            }
+        } else {
+            // Not Windows/Linux/macOS, this technically might lead to crash
+            // if recursion limit is set to unreasonably high value.
+            // But case is esoteric enough to ignore it for now.
+            int limit = Py_GetRecursionLimit();
+            if (UNLIKELY((int)d > limit)) {
+                _copium_tls_depth--;
+                PyErr_Format(
+                    PyExc_RecursionError,
+                    "Stack overflow (depth %u) while deep copying an object",
+                    d
+                );
                 return -1;
             }
         }
@@ -520,13 +537,13 @@ static ALWAYS_INLINE void _copium_recdepth_leave(void) {
 }
 
 /* -------------------- Guarded return macros for recursion ------------------- */
-#define RETURN_GUARDED(expr)                          \
-    do {                                              \
-        if (UNLIKELY(_copium_recdepth_enter() < 0))   \
-            return NULL;                              \
-        PyObject* _ret = (expr);                      \
-        _copium_recdepth_leave();                     \
-        return _ret;                                  \
+#define RETURN_GUARDED(expr)                        \
+    do {                                            \
+        if (UNLIKELY(_copium_recdepth_enter() < 0)) \
+            return NULL;                            \
+        PyObject* _ret = (expr);                    \
+        _copium_recdepth_leave();                   \
+        return _ret;                                \
     } while (0)
 
 #define RETURN_GUARDED_PY(expr) RETURN_GUARDED(expr)
