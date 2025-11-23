@@ -21,6 +21,11 @@ jobs:
   build:
     uses: ./.github/workflows/cd-build.yaml
 
+  # Test wheels (runs for all events)
+  test-wheels:
+    needs: build
+    uses: ./.github/workflows/cd-test.yaml
+
   # Main branch only: benchmarks
   pyperformance:
     if: github.ref == 'refs/heads/main'

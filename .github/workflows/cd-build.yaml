@@ -21,15 +21,15 @@ jobs:
           - { os: macos-15,         platform: macos,   archs: arm64,  arch_label: "Apple Silicon" }
           - { os: macos-15-intel,   platform: macos,   archs: x86_64, arch_label: "Intel" }
         python:
-          - { display: "3.10", tag: "cp310" }
-          - { display: "3.11", tag: "cp311" }
-          - { display: "3.12", tag: "cp312" }
-          - { display: "3.13", tag: "cp313" }
-          - { display: "3.14", tag: "cp314" }
+          - { tag: "cp310", label: "3.10" }
+          - { tag: "cp311", label: "3.11" }
+          - { tag: "cp312", label: "3.12" }
+          - { tag: "cp313", label: "3.13" }
+          - { tag: "cp314", label: "3.14" }
 
     runs-on: ${{ matrix.build.os }}
 
-    name: "Python ${{ matrix.python.display }} / ${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }} / ${{ matrix.build.arch_label }}"
+    name: "Python ${{ matrix.python.label }} / ${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }} / ${{ matrix.build.arch_label }}"
 
     steps:
       - uses: actions/checkout@v5
@@ -56,11 +56,11 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: "Wheels-${{ matrix.python.display }}-${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }}-${{ matrix.build.arch_label }}"
+          name: "Wheels-${{ matrix.python.label }}-${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }}-${{ matrix.build.arch_label }}"
           path: ./wheelhouse/*.whl
 
       - name: Find wheel for benchmarks
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
         id: wheel
         shell: bash
         run: |
@@ -76,13 +76,13 @@ jobs:
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Setup venv for codspeed
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
         run: |
-          uv venv --python ${{ matrix.python.display }} --clear
+          uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
 
       - name: Run codspeed benchmarks
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
         uses: CodSpeedHQ/action@v4
         with:
           mode: instrumentation

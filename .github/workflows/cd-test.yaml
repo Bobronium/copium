@@ -1,0 +1,94 @@
+name: Test Wheels
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  test-wheels:
+    strategy:
+      fail-fast: false
+      max-parallel: 64
+      matrix:
+        build:
+          # Linux
+          - { os: ubuntu-latest,    platform: linux,   archs: x86_64,  arch_label: "x86_64",        platform_label: "Linux" }
+          - { os: ubuntu-24.04-arm, platform: linux,   archs: aarch64, arch_label: "ARM64",         platform_label: "Linux" }
+          # Windows
+          - { os: windows-latest,   platform: windows, archs: AMD64,   arch_label: "x64",           platform_label: "Windows" }
+          - { os: windows-11-arm,   platform: windows, archs: ARM64,   arch_label: "ARM64",         platform_label: "Windows" }
+          # macOS
+          - { os: macos-15,         platform: macos,   archs: arm64,   arch_label: "Apple Silicon", platform_label: "macOS" }
+          - { os: macos-15-intel,   platform: macos,   archs: x86_64,  arch_label: "Intel",         platform_label: "macOS" }
+        python:
+          - { tag: "cp310", label: "3.10" }
+          - { tag: "cp311", label: "3.11" }
+          - { tag: "cp312", label: "3.12" }
+          - { tag: "cp313", label: "3.13" }
+          - { tag: "cp314", label: "3.14" }
+        order:
+          - { seed: "0", label: "Sequential" }
+          - { seed: "A", label: "Shuffle A" }
+          - { seed: "B", label: "Shuffle B" }
+          - { seed: "C", label: "Shuffle C" }
+          - { seed: "D", label: "Shuffle D" }
+
+    runs-on: ${{ matrix.build.os }}
+
+    name: "Python ${{ matrix.python.label }} / ${{ matrix.build.platform_label }} / ${{ matrix.build.arch_label }} / ${{ matrix.order.label }}"
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
+          path: wheelhouse
+
+      - name: Setup venv
+        run: |
+          uv venv --python ${{ matrix.python.label }} --clear
+          uv sync --extra test --no-install-project
+
+      - name: Test all wheels
+        shell: bash
+        run: |
+          wheels=(wheelhouse/*.whl)
+          if [ ${#wheels[@]} -eq 0 ] || [ ! -e "${wheels[0]}" ]; then
+            echo "ERROR: No wheels found for ${{ matrix.python.tag }} on ${{ runner.os }}"
+            exit 1
+          fi
+          
+          echo "Found ${#wheels[@]} wheel(s) to test:"
+          printf '  %s\n' "${wheels[@]}"
+          echo ""
+          
+          failed=0
+          for wheel in "${wheels[@]}"; do
+            echo "=========================================="
+            echo "Testing: $(basename "$wheel")"
+            echo "=========================================="
+            
+            uv pip install --reinstall "$wheel"
+            
+            if [ "${{ matrix.order.seed }}" = "0" ]; then
+              uv run --no-sync pytest tests/ -v || failed=1
+            else
+              uv run --no-sync pytest tests/ -v --random-order --random-order-seed=${{ matrix.order.seed }} || failed=1
+            fi
+            
+            echo ""
+          done
+          
+          if [ $failed -ne 0 ]; then
+            echo "ERROR: One or more wheels failed tests"
+            exit 1
+          fi
