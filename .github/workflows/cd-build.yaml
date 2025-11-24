@@ -12,14 +12,14 @@ jobs:
       matrix:
         build:
           # Linux
-          - { os: ubuntu-latest,    platform: linux,   archs: x86_64, arch_label: "x86_64" }
-          - { os: ubuntu-24.04-arm, platform: linux,   archs: aarch64, arch_label: "ARM64" }
+          - { os: ubuntu-latest,    platform: linux,   archs: x86_64,  arch_label: "x86_64",        platform_label: "Linux" }
+          - { os: ubuntu-24.04-arm, platform: linux,   archs: aarch64, arch_label: "ARM64",         platform_label: "Linux" }
           # Windows
-          - { os: windows-latest,   platform: windows, archs: AMD64,  arch_label: "x64" }
-          - { os: windows-11-arm,   platform: windows, archs: ARM64,  arch_label: "ARM64" }
+          - { os: windows-latest,   platform: windows, archs: AMD64,   arch_label: "x64",           platform_label: "Windows" }
+          - { os: windows-11-arm,   platform: windows, archs: ARM64,   arch_label: "ARM64",         platform_label: "Windows" }
           # macOS
-          - { os: macos-15,         platform: macos,   archs: arm64,  arch_label: "Apple Silicon" }
-          - { os: macos-15-intel,   platform: macos,   archs: x86_64, arch_label: "Intel" }
+          - { os: macos-15,         platform: macos,   archs: arm64,   arch_label: "Apple Silicon", platform_label: "macOS" }
+          - { os: macos-15-intel,   platform: macos,   archs: x86_64,  arch_label: "Intel",         platform_label: "macOS" }
         python:
           - { tag: "cp310", label: "3.10" }
           - { tag: "cp311", label: "3.11" }
@@ -29,18 +29,12 @@ jobs:
 
     runs-on: ${{ matrix.build.os }}
 
-    name: "Python ${{ matrix.python.label }} / ${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }} / ${{ matrix.build.arch_label }}"
+    name: "Python ${{ matrix.python.label }} - ${{ matrix.build.platform_label }} - ${{ matrix.build.arch_label }}"
 
     steps:
       - uses: actions/checkout@v5
-        with: 
-          submodules: recursive
-
-      - name: Set up QEMU
-        if: runner.os == 'Linux' && runner.arch == 'X64'
-        uses: docker/setup-qemu-action@v3
         with:
-          platforms: all
+          submodules: recursive
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
@@ -59,58 +53,50 @@ jobs:
           name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
           path: ./wheelhouse/*.whl
 
-      - name: Test wheels
-        shell: bash
-        run: |
-          set -e
-          
-          wheels=(wheelhouse/*.whl)
-          if [ ${#wheels[@]} -eq 0 ] || [ ! -e "${wheels[0]}" ]; then
-            echo "ERROR: No wheels found"
-            exit 1
-          fi
-          
-          echo "Found ${#wheels[@]} wheel(s) to test"
-          printf '  %s\n' "${wheels[@]}"
-          echo ""
-          
-          uv venv --python ${{ matrix.python.label }} --clear
-          uv sync --extra test --no-install-project
-          
-          orderings=("0:Sequential" "A:Shuffle A" "B:Shuffle B" "C:Shuffle C" "D:Shuffle D")
-          
-          for wheel in "${wheels[@]}"; do
-            echo ""
-            echo "=========================================="
-            echo "Testing: $(basename "$wheel")"
-            echo "=========================================="
-            
-            uv pip install --reinstall "$wheel"
-            
-            for entry in "${orderings[@]}"; do
-              seed="${entry%%:*}"
-              label="${entry#*:}"
-              echo ""
-              echo "--- $label ---"
-              
-              if [ "$seed" = "0" ]; then
-                uv run --no-sync pytest tests/ -v
-              else
-                uv run --no-sync pytest tests/ -v --random-order --random-order-seed="$seed"
-              fi
-            done
-          done
-
-      - name: Find wheel for benchmarks
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
+      - name: Find compatible wheel for shuffle tests
         id: wheel
         shell: bash
         run: |
-          # Prefer manylinux over musllinux
-          wheel=$(ls wheelhouse/*-${{ matrix.python.tag }}-*-manylinux*_x86_64.whl 2>/dev/null | head -n1 || true)
-          if [[ -z "$wheel" ]]; then
-            wheel=$(ls wheelhouse/*-${{ matrix.python.tag }}-*-musllinux*_x86_64.whl 2>/dev/null | head -n1 || true)
+          # On Linux, use manylinux only (musllinux tested sequentially in container)
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-manylinux*.whl" -type f | head -n1)
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-win*.whl" -type f | head -n1)
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-macosx*.whl" -type f | head -n1)
           fi
+          
+          if [[ -z "$wheel" ]]; then
+            echo "No compatible wheel found for shuffle tests"
+            exit 1
+          fi
+          
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv for shuffle tests
+        run: |
+          uv venv --python ${{ matrix.python.label }} --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.wheel.outputs.path }}"
+
+      - name: "Test: Shuffle A"
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
+
+      - name: "Test: Shuffle B"
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
+
+      - name: "Test: Shuffle C"
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
+
+      - name: "Test: Shuffle D"
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
+
+      - name: Find wheel for benchmarks
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
+        id: bench_wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-manylinux*.whl" -type f | head -n1)
           if [[ -z "$wheel" ]]; then
             echo "No wheel found"
             exit 1
@@ -128,4 +114,4 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: instrumentation
-          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance
+          run: uv run --with "${{ steps.bench_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance
