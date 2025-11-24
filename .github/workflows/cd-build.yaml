@@ -12,14 +12,14 @@ jobs:
       matrix:
         build:
           # Linux
-          - { os: ubuntu-latest,    platform: linux,   archs: x86_64,  arch_label: "x86_64",        platform_label: "Linux" }
-          - { os: ubuntu-24.04-arm, platform: linux,   archs: aarch64, arch_label: "ARM64",         platform_label: "Linux" }
+          - { os: ubuntu-latest,    platform: linux,   archs: x86_64,  wheel_arch: manylinux*_x86_64,  arch_label: "x86_64",        platform_label: "Linux" }
+          - { os: ubuntu-24.04-arm, platform: linux,   archs: aarch64, wheel_arch: manylinux*_aarch64, arch_label: "ARM64",         platform_label: "Linux" }
           # Windows
-          - { os: windows-latest,   platform: windows, archs: AMD64,   arch_label: "x64",           platform_label: "Windows" }
-          - { os: windows-11-arm,   platform: windows, archs: ARM64,   arch_label: "ARM64",         platform_label: "Windows" }
+          - { os: windows-latest,   platform: windows, archs: AMD64,   wheel_arch: win_amd64,          arch_label: "x64",           platform_label: "Windows" }
+          - { os: windows-11-arm,   platform: windows, archs: ARM64,   wheel_arch: win_arm64,          arch_label: "ARM64",         platform_label: "Windows" }
           # macOS
-          - { os: macos-15,         platform: macos,   archs: arm64,   arch_label: "Apple Silicon", platform_label: "macOS" }
-          - { os: macos-15-intel,   platform: macos,   archs: x86_64,  arch_label: "Intel",         platform_label: "macOS" }
+          - { os: macos-15,         platform: macos,   archs: arm64,   wheel_arch: macosx*_arm64,      arch_label: "Apple Silicon", platform_label: "macOS" }
+          - { os: macos-15-intel,   platform: macos,   archs: x86_64,  wheel_arch: macosx*_x86_64,     arch_label: "Intel",         platform_label: "macOS" }
         python:
           - { tag: "cp310", label: "3.10" }
           - { tag: "cp311", label: "3.11" }
@@ -57,20 +57,14 @@ jobs:
         id: wheel
         shell: bash
         run: |
-          # On Linux, use manylinux only (musllinux tested sequentially in container)
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-manylinux*.whl" -type f | head -n1)
-          elif [ "${{ runner.os }}" = "Windows" ]; then
-            wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-win*.whl" -type f | head -n1)
-          elif [ "${{ runner.os }}" = "macOS" ]; then
-            wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-macosx*.whl" -type f | head -n1)
-          fi
+          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
           
           if [[ -z "$wheel" ]]; then
             echo "No compatible wheel found for shuffle tests"
             exit 1
           fi
           
+          echo "Found: $wheel"
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Setup venv for shuffle tests
