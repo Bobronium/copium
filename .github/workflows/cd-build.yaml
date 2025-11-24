@@ -42,7 +42,7 @@ jobs:
           enable-cache: true
 
       - name: Setup Python
-        if: ${{ !matrix.build.os == 'windows-11-arm' }}
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python.label }}
@@ -60,7 +60,7 @@ jobs:
           path: ./wheelhouse/*.whl
 
       - name: Find compatible wheel for shuffle tests
-        if: ${{ !matrix.build.os == 'windows-11-arm' }}
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
         id: wheel
         shell: bash
         run: |
@@ -75,26 +75,26 @@ jobs:
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Setup venv for shuffle tests
-        if: ${{ !matrix.build.os == 'windows-11-arm' }}
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: |
           uv venv --python-preference only-system --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
       - name: "Test: Shuffle A"
-        if: ${{ !matrix.build.os == 'windows-11-arm' }}
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
 
       - name: "Test: Shuffle B"
-        if: ${{ !matrix.build.os == 'windows-11-arm' }}
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
 
       - name: "Test: Shuffle C"
-        if: ${{ !matrix.build.os == 'windows-11-arm' }}
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
 
       - name: "Test: Shuffle D"
-        if: ${{ !matrix.build.os == 'windows-11-arm' }}
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
 
       - name: Find wheel for benchmarks
