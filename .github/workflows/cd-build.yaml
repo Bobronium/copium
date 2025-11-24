@@ -69,7 +69,7 @@ jobs:
 
       - name: Setup venv for shuffle tests
         run: |
-          uv venv --python ${{ matrix.python.label }} --clear
+          uv venv --python-preference only-system --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
