@@ -21,11 +21,11 @@ jobs:
           - { os: macos-15,         platform: macos,   archs: arm64,   wheel_arch: macosx*_arm64,      arch_label: "Apple Silicon", platform_label: "macOS" }
           - { os: macos-15-intel,   platform: macos,   archs: x86_64,  wheel_arch: macosx*_x86_64,     arch_label: "Intel",         platform_label: "macOS" }
         python:
-          - { tag: "cp310", label: "3.10" }
-          - { tag: "cp311", label: "3.11" }
-          - { tag: "cp312", label: "3.12" }
-          - { tag: "cp313", label: "3.13" }
-          - { tag: "cp314", label: "3.14" }
+          - { tag: "cp310", version: "3.10.19", label: "3.10" }
+          - { tag: "cp311", version: "3.11.14", label: "3.11" }
+          - { tag: "cp312", version: "3.12.12", label: "3.12" }
+          - { tag: "cp313", version: "3.13.9", label: "3.13" }
+          - { tag: "cp314", version: "3.14.0", label: "3.14" }
 
     runs-on: ${{ matrix.build.os }}
 
@@ -40,12 +40,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-
-      - name: Setup Python
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python.label }}
+          python-version: ${{ matrix.python.version }}
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.2.1
@@ -77,7 +72,7 @@ jobs:
       - name: Setup venv for shuffle tests
         if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: |
-          uv venv --python-preference only-system --python ${{ matrix.python.label }} --clear
+          uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
