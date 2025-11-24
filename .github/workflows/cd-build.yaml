@@ -21,9 +21,9 @@ jobs:
           - { os: macos-15,         platform: macos,   archs: arm64,   wheel_arch: macosx*_arm64,      arch_label: "Apple Silicon", platform_label: "macOS" }
           - { os: macos-15-intel,   platform: macos,   archs: x86_64,  wheel_arch: macosx*_x86_64,     arch_label: "Intel",         platform_label: "macOS" }
         python:
-          - { tag: "cp310", version: "3.10.19", label: "3.10" }
-          - { tag: "cp311", version: "3.11.14", label: "3.11" }
-          - { tag: "cp312", version: "3.12.12", label: "3.12" }
+          - { tag: "cp310", version: "3.10.11", label: "3.10" }
+          - { tag: "cp311", version: "3.11.9", label: "3.11" }
+          - { tag: "cp312", version: "3.12.10", label: "3.12" }
           - { tag: "cp313", version: "3.13.9", label: "3.13" }
           - { tag: "cp314", version: "3.14.0", label: "3.14" }
 
