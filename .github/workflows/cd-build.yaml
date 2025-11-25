@@ -12,35 +12,29 @@ jobs:
       matrix:
         build:
           # Linux
-          - { os: ubuntu-latest,    platform: linux,   archs: x86_64, arch_label: "x86_64" }
-          - { os: ubuntu-24.04-arm, platform: linux,   archs: aarch64, arch_label: "ARM64" }
+          - { os: ubuntu-latest,    platform: linux,   archs: x86_64,  wheel_arch: manylinux*_x86_64,  arch_label: "x86_64",        platform_label: "Linux" }
+          - { os: ubuntu-24.04-arm, platform: linux,   archs: aarch64, wheel_arch: manylinux*_aarch64, arch_label: "ARM64",         platform_label: "Linux" }
           # Windows
-          - { os: windows-latest,   platform: windows, archs: AMD64,  arch_label: "x64" }
-          - { os: windows-11-arm,   platform: windows, archs: ARM64,  arch_label: "ARM64" }
+          - { os: windows-latest,   platform: windows, archs: AMD64,   wheel_arch: win_amd64,          arch_label: "x64",           platform_label: "Windows" }
+          - { os: windows-11-arm,   platform: windows, archs: ARM64,   wheel_arch: win_arm64,          arch_label: "ARM64",         platform_label: "Windows" }
           # macOS
-          - { os: macos-15,         platform: macos,   archs: arm64,  arch_label: "Apple Silicon" }
-          - { os: macos-15-intel,   platform: macos,   archs: x86_64, arch_label: "Intel" }
+          - { os: macos-15,         platform: macos,   archs: arm64,   wheel_arch: macosx*_arm64,      arch_label: "Apple Silicon", platform_label: "macOS" }
+          - { os: macos-15-intel,   platform: macos,   archs: x86_64,  wheel_arch: macosx*_x86_64,     arch_label: "Intel",         platform_label: "macOS" }
         python:
-          - { display: "3.10", tag: "cp310" }
-          - { display: "3.11", tag: "cp311" }
-          - { display: "3.12", tag: "cp312" }
-          - { display: "3.13", tag: "cp313" }
-          - { display: "3.14", tag: "cp314" }
+          - { tag: "cp310", version: "3.10.11", label: "3.10" }
+          - { tag: "cp311", version: "3.11.9", label: "3.11" }
+          - { tag: "cp312", version: "3.12.10", label: "3.12" }
+          - { tag: "cp313", version: "3.13.9", label: "3.13" }
+          - { tag: "cp314", version: "3.14.0", label: "3.14" }
 
     runs-on: ${{ matrix.build.os }}
 
-    name: "Python ${{ matrix.python.display }} / ${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }} / ${{ matrix.build.arch_label }}"
+    name: "Python ${{ matrix.python.label }} - ${{ matrix.build.platform_label }} - ${{ matrix.build.arch_label }}"
 
     steps:
       - uses: actions/checkout@v5
-        with: 
-          submodules: recursive
-
-      - name: Set up QEMU
-        if: runner.os == 'Linux' && runner.arch == 'X64'
-        uses: docker/setup-qemu-action@v3
         with:
-          platforms: all
+          submodules: recursive
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
@@ -56,34 +50,74 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: "Wheels-${{ matrix.python.display }}-${{ fromJSON('{\"linux\":\"Linux\",\"windows\":\"Windows\",\"macos\":\"macOS\"}')[matrix.build.platform] }}-${{ matrix.build.arch_label }}"
+          name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
           path: ./wheelhouse/*.whl
 
-      - name: Find wheel for benchmarks
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+      - name: Find compatible wheel for shuffle tests
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
         id: wheel
         shell: bash
         run: |
-          # Prefer manylinux over musllinux
-          wheel=$(ls wheelhouse/*-${{ matrix.python.tag }}-*-manylinux*_x86_64.whl 2>/dev/null | head -n1 || true)
+          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
+
           if [[ -z "$wheel" ]]; then
-            wheel=$(ls wheelhouse/*-${{ matrix.python.tag }}-*-musllinux*_x86_64.whl 2>/dev/null | head -n1 || true)
+            echo "No compatible wheel found for shuffle tests"
+            exit 1
           fi
+
+          echo "Found: $wheel"
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv for shuffle tests
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: |
+          uv venv --python ${{ matrix.python.label }} --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.wheel.outputs.path }}"
+
+      - name: "Test: Shuffle A"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
+
+      - name: "Test: Shuffle B"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
+
+      - name: "Test: Shuffle C"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
+
+      - name: "Test: Shuffle D"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
+
+      - name: Find wheel for benchmarks
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
+        id: bench_wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-manylinux*.whl" -type f | head -n1)
           if [[ -z "$wheel" ]]; then
             echo "No wheel found"
             exit 1
           fi
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
-      - name: Setup venv for codspeed
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+      - name: Clear pytest / project state before CodSpeed
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
         run: |
-          uv venv --python ${{ matrix.python.display }} --clear
+          rm -rf .pytest_cache
+          find . -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+      - name: Setup venv for codspeed
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
+        run: |
+          uv venv --python ${{ matrix.python.version }} --clear
           uv sync --extra test --no-install-project
 
       - name: Run codspeed benchmarks
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.display)
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
         uses: CodSpeedHQ/action@v4
         with:
           mode: instrumentation
-          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance
+          run: uv run --with "${{ steps.bench_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance

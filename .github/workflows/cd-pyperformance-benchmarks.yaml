@@ -10,11 +10,11 @@ jobs:
     strategy:
       matrix:
         python:
-          - { display: "3.10", tag: "cp310" }
-          - { display: "3.11", tag: "cp311" }
-          - { display: "3.12", tag: "cp312" }
-          - { display: "3.13", tag: "cp313" }
-          - { display: "3.14", tag: "cp314" }
+          - { tag: "cp310", label: "3.10" }
+          - { tag: "cp311", label: "3.11" }
+          - { tag: "cp312", label: "3.12" }
+          - { tag: "cp313", label: "3.13" }
+          - { tag: "cp314", label: "3.14" }
     steps:
       - uses: actions/checkout@v5
         with: 
@@ -31,7 +31,7 @@ jobs:
       - name: Download wheels
         uses: actions/download-artifact@v4
         with:
-          pattern: "Wheels-${{ matrix.python.display }}-Linux-x86_64"
+          pattern: "Wheels-${{ matrix.python.label }}-Linux-x86_64"
           path: wheelhouse
 
       - name: Find wheel
@@ -50,7 +50,7 @@ jobs:
 
       - name: Setup venv
         run: |
-          uv venv --python ${{ matrix.python.display }} --clear
+          uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra benchmark --no-install-project
           uv pip install ${{ steps.wheel.outputs.path }}
 

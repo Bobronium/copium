@@ -22,7 +22,6 @@ test-command = "pytest -vvv"
 test-extras = ["test"]
 test-sources = ["tests", "pyproject.toml"]
 
-
 [project]
 name = "copium"
 dynamic = ["version"]
@@ -78,6 +77,7 @@ test = [
     "pytest-codspeed>=4.2.0",
     "pytest-test-groups>=1.2.1",
     "psutil>=5.9.0",
+    "pytest-random-order>=1.2.0",
 ]
 
 docs = [
