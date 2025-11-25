@@ -53,43 +53,43 @@ jobs:
           name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
           path: ./wheelhouse/*.whl
 
-#      - name: Find compatible wheel for shuffle tests
-#        if: ${{ matrix.build.os != 'windows-11-arm' }}
-#        id: wheel
-#        shell: bash
-#        run: |
-#          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
-#
-#          if [[ -z "$wheel" ]]; then
-#            echo "No compatible wheel found for shuffle tests"
-#            exit 1
-#          fi
-#
-#          echo "Found: $wheel"
-#          echo "path=$wheel" >> "$GITHUB_OUTPUT"
-#
-#      - name: Setup venv for shuffle tests
-#        if: ${{ matrix.build.os != 'windows-11-arm' }}
-#        run: |
-#          uv venv --python ${{ matrix.python.label }} --clear
-#          uv sync --extra test --no-install-project
-#          uv pip install "${{ steps.wheel.outputs.path }}"
-#
-#      - name: "Test: Shuffle A"
-#        if: ${{ matrix.build.os != 'windows-11-arm' }}
-#        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
-#
-#      - name: "Test: Shuffle B"
-#        if: ${{ matrix.build.os != 'windows-11-arm' }}
-#        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
-#
-#      - name: "Test: Shuffle C"
-#        if: ${{ matrix.build.os != 'windows-11-arm' }}
-#        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
-#
-#      - name: "Test: Shuffle D"
-#        if: ${{ matrix.build.os != 'windows-11-arm' }}
-#        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
+      - name: Find compatible wheel for shuffle tests
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        id: wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
+
+          if [[ -z "$wheel" ]]; then
+            echo "No compatible wheel found for shuffle tests"
+            exit 1
+          fi
+
+          echo "Found: $wheel"
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup venv for shuffle tests
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: |
+          uv venv --python ${{ matrix.python.label }} --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.wheel.outputs.path }}"
+
+      - name: "Test: Shuffle A"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
+
+      - name: "Test: Shuffle B"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
+
+      - name: "Test: Shuffle C"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
+
+      - name: "Test: Shuffle D"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
 
       - name: Find wheel for benchmarks
         if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
