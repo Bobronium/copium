@@ -103,6 +103,11 @@ jobs:
           fi
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
+      - name: Clear pytest / project state before CodSpeed
+        run: |
+          rm -rf .pytest_cache
+          find . -name '__pycache__' -type d -prune -exec rm -rf {} +
+
       - name: Setup venv for codspeed
         if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
         run: |
