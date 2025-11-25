@@ -82,18 +82,17 @@ static ALWAYS_INLINE Py_ssize_t memo_hash_pointer(void* ptr) {
     return hash_pointer(ptr);
 }
 
-/* Retention policy caps for TLS memo/keepalive reuse */
 #ifndef COPIUM_MEMO_RETAIN_MAX_SLOTS
-    #define COPIUM_MEMO_RETAIN_MAX_SLOTS (1 << 17) /* 131072 slots (~2 MiB for 16B entries) */
+    #define COPIUM_MEMO_RETAIN_MAX_SLOTS (1 << 19) /* 524288 slots (~8 MiB) */
 #endif
 #ifndef COPIUM_MEMO_RETAIN_SHRINK_TO
-    #define COPIUM_MEMO_RETAIN_SHRINK_TO (1 << 13) /* 8192 slots */
+    #define COPIUM_MEMO_RETAIN_SHRINK_TO (1 << 15) /* 32768 slots (~512 KiB) */
 #endif
 #ifndef COPIUM_KEEP_RETAIN_MAX
-    #define COPIUM_KEEP_RETAIN_MAX (1 << 13) /* 8192 elements */
+    #define COPIUM_KEEP_RETAIN_MAX (1 << 15) /* 32768 elements (256 KiB) */
 #endif
 #ifndef COPIUM_KEEP_RETAIN_TARGET
-    #define COPIUM_KEEP_RETAIN_TARGET (1 << 10) /* 1024 elements */
+    #define COPIUM_KEEP_RETAIN_TARGET (1 << 12) /* 4096 elements (32 KiB) */
 #endif
 
 /* ------------------------------ Keep vector impl --------------------------- */
