@@ -104,6 +104,7 @@ jobs:
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Clear pytest / project state before CodSpeed
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
         run: |
           rm -rf .pytest_cache
           find . -name '__pycache__' -type d -prune -exec rm -rf {} +
