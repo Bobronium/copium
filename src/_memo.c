@@ -19,7 +19,6 @@
 #include "Python.h"
 #include "pycore_object.h"
 
-//#include "_memo.h"
 
 #if defined(__GNUC__) || defined(__clang__)
     #define LIKELY(x) __builtin_expect(!!(x), 1)
