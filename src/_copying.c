@@ -53,21 +53,13 @@ static int g_dict_watcher_id = -1;
 static int g_dict_watcher_registered = 0;
 #endif
 
-/* ------------------------------ Small helpers ------------------------------ */
 
 #if PY_VERSION_HEX < PY_VERSION_3_13_HEX
     #define PyObject_GetOptionalAttr(obj, name, out) _PyObject_LookupAttr((obj), (name), (out))
 #endif
 
-/* -------- Dict iteration with mutation check (fast path) -------- */
-/* Abstraction:
-   DictIterGuard iter_guard;
-   dict_iter_init(&iter_guard, dict);
-   while ((ret = dict_iter_next(&iter_guard, &key, &value)) > 0) { ... }
-   if (ret < 0) -> error set (mutation detected)
-*/
+
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
-/* Python 3.14+: use public dict watcher API to detect mutation without touching private fields. */
 
 typedef struct DictIterGuard {
     PyObject* dict;
