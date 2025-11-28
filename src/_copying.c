@@ -54,12 +54,6 @@
 #endif
 
 
-#if PY_VERSION_HEX < PY_VERSION_3_13_HEX
-    #define PyObject_GetOptionalAttr(obj, name, out) _PyObject_LookupAttr((obj), (name), (out))
-#endif
-
-
-
 /* ----------------------- Python-dict memo helpers (inline) ------------------ */
 
 static PyObject* memo_lookup_legacy(PyObject* memo, void* key_ptr) {

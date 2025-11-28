@@ -5,10 +5,10 @@
  */
 
 #ifndef Py_BUILD_CORE_MODULE
-#  define Py_BUILD_CORE_MODULE
+#define Py_BUILD_CORE_MODULE
 #endif
 #ifndef PY_SSIZE_T_CLEAN
-    #define PY_SSIZE_T_CLEAN
+#define PY_SSIZE_T_CLEAN
 #endif
 
 #ifndef COPIUM_COMMON_H
@@ -18,7 +18,6 @@
 #define PY_VERSION_3_12_HEX 0x030C0000
 #define PY_VERSION_3_13_HEX 0x030D0000
 #define PY_VERSION_3_14_HEX 0x030E0000
-
 
 #ifndef LIKELY
     #if defined(__GNUC__) || defined(__clang__)
@@ -68,5 +67,9 @@
 #endif
 
 #include <Python.h>
+
+#if PY_VERSION_HEX < PY_VERSION_3_13_HEX
+    #define PyObject_GetOptionalAttr(obj, name, out) _PyObject_LookupAttr((obj), (name), (out))
+#endif
 
 #endif /* COPIUM_COMMON_H */
