@@ -2,6 +2,13 @@
 #define _COPIUM_RECURSION_GUARD_C
 
 #include <stddef.h> /* ptrdiff_t */
+#if defined(__APPLE__) || defined(__linux__)
+    #include <pthread.h>
+#endif
+#if defined(_WIN32)
+    #include <windows.h>
+#endif
+
 #include "copium_common.h"
 
 #ifndef COPIUM_STACKCHECK_STRIDE

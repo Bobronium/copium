@@ -33,12 +33,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(__APPLE__) || defined(__linux__)
-    #include <pthread.h>
-#endif
-#if defined(_WIN32)
-    #include <windows.h>
-#endif
 
 #include "Python.h"
 
