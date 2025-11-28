@@ -10,29 +10,13 @@
  * - Implements MutableMapping protocol with views
  * - Keepalive vector with a Python-facing proxy implementing a MutableSequence
  */
-#define PY_SSIZE_T_CLEAN
-#define Py_BUILD_CORE_MODULE
+#include "copium_common.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include "Python.h"
 #include "pycore_object.h"
-
-
-#if defined(__GNUC__) || defined(__clang__)
-    #define LIKELY(x) __builtin_expect(!!(x), 1)
-    #define UNLIKELY(x) __builtin_expect(!!(x), 0)
-    #define ALWAYS_INLINE inline __attribute__((always_inline))
-#elif defined(_MSC_VER)
-    #define LIKELY(x) (x)
-    #define UNLIKELY(x) (x)
-    #define ALWAYS_INLINE __forceinline
-#else
-    #define LIKELY(x) (x)
-    #define UNLIKELY(x) (x)
-    #define ALWAYS_INLINE inline
-#endif
 
 /* ------------------------------ Memo table -------------------------------- */
 

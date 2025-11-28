@@ -28,42 +28,13 @@
  *     - clear_pins()
  *     - get_pins()
  */
-#define Py_BUILD_CORE_MODULE
-
-#define PY_VERSION_3_11_HEX 0x030B0000
-#define PY_VERSION_3_12_HEX 0x030C0000
-#define PY_VERSION_3_13_HEX 0x030D0000
-#define PY_VERSION_3_14_HEX 0x030E0000
-
-#define PY_SSIZE_T_CLEAN
-
 /* Enable GNU extensions so pthread_getattr_np is declared on Linux */
 #ifndef _GNU_SOURCE
-    #define _GNU_SOURCE 1
+#  define _GNU_SOURCE 1
 #endif
 
-#define PY_SSIZE_T_CLEAN
+#include "copium_common.h"
 #include <Python.h>
-
-#ifndef LIKELY
-    #if defined(__GNUC__) || defined(__clang__)
-        #define LIKELY(x) __builtin_expect(!!(x), 1)
-        #define UNLIKELY(x) __builtin_expect(!!(x), 0)
-    #else
-        #define LIKELY(x) (x)
-        #define UNLIKELY(x) (x)
-    #endif
-#endif
-
-#ifndef ALWAYS_INLINE
-    #if (defined(__GNUC__) || defined(__clang__)) && defined(__OPTIMIZE__)
-        #define ALWAYS_INLINE inline __attribute__((always_inline))
-    #elif defined(_MSC_VER)
-        #define ALWAYS_INLINE __forceinline
-    #else
-        #define ALWAYS_INLINE inline
-    #endif
-#endif
 
 #include "_memo.c"
 #include "_pinning.c"

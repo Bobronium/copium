@@ -17,7 +17,9 @@
  *
  * Python 3.10–3.14 compatible.
 */
-#include <stddef.h>  // ptrdiff_t
+#include "copium_common.h"
+
+#include <stddef.h> /* ptrdiff_t */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,72 +31,20 @@
 #endif
 
 #include "Python.h"
-#include "pycore_object.h"  // _PyNone_Type, _PyNotImplemented_Type
-// _PyDict_NewPresized
+#include "pycore_object.h" /* _PyNone_Type, _PyNotImplemented_Type */
+
+/* _PyDict_NewPresized */
 #if PY_VERSION_HEX < PY_VERSION_3_11_HEX
     #include "dictobject.h"
 #else
     #include "pycore_dict.h"
 #endif
-// _PySet_NextEntry()
 
+/* _PySet_NextEntry() */
 #if PY_VERSION_HEX < PY_VERSION_3_13_HEX
     #include "setobject.h"
 #else
     #include "pycore_setobject.h"
-#endif
-
-/* -----------------------------------------------------------------------------
- * Inlining policy
- *
- * Goal:
- *   - Make ALWAYS_INLINE truly "always inline" (force) everywhere it appears.
- *   - Avoid forced inlining on recursive dispatchers to prevent GCC/Clang errors.
- *   - Provide MAYBE_INLINE as a strong hint so PGO can choose profitable expansion.
- *
- * Policy:
- *   - MSVC: ALWAYS_INLINE = __forceinline; MAYBE_INLINE = __inline.
- *   - GCC/Clang: ALWAYS_INLINE = inline + always_inline (+hot); MAYBE_INLINE = inline (+hot).
- * ---------------------------------------------------------------------------*/
-#ifdef ALWAYS_INLINE
-    #undef ALWAYS_INLINE
-#endif
-#ifdef MAYBE_INLINE
-    #undef MAYBE_INLINE
-#endif
-
-/* Feature-gated attributes for portability */
-#if defined(__has_attribute)
-    #if __has_attribute(hot)
-        #define COPIUM_ATTR_HOT __attribute__((hot))
-    #else
-        #define COPIUM_ATTR_HOT
-    #endif
-    #if __has_attribute(gnu_inline)
-        #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
-    #else
-        #define COPIUM_ATTR_GNU_INLINE
-    #endif
-#else
-    #if defined(__GNUC__) || defined(__clang__)
-        #define COPIUM_ATTR_HOT __attribute__((hot))
-        #define COPIUM_ATTR_GNU_INLINE __attribute__((gnu_inline))
-    #else
-        #define COPIUM_ATTR_HOT
-        #define COPIUM_ATTR_GNU_INLINE
-    #endif
-#endif
-
-#if defined(_MSC_VER)
-    #define ALWAYS_INLINE __forceinline
-    #define MAYBE_INLINE __inline
-#elif defined(__GNUC__) || defined(__clang__)
-    #define ALWAYS_INLINE \
-        inline __attribute__((always_inline)) COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
-    #define MAYBE_INLINE inline COPIUM_ATTR_HOT COPIUM_ATTR_GNU_INLINE
-#else
-    #define ALWAYS_INLINE inline
-    #define MAYBE_INLINE inline
 #endif
 
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
@@ -164,7 +114,8 @@ static int _copium_dict_watcher_cb(
 static ALWAYS_INLINE void dict_iter_init(DictIterGuard* iter_guard, PyObject* dict) {
     iter_guard->dict = dict;
     iter_guard->pos = 0;
-    iter_guard->size0 = PyDict_Size(dict); /* snapshot initial size (errors unlikely; -1 harmless) */
+    iter_guard->size0 =
+        PyDict_Size(dict); /* snapshot initial size (errors unlikely; -1 harmless) */
     iter_guard->watching = 0;
     iter_guard->mutated = 0;
     iter_guard->size_changed = 0;
@@ -200,7 +151,9 @@ static ALWAYS_INLINE void dict_iter_cleanup(DictIterGuard* iter_guard) {
        The stack will correct itself when the actual top guard is cleaned up. */
 }
 
-static ALWAYS_INLINE int dict_iter_next(DictIterGuard* iter_guard, PyObject** key, PyObject** value) {
+static ALWAYS_INLINE int dict_iter_next(
+    DictIterGuard* iter_guard, PyObject** key, PyObject** value
+) {
     if (PyDict_Next(iter_guard->dict, &iter_guard->pos, key, value)) {
         if (UNLIKELY(iter_guard->mutated)) {
             /* Decide message based on net size delta from start of iteration. */
@@ -259,7 +212,9 @@ static ALWAYS_INLINE void dict_iter_init(DictIterGuard* iter_guard, PyObject* di
     iter_guard->used0 = ((PyDictObject*)dict)->ma_used;
 }
 
-static ALWAYS_INLINE int dict_iter_next(DictIterGuard* iter_guard, PyObject** key, PyObject** value) {
+static ALWAYS_INLINE int dict_iter_next(
+    DictIterGuard* iter_guard, PyObject** key, PyObject** value
+) {
     if (PyDict_Next(iter_guard->dict, &iter_guard->pos, key, value)) {
         uint64_t ver_now = ((PyDictObject*)iter_guard->dict)->ma_version_tag;
         if (UNLIKELY(ver_now != iter_guard->ver0)) {
@@ -532,16 +487,16 @@ static ALWAYS_INLINE void _copium_recursion_leave(void) {
         _copium_tls_depth--;
 }
 
-#define RECURSION_GUARDED(expr)                              \
-    (__extension__({                                         \
-        PyObject *_ret;                                      \
-        if (UNLIKELY(_copium_recursion_enter() < 0)) {       \
-            _ret = NULL;                                     \
-        } else {                                             \
-            _ret = (expr);                                   \
-            _copium_recursion_leave();                       \
-        }                                                    \
-        _ret;                                                \
+#define RECURSION_GUARDED(expr)                        \
+    (__extension__({                                   \
+        PyObject* _ret;                                \
+        if (UNLIKELY(_copium_recursion_enter() < 0)) { \
+            _ret = NULL;                               \
+        } else {                                       \
+            _ret = (expr);                             \
+            _copium_recursion_leave();                 \
+        }                                              \
+        _ret;                                          \
     }))
 /* ----------------------- Python-dict memo helpers (inline) ------------------ */
 
@@ -652,8 +607,12 @@ static MAYBE_INLINE PyObject* deepcopy_list(PyObject* obj, MemoObject* memo, Py_
 static MAYBE_INLINE PyObject* deepcopy_tuple(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
 static MAYBE_INLINE PyObject* deepcopy_dict(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
 static MAYBE_INLINE PyObject* deepcopy_set(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
-static MAYBE_INLINE PyObject* deepcopy_frozenset(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
-static MAYBE_INLINE PyObject* deepcopy_bytearray(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_frozenset(
+    PyObject* obj, MemoObject* memo, Py_ssize_t id_hash
+);
+static MAYBE_INLINE PyObject* deepcopy_bytearray(
+    PyObject* obj, MemoObject* memo, Py_ssize_t id_hash
+);
 static MAYBE_INLINE PyObject* deepcopy_method(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
 static PyObject* deepcopy_object(
     PyObject* obj, PyTypeObject* tp, MemoObject* memo, Py_ssize_t id_hash
