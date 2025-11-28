@@ -59,61 +59,6 @@
 #endif
 
 
-/* ------------------------ TLS memo & recursion guard ------------------------
- */
-
-static ALWAYS_INLINE PyObject* get_tss_memo(void) {
-    void* val = PyThread_tss_get(&module_state.memo_tss);
-    if (val == NULL) {
-        PyObject* memo = Memo_New();
-        if (memo == NULL)
-            return NULL;
-        if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
-            Py_DECREF(memo);
-            Py_FatalError("copium: unexpected TTS state - failed to set memo");
-        }
-        return memo;
-    }
-
-    PyObject* existing = (PyObject*)val;
-    if (Py_REFCNT(existing) > 1) {
-        // Memo got stolen in between runs somehow.
-        // Highly unlikely, but we'll detach it anyway and enable gc tracking for it.
-        PyObject_GC_Track(existing);
-
-        PyObject* memo = Memo_New();
-        if (memo == NULL)
-            return NULL;
-
-        if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
-            Py_DECREF(memo);
-            Py_FatalError("copium: unexpected TTS state - failed to replace memo");
-        }
-        return memo;
-    }
-
-    return existing;
-}
-
-static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* memo, PyObject* memo_local) {
-    Py_ssize_t refcount = Py_REFCNT(memo_local);
-
-    if (refcount == 1) {
-        keepalive_clear(&memo->keepalive);
-        keepalive_shrink_if_large(&memo->keepalive);
-        memo_table_reset(&memo->table);
-        return 1;
-    } else {
-        PyObject_GC_Track(memo_local);
-        if (PyThread_tss_set(&module_state.memo_tss, NULL) != 0) {
-            Py_DECREF(memo_local);
-            Py_FatalError("copium: unexpected TTS state during memo cleanup");
-        }
-        Py_DECREF(memo_local);
-        return 0;
-    }
-}
-
 
 /* ----------------------- Python-dict memo helpers (inline) ------------------ */
 
