@@ -42,28 +42,6 @@
 
 #include "Python.h"
 
-/* _PyDict_NewPresized */
-#if PY_VERSION_HEX < PY_VERSION_3_11_HEX
-    #include "dictobject.h"
-#else
-    #include "pycore_dict.h"
-#endif
-
-/* _PySet_NextEntry() */
-#if PY_VERSION_HEX < PY_VERSION_3_13_HEX
-    #include "setobject.h"
-#else
-    #include "pycore_setobject.h"
-#endif
-
-
-/* -------------------------------- Utilities -------------------------------- */
-
-/* ----------------------------- Shallow reconstruct helper ------------------ */
-
-
-/* ----------------------------- Module boilerplate --------------------------
- */
 
 static void cleanup_on_init_failure(void) {
     Py_XDECREF(module_state.str_reduce_ex);

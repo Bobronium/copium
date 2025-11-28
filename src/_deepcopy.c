@@ -7,6 +7,12 @@
 #include "_recursion_guard.c"
 #include "_reduce_helpers.c"
 
+/* _PySet_NextEntry() */
+#if PY_VERSION_HEX >= PY_VERSION_3_13_HEX
+    #include "pycore_setobject.h"
+#endif
+
+
 // Keep-append helper for C-memo path.
 // Returns 0 on success, -1 on failure. Caller handles cleanup.
 // TODO: remove this and just use keepalive_append

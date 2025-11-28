@@ -9,6 +9,12 @@
 #include "_recursion_guard.c"
 #include "_memo_legacy.c"
 
+/* _PySet_NextEntry() */
+#if PY_VERSION_HEX >= PY_VERSION_3_13_HEX
+    #include "pycore_setobject.h"
+#endif
+
+
 
 static ALWAYS_INLINE PyObject* deepcopy_legacy(
     PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
