@@ -788,9 +788,6 @@ int memo_ready_types(void) {
         return -1;
     return 0;
 }
-#endif  // _COPIUM_MEMO_C
-
-
 
 static ALWAYS_INLINE PyObject* get_tss_memo(void) {
     void* val = PyThread_tss_get(&module_state.memo_tss);
@@ -843,3 +840,4 @@ static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* memo, PyObject* memo_local
         return 0;
     }
 }
+#endif  // _COPIUM_MEMO_C

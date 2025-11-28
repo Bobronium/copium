@@ -171,7 +171,6 @@ static ALWAYS_INLINE int dict_iter_next(
     return 0;
 }
     #endif
-#endif  // _COPIUM_DICT_ITER_C
 
 static int dict_iter_module_init(void) {
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
@@ -197,3 +196,4 @@ static void dict_iter_module_cleanup(void) {
     }
 #endif
 }
+#endif  // _COPIUM_DICT_ITER_C
