@@ -14,8 +14,6 @@
     #include "pycore_setobject.h"
 #endif
 
-
-
 static ALWAYS_INLINE PyObject* deepcopy_legacy(
     PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
@@ -30,32 +28,28 @@ static ALWAYS_INLINE int maybe_keepalive_legacy(
 }
 
 static MAYBE_INLINE PyObject* deepcopy_list_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_tuple_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_dict_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_set_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_frozenset_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_bytearray_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_method_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
 static PyObject* deepcopy_object_legacy(
-    PyObject* obj,
-    PyTypeObject* tp,
-    PyObject* memo,
-    PyObject** keepalive_pointer,
-    Py_ssize_t id_hash
+    PyObject* obj, PyTypeObject* tp, PyObject* memo, PyObject** keepalive_pointer
 );
 
 static ALWAYS_INLINE PyObject* deepcopy_legacy(
@@ -64,15 +58,12 @@ static ALWAYS_INLINE PyObject* deepcopy_legacy(
     PyTypeObject* tp = Py_TYPE(obj);
 
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
-    /* Python 3.14+: Check ALL atomic immutables before memo lookup */
     if (LIKELY(is_literal_immutable(tp) || is_builtin_immutable(tp) || is_class(tp))) {
         return Py_NewRef(obj);
     }
 #endif
 
-    /* Memo lookup (Python < 3.14: this happens before immutable check) */
     void* id = (void*)obj;
-    Py_ssize_t h = memo_hash_pointer(id);
     PyObject* hit = memo_lookup_legacy(memo, id);
     if (hit)
         return hit;
@@ -80,38 +71,35 @@ static ALWAYS_INLINE PyObject* deepcopy_legacy(
         return NULL;
 
 #if PY_VERSION_HEX < PY_VERSION_3_14_HEX
-    /* Python < 3.14: Check immutables after memo lookup */
     if (LIKELY(is_literal_immutable(tp))) {
         return Py_NewRef(obj);
     }
 #endif
 
-    /* 3) Popular containers first (specialized, likely hot) */
     if (tp == &PyList_Type)
-        return RECURSION_GUARDED(deepcopy_list_legacy(obj, memo, keepalive_pointer, h));
+        return RECURSION_GUARDED(deepcopy_list_legacy(obj, memo, keepalive_pointer));
     if (tp == &PyTuple_Type)
-        return RECURSION_GUARDED(deepcopy_tuple_legacy(obj, memo, keepalive_pointer, h));
+        return RECURSION_GUARDED(deepcopy_tuple_legacy(obj, memo, keepalive_pointer));
     if (tp == &PyDict_Type)
-        return RECURSION_GUARDED(deepcopy_dict_legacy(obj, memo, keepalive_pointer, h));
+        return RECURSION_GUARDED(deepcopy_dict_legacy(obj, memo, keepalive_pointer));
     if (tp == &PySet_Type)
-        return RECURSION_GUARDED(deepcopy_set_legacy(obj, memo, keepalive_pointer, h));
+        return RECURSION_GUARDED(deepcopy_set_legacy(obj, memo, keepalive_pointer));
 
     if (is_builtin_immutable(tp) || is_class(tp)) {
         return Py_NewRef(obj);
     }
 
     if (tp == &PyFrozenSet_Type)
-        return deepcopy_frozenset_legacy(obj, memo, keepalive_pointer, h);
+        return deepcopy_frozenset_legacy(obj, memo, keepalive_pointer);
     if (tp == &PyByteArray_Type)
-        return deepcopy_bytearray_legacy(obj, memo, keepalive_pointer, h);
+        return deepcopy_bytearray_legacy(obj, memo, keepalive_pointer);
     if (tp == &PyMethod_Type)
-        return deepcopy_method_legacy(obj, memo, keepalive_pointer, h);
+        return deepcopy_method_legacy(obj, memo, keepalive_pointer);
 
     if (is_stdlib_immutable(tp)) {
         return Py_NewRef(obj);
     }
 
-    /* Robustly detect a user-defined __deepcopy__ via optional lookup (single step, non-raising on miss). */
     {
         PyObject* deepcopy_meth = NULL;
         int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
@@ -136,14 +124,12 @@ static ALWAYS_INLINE PyObject* deepcopy_legacy(
         }
     }
 
-    PyObject* res = deepcopy_object_legacy(obj, tp, memo, keepalive_pointer, h);
-    return res;
+    return deepcopy_object_legacy(obj, tp, memo, keepalive_pointer);
 }
 
 static MAYBE_INLINE PyObject* deepcopy_list_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    // Owned refs that need cleanup on error
     PyObject* copy = NULL;
     PyObject* copied_item = NULL;
 
@@ -165,10 +151,9 @@ static MAYBE_INLINE PyObject* deepcopy_list_legacy(
             goto error;
         Py_DECREF(Py_None);
         PyList_SET_ITEM(copy, i, copied_item);
-        copied_item = NULL;  // ownership transferred to list
+        copied_item = NULL;
     }
 
-    // If the source list grew during the first pass, append extra tail items.
     Py_ssize_t i2 = sz;
     while (i2 < Py_SIZE(obj)) {
         PyObject* item2 = PyList_GET_ITEM(obj, i2);
@@ -192,9 +177,8 @@ error:
 }
 
 static MAYBE_INLINE PyObject* deepcopy_tuple_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    // Owned refs that need cleanup on error
     PyObject* copy = NULL;
     PyObject* copied = NULL;
 
@@ -212,15 +196,13 @@ static MAYBE_INLINE PyObject* deepcopy_tuple_legacy(
         if (copied != item)
             all_same = 0;
         PyTuple_SET_ITEM(copy, i, copied);
-        copied = NULL;  // ownership transferred to tuple
+        copied = NULL;
     }
     if (all_same) {
         Py_DECREF(copy);
         return Py_NewRef(obj);
     }
 
-    /* Handle self-referential tuples: if a recursive path already created a copy,
-       prefer that existing copy to maintain identity. */
     PyObject* existing = memo_lookup_legacy(memo, (void*)obj);
     if (existing) {
         Py_DECREF(copy);
@@ -242,9 +224,8 @@ error:
 }
 
 static MAYBE_INLINE PyObject* deepcopy_dict_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    // Owned refs that need cleanup on error
     PyObject* copy = NULL;
     PyObject* ckey = NULL;
     PyObject* cvalue = NULL;
@@ -256,9 +237,6 @@ static MAYBE_INLINE PyObject* deepcopy_dict_legacy(
     if (memoize_legacy(memo, (void*)obj, copy) < 0)
         goto error_no_cleanup;
 
-    // NOTE: iter_guard is declared here, after early returns.
-    // error_no_cleanup is for paths before iter_guard is initialized or after dict_iter_next
-    // already cleaned up. error is for mid-iteration cleanup (3.14+ only).
     DictIterGuard iter_guard;
     dict_iter_init(&iter_guard, obj);
 
@@ -278,7 +256,7 @@ static MAYBE_INLINE PyObject* deepcopy_dict_legacy(
         Py_DECREF(cvalue);
         cvalue = NULL;
     }
-    if (ret < 0)  // mutation detected -> error already set, cleanup done
+    if (ret < 0)
         goto error_no_cleanup;
 
     if (maybe_keepalive_legacy(copy, obj, memo, keepalive_pointer) < 0)
@@ -297,9 +275,8 @@ error_no_cleanup:
 }
 
 static MAYBE_INLINE PyObject* deepcopy_set_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    // Owned refs that need cleanup on error
     PyObject* copy = NULL;
     PyObject* snap = NULL;
     PyObject* citem = NULL;
@@ -310,7 +287,6 @@ static MAYBE_INLINE PyObject* deepcopy_set_legacy(
     if (memoize_legacy(memo, (void*)obj, copy) < 0)
         goto error;
 
-    /* Snapshot into a pre-sized tuple without invoking user code. */
     Py_ssize_t n = PySet_Size(obj);
     if (n == -1)
         goto error;
@@ -325,18 +301,14 @@ static MAYBE_INLINE PyObject* deepcopy_set_legacy(
 
     while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
         if (i < n) {
-            /* item is borrowed; store owned ref in the tuple */
             Py_INCREF(item);
             PyTuple_SET_ITEM(snap, i, item);
             i++;
-        } else {
-            /* If the set grows during snapshotting, ignore extras to avoid overflow. */
         }
     }
 
-    /* Deepcopy from the stable snapshot prefix. */
     for (Py_ssize_t j = 0; j < i; j++) {
-        PyObject* elem = PyTuple_GET_ITEM(snap, j); /* borrowed from snap */
+        PyObject* elem = PyTuple_GET_ITEM(snap, j);
         citem = deepcopy_legacy(elem, memo, keepalive_pointer);
         if (!citem)
             goto error;
@@ -359,14 +331,12 @@ error:
 }
 
 static MAYBE_INLINE PyObject* deepcopy_frozenset_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    // Owned refs that need cleanup on error
     PyObject* temp = NULL;
     PyObject* copy = NULL;
     PyObject* citem = NULL;
 
-    /* Pre-size snapshot: frozenset is immutable, so size won't change mid-loop. */
     Py_ssize_t n = PySet_Size(obj);
     if (n == -1)
         goto error;
@@ -380,12 +350,11 @@ static MAYBE_INLINE PyObject* deepcopy_frozenset_legacy(
     Py_hash_t hash;
 
     while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
-        /* item is borrowed; deepcopy_py returns a new reference which tuple will own. */
         citem = deepcopy_legacy(item, memo, keepalive_pointer);
         if (!citem)
             goto error;
-        PyTuple_SET_ITEM(temp, i, citem);  // steals reference to citem
-        citem = NULL;                      // ownership transferred
+        PyTuple_SET_ITEM(temp, i, citem);
+        citem = NULL;
         i++;
     }
 
@@ -408,7 +377,7 @@ error:
 }
 
 static MAYBE_INLINE PyObject* deepcopy_bytearray_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 ) {
     PyObject* copy = NULL;
 
@@ -430,9 +399,8 @@ error:
 }
 
 static MAYBE_INLINE PyObject* deepcopy_method_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer, Py_ssize_t id_hash
+    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    // Owned refs that need cleanup on error
     PyObject* func = NULL;
     PyObject* self = NULL;
     PyObject* cself = NULL;
@@ -473,16 +441,9 @@ error:
     return NULL;
 }
 
-// Reduce protocol implementation for Python-dict memo path.
-// This is the cold fallback path - not marked ALWAYS_INLINE to avoid code bloat.
 static PyObject* deepcopy_object_legacy(
-    PyObject* obj,
-    PyTypeObject* tp,
-    PyObject* memo,
-    PyObject** keepalive_pointer,
-    Py_ssize_t id_hash
+    PyObject* obj, PyTypeObject* tp, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    // All owned refs declared at top for cleanup
     PyObject* reduce_result = NULL;
     PyObject* inst = NULL;
     PyObject* setstate = NULL;
@@ -516,7 +477,6 @@ static PyObject* deepcopy_object_legacy(
         return Py_NewRef(obj);
     }
 
-    // Handle __newobj__
     if (callable == module_state.copyreg_newobj) {
         if (PyTuple_GET_SIZE(argtup) < 1) {
             PyErr_Format(
@@ -556,9 +516,7 @@ static PyObject* deepcopy_object_legacy(
         Py_DECREF(newargs);
         if (!inst)
             goto error;
-    }
-    // Handle __newobj_ex__
-    else if (callable == module_state.copyreg_newobj_ex) {
+    } else if (callable == module_state.copyreg_newobj_ex) {
         if (PyTuple_GET_SIZE(argtup) != 3) {
             PyErr_Format(
                 PyExc_TypeError,
@@ -612,9 +570,7 @@ static PyObject* deepcopy_object_legacy(
         Py_DECREF(kwargs_copy);
         if (!inst)
             goto error;
-    }
-    // Generic callable
-    else {
+    } else {
         Py_ssize_t nargs = PyTuple_GET_SIZE(argtup);
         if (nargs == 0) {
             inst = PyObject_CallNoArgs(callable);
@@ -640,17 +596,14 @@ static PyObject* deepcopy_object_legacy(
             goto error;
     }
 
-    // Memoize early to handle self-referential structures
     if (memoize_legacy(memo, (void*)obj, inst) < 0)
         goto error;
 
-    // Handle state (BUILD semantics)
     if (state) {
         if (PyObject_GetOptionalAttr(inst, module_state.str_setstate, &setstate) < 0)
             goto error;
 
         if (setstate) {
-            // Explicit __setstate__
             state_copy = deepcopy_legacy(state, memo, keepalive_pointer);
             if (!state_copy) {
                 Py_DECREF(setstate);
@@ -668,7 +621,6 @@ static PyObject* deepcopy_object_legacy(
             Py_DECREF(result);
             result = NULL;
         } else {
-            // Default __setstate__: handle inst.__dict__ and slotstate
             PyObject* dict_state = NULL;
             PyObject* slotstate = NULL;
 
@@ -679,7 +631,6 @@ static PyObject* deepcopy_object_legacy(
                 dict_state = state;
             }
 
-            // Set inst.__dict__ from the state dict
             if (dict_state && dict_state != Py_None) {
                 if (!PyDict_Check(dict_state)) {
                     PyErr_SetString(PyExc_TypeError, "state is not a dictionary");
@@ -715,7 +666,6 @@ static PyObject* deepcopy_object_legacy(
                 dict_state_copy = NULL;
             }
 
-            // Also set instance attributes from the slotstate dict
             if (slotstate && slotstate != Py_None) {
                 if (!PyDict_Check(slotstate)) {
                     PyErr_SetString(PyExc_TypeError, "slot state is not a dictionary");
@@ -742,7 +692,6 @@ static PyObject* deepcopy_object_legacy(
         }
     }
 
-    // Handle listitems
     if (listitems) {
         append = PyObject_GetAttr(inst, module_state.str_append);
         if (!append)
@@ -795,7 +744,6 @@ static PyObject* deepcopy_object_legacy(
         append = NULL;
     }
 
-    // Handle dictitems
     if (dictitems) {
         it = PyObject_GetIter(dictitems);
         if (!it)
@@ -855,7 +803,6 @@ static PyObject* deepcopy_object_legacy(
         it = NULL;
     }
 
-    // Keep alive original object if reconstruction returned different object
     if (inst != obj) {
         if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
             goto error;
