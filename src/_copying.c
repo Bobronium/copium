@@ -38,7 +38,6 @@
 #endif
 
 #include "Python.h"
-#include "pycore_object.h" /* _PyNone_Type, _PyNotImplemented_Type */
 
 /* _PyDict_NewPresized */
 #if PY_VERSION_HEX < PY_VERSION_3_11_HEX

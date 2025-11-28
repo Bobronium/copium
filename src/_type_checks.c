@@ -2,6 +2,7 @@
 #define _COPIUM_TYPE_CHECKS_C
 
 #include "_state.c"
+#include "pycore_object.h" /* _PyNone_Type, _PyNotImplemented_Type */
 
 static ALWAYS_INLINE int is_literal_immutable(PyTypeObject* tp) {
     unsigned long r = (tp == &_PyNone_Type) | (tp == &PyLong_Type) | (tp == &PyUnicode_Type) |
