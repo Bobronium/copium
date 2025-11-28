@@ -9,13 +9,15 @@
  * Public API is registered onto the "copium" module via:
  *   int _copium_patching_add_api(PyObject* module)
  */
+#ifndef _COPIUM_PATCHING_C
+#define _COPIUM_PATCHING_C
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <stdint.h>
 
 #if PY_VERSION_HEX >= 0x030C0000
-/* =========================
+    /* =========================
  * CPython 3.12+ IMPLEMENTATION
  * ========================= */
     #include "cpython/funcobject.h"  // PyFunctionObject, PyVectorcall_Function
@@ -593,4 +595,5 @@ int _copium_patching_add_api(PyObject* module) {
     #endif
     return 0;
 }
-#endif /* version branch */
+#endif  /* version branch */
+#endif  // _COPIUM_PATCHING_C

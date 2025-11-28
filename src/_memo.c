@@ -10,6 +10,9 @@
  * - Implements MutableMapping protocol with views
  * - Keepalive vector with a Python-facing proxy implementing a MutableSequence
  */
+#ifndef _COPIUM_MEMO_C
+#define _COPIUM_MEMO_C
+
 #include "copium_common.h"
 
 #include <stdint.h>
@@ -482,15 +485,15 @@ static PyObject* KeepaliveList_clear(KeepaliveListObject* self, PyObject* noargs
 
 static PySequenceMethods KeepaliveList_as_sequence = {
     (lenfunc)KeepaliveList_len,          /* sq_length */
-    0,                              /* sq_concat */
-    0,                              /* sq_repeat */
+    0,                                   /* sq_concat */
+    0,                                   /* sq_repeat */
     (ssizeargfunc)KeepaliveList_getitem, /* sq_item */
-    0,                              /* sq_slice (deprecated) */
-    0,                              /* sq_ass_item */
-    0,                              /* sq_ass_slice (deprecated) */
-    0,                              /* sq_contains */
-    0,                              /* sq_inplace_concat */
-    0                               /* sq_inplace_repeat */
+    0,                                   /* sq_slice (deprecated) */
+    0,                                   /* sq_ass_item */
+    0,                                   /* sq_ass_slice (deprecated) */
+    0,                                   /* sq_contains */
+    0,                                   /* sq_inplace_concat */
+    0                                    /* sq_inplace_repeat */
 };
 
 static PyMethodDef KeepaliveList_methods[] = {
@@ -786,3 +789,4 @@ int memo_ready_types(void) {
         return -1;
     return 0;
 }
+#endif  // _COPIUM_MEMO_C

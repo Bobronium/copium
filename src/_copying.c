@@ -17,7 +17,11 @@
  *
  * Python 3.10–3.14 compatible.
 */
+#ifndef _COPIUM_COPYING_C
+#define _COPIUM_COPYING_C
+
 #include "copium_common.h"
+#include "_state.c"
 
 #include <stddef.h> /* ptrdiff_t */
 #include <stdint.h>
@@ -53,11 +57,9 @@ static int g_dict_watcher_id = -1;
 static int g_dict_watcher_registered = 0;
 #endif
 
-
 #if PY_VERSION_HEX < PY_VERSION_3_13_HEX
     #define PyObject_GetOptionalAttr(obj, name, out) _PyObject_LookupAttr((obj), (name), (out))
 #endif
-
 
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
 
@@ -224,48 +226,6 @@ static ALWAYS_INLINE int dict_iter_next(
 }
 #endif
 
-/* ------------------------------ Module state --------------------------------
- * Cache frequently used objects/types. Pin-specific caches live in _pinning.c.
- */
-typedef struct {
-    // Interned strings for attribute lookups
-    PyObject* str_reduce_ex;
-    PyObject* str_reduce;
-    PyObject* str_deepcopy;
-    PyObject* str_setstate;
-    PyObject* str_dict;
-    PyObject* str_append;
-    PyObject* str_update;
-    PyObject* str_new;
-    PyObject* str_get;
-
-    // Cached types (runtime-loaded from stdlib)
-    PyObject* sentinel;
-    PyTypeObject* BuiltinFunctionType;
-    PyTypeObject* MethodType;
-    PyTypeObject* CodeType;
-    PyTypeObject* range_type;
-    PyTypeObject* property_type;
-    PyTypeObject* weakref_ref_type;
-    PyTypeObject* re_Pattern_type;
-    PyTypeObject* Decimal_type;
-    PyTypeObject* Fraction_type;
-
-    // Stdlib refs
-    PyObject* copyreg_dispatch;                  // dict
-    PyObject* copy_Error;                        // exception class
-    PyObject* copyreg_newobj;                    // copyreg.__newobj__ (or sentinel)
-    PyObject* copyreg_newobj_ex;                 // copyreg.__newobj_ex__ (or sentinel)
-    PyObject* create_precompiler_reconstructor;  // duper.snapshots.create_precompiler_reconstructor
-
-    // TLS memo allows reuse across deepcopy calls without allocation.
-    // Key insight: memo is thread-local, not coroutine-local, which is correct
-    // because deepcopy is synchronous and doesn't yield.
-    Py_tss_t memo_tss;
-
-} ModuleState;
-
-static ModuleState module_state = {0};
 
 /* ------------------------------ Atomic checks ------------------------------
  */
@@ -3420,3 +3380,4 @@ init_error:
 int _copium_copying_duper_available(void) {
     return module_state.create_precompiler_reconstructor != NULL;
 }
+#endif  // _COPIUM_COPYING_C

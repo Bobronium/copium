@@ -13,6 +13,9 @@
  *     PinObject* _duper_lookup_pin_for_object(PyObject* obj);
  *     int _duper_pinning_add_types(PyObject* module);
  */
+#ifndef _COPIUM_PINNING_C
+#define _COPIUM_PINNING_C
+
 #define PY_SSIZE_T_CLEAN
 
 #include <stdint.h>
@@ -794,3 +797,4 @@ int _duper_pinning_add_types(PyObject* module) {
 
     return ok ? -1 : 0;
 }
+#endif  // _COPIUM_PINNING_C
