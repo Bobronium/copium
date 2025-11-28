@@ -399,8 +399,8 @@ static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* memo, PyObject* memo_local
     Py_ssize_t refcount = Py_REFCNT(memo_local);
 
     if (refcount == 1) {
-        keepvector_clear(&memo->keep);
-        keepvector_shrink_if_large(&memo->keep);
+        keepalive_clear(&memo->keepalive);
+        keepalive_shrink_if_large(&memo->keepalive);
         memo_table_reset(&memo->table);
         return 1;
     } else {
@@ -643,7 +643,7 @@ static ALWAYS_INLINE PyObject* deepcopy_legacy(
 // Returns 0 on success, -1 on failure. Caller handles cleanup.
 static ALWAYS_INLINE int maybe_keepalive(PyObject* copy, PyObject* src, MemoObject* memo) {
     if (copy != src) {
-        return keepvector_append(&memo->keep, src);
+        return keepalive_append(&memo->keepalive, src);
     }
     return 0;
 }
@@ -718,7 +718,7 @@ static ALWAYS_INLINE PyObject* deepcopy(PyObject* obj, MemoObject* memo) {
                     Py_DECREF(res);
                     return NULL;
                 }
-                if (keepvector_append(&memo->keep, obj) < 0) {
+                if (keepalive_append(&memo->keepalive, obj) < 0) {
                     Py_DECREF(res);
                     return NULL;
                 }
@@ -1581,7 +1581,7 @@ static PyObject* deepcopy_object(
 
     // Keep alive original object if reconstruction returned different object
     if (inst != obj) {
-        if (keepvector_append(&memo->keep, obj) < 0)
+        if (keepalive_append(&memo->keepalive, obj) < 0)
             goto error;
     }
 

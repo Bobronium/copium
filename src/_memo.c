@@ -53,12 +53,12 @@ typedef struct {
     PyObject** items;
     Py_ssize_t size;
     Py_ssize_t capacity;
-} KeepVector;
+} KeepaliveVector;
 
 /* Exact runtime layout of the memo object (must begin with PyObject_HEAD). */
 typedef struct _MemoObject {
     PyObject_HEAD MemoTable* table;
-    KeepVector keep;
+    KeepaliveVector keepalive;
 } MemoObject;
 
 /* Forward decl to refer to Memo_Type in helpers */
@@ -98,13 +98,13 @@ static ALWAYS_INLINE Py_ssize_t memo_hash_pointer(void* ptr) {
 
 /* ------------------------------ Keep vector impl --------------------------- */
 
-static void keepvector_init(KeepVector* kv) {
+static void keepalive_init(KeepaliveVector* kv) {
     kv->items = NULL;
     kv->size = 0;
     kv->capacity = 0;
 }
 
-static int keepvector_grow(KeepVector* kv, Py_ssize_t min_capacity) {
+static int keepalive_grow(KeepaliveVector* kv, Py_ssize_t min_capacity) {
     Py_ssize_t new_cap = kv->capacity > 0 ? kv->capacity : 8;
     while (new_cap < min_capacity) {
         /* simple doubling with overflow clamp */
@@ -123,9 +123,9 @@ static int keepvector_grow(KeepVector* kv, Py_ssize_t min_capacity) {
     return 0;
 }
 
-int keepvector_append(KeepVector* kv, PyObject* obj) {
+int keepalive_append(KeepaliveVector* kv, PyObject* obj) {
     if (kv->size >= kv->capacity) {
-        if (keepvector_grow(kv, kv->size + 1) < 0)
+        if (keepalive_grow(kv, kv->size + 1) < 0)
             return -1;
     }
     Py_INCREF(obj);
@@ -133,22 +133,22 @@ int keepvector_append(KeepVector* kv, PyObject* obj) {
     return 0;
 }
 
-void keepvector_clear(KeepVector* kv) {
+void keepalive_clear(KeepaliveVector* kv) {
     for (Py_ssize_t i = 0; i < kv->size; i++) {
         Py_XDECREF(kv->items[i]);
     }
     kv->size = 0;
 }
 
-static void keepvector_free(KeepVector* kv) {
-    keepvector_clear(kv);
+static void keepalive_free(KeepaliveVector* kv) {
+    keepalive_clear(kv);
     PyMem_Free(kv->items);
     kv->items = NULL;
     kv->capacity = 0;
 }
 
 /* Shrink capacity if it ballooned past the cap; keep it modest thereafter. */
-void keepvector_shrink_if_large(KeepVector* kv) {
+void keepalive_shrink_if_large(KeepaliveVector* kv) {
     if (!kv || !kv->items)
         return;
     if (kv->capacity > COPIUM_KEEP_RETAIN_MAX) {
@@ -413,39 +413,39 @@ int memo_table_remove(MemoTable* table, void* key) {
     }
 }
 
-/* ------------------------- Memo type & keep proxy -------------------------- */
+/* ------------------------- Memo type & keepalive proxy -------------------------- */
 
 PyTypeObject Memo_Type;
 
-/* _KeepList proxy ============================================================
+/* _KeepaliveList proxy ============================================================
  * A thin Python object that forwards to MemoObject.keep.
  * It is *not* the owner of the storage; it keeps a strong ref to MemoObject.
  */
 
 typedef struct {
     PyObject_HEAD MemoObject* owner; /* strong ref to the memo owning the vector */
-} KeepListObject;
+} KeepaliveListObject;
 
-static PyTypeObject KeepList_Type;
+static PyTypeObject KeepaliveList_Type;
 
 /* Forward decls */
-static PyObject* KeepList_New(MemoObject* owner);
+static PyObject* KeepaliveList_New(MemoObject* owner);
 
-static void KeepList_dealloc(KeepListObject* self) {
+static void KeepaliveList_dealloc(KeepaliveListObject* self) {
     Py_XDECREF(self->owner);
     Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
-static Py_ssize_t KeepList_len(KeepListObject* self) {
-    return self->owner && self->owner->keep.items ? self->owner->keep.size : 0;
+static Py_ssize_t KeepaliveList_len(KeepaliveListObject* self) {
+    return self->owner && self->owner->keepalive.items ? self->owner->keepalive.size : 0;
 }
 
-static PyObject* KeepList_getitem(KeepListObject* self, Py_ssize_t index) {
+static PyObject* KeepaliveList_getitem(KeepaliveListObject* self, Py_ssize_t index) {
     if (!self->owner) {
-        PyErr_SetString(PyExc_SystemError, "_KeepList has no owner");
+        PyErr_SetString(PyExc_SystemError, "_KeepaliveList has no owner");
         return NULL;
     }
-    KeepVector* kv = &self->owner->keep;
+    KeepaliveVector* kv = &self->owner->keepalive;
     Py_ssize_t n = kv->size;
     if (index < 0)
         index += n;
@@ -457,12 +457,12 @@ static PyObject* KeepList_getitem(KeepListObject* self, Py_ssize_t index) {
     return Py_NewRef(item);
 }
 
-static PyObject* KeepList_iter(KeepListObject* self) {
+static PyObject* KeepaliveList_iter(KeepaliveListObject* self) {
     if (!self->owner) {
-        PyErr_SetString(PyExc_SystemError, "_KeepList has no owner");
+        PyErr_SetString(PyExc_SystemError, "_KeepaliveList has no owner");
         return NULL;
     }
-    KeepVector* kv = &self->owner->keep;
+    KeepaliveVector* kv = &self->owner->keepalive;
     Py_ssize_t n = kv->size;
     PyObject* list = PyList_New(n);
     if (!list)
@@ -477,31 +477,31 @@ static PyObject* KeepList_iter(KeepListObject* self) {
     return it;
 }
 
-static PyObject* KeepList_append(KeepListObject* self, PyObject* arg) {
+static PyObject* KeepaliveList_append(KeepaliveListObject* self, PyObject* arg) {
     if (!self->owner) {
-        PyErr_SetString(PyExc_SystemError, "_KeepList has no owner");
+        PyErr_SetString(PyExc_SystemError, "_KeepaliveList has no owner");
         return NULL;
     }
-    if (keepvector_append(&self->owner->keep, arg) < 0)
+    if (keepalive_append(&self->owner->keepalive, arg) < 0)
         return NULL;
     Py_RETURN_NONE;
 }
 
-static PyObject* KeepList_clear(KeepListObject* self, PyObject* noargs) {
+static PyObject* KeepaliveList_clear(KeepaliveListObject* self, PyObject* noargs) {
     (void)noargs;
     if (!self->owner) {
-        PyErr_SetString(PyExc_SystemError, "_KeepList has no owner");
+        PyErr_SetString(PyExc_SystemError, "_KeepaliveList has no owner");
         return NULL;
     }
-    keepvector_clear(&self->owner->keep);
+    keepalive_clear(&self->owner->keepalive);
     Py_RETURN_NONE;
 }
 
-static PySequenceMethods KeepList_as_sequence = {
-    (lenfunc)KeepList_len,          /* sq_length */
+static PySequenceMethods KeepaliveList_as_sequence = {
+    (lenfunc)KeepaliveList_len,          /* sq_length */
     0,                              /* sq_concat */
     0,                              /* sq_repeat */
-    (ssizeargfunc)KeepList_getitem, /* sq_item */
+    (ssizeargfunc)KeepaliveList_getitem, /* sq_item */
     0,                              /* sq_slice (deprecated) */
     0,                              /* sq_ass_item */
     0,                              /* sq_ass_slice (deprecated) */
@@ -510,14 +510,14 @@ static PySequenceMethods KeepList_as_sequence = {
     0                               /* sq_inplace_repeat */
 };
 
-static PyMethodDef KeepList_methods[] = {
-    {"append", (PyCFunction)KeepList_append, METH_O, NULL},
-    {"clear", (PyCFunction)KeepList_clear, METH_NOARGS, NULL},
+static PyMethodDef KeepaliveList_methods[] = {
+    {"append", (PyCFunction)KeepaliveList_append, METH_O, NULL},
+    {"clear", (PyCFunction)KeepaliveList_clear, METH_NOARGS, NULL},
     {NULL, NULL, 0, NULL}
 };
 
-static PyObject* KeepList_New(MemoObject* owner) {
-    KeepListObject* self = PyObject_New(KeepListObject, &KeepList_Type);
+static PyObject* KeepaliveList_New(MemoObject* owner) {
+    KeepaliveListObject* self = PyObject_New(KeepaliveListObject, &KeepaliveList_Type);
     if (!self)
         return NULL;
     Py_INCREF(owner);
@@ -525,14 +525,14 @@ static PyObject* KeepList_New(MemoObject* owner) {
     return (PyObject*)self;
 }
 
-static PyTypeObject KeepList_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium._copying._KeepList",
-    .tp_basicsize = sizeof(KeepListObject),
-    .tp_dealloc = (destructor)KeepList_dealloc,
+static PyTypeObject KeepaliveList_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium._KeepaliveList",
+    .tp_basicsize = sizeof(KeepaliveListObject),
+    .tp_dealloc = (destructor)KeepaliveList_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT,
-    .tp_as_sequence = &KeepList_as_sequence,
-    .tp_iter = (getiterfunc)KeepList_iter,
-    .tp_methods = KeepList_methods,
+    .tp_as_sequence = &KeepaliveList_as_sequence,
+    .tp_iter = (getiterfunc)KeepaliveList_iter,
+    .tp_methods = KeepaliveList_methods,
 };
 
 /* --------------------------- Memo object impl ------------------------------ */
@@ -543,7 +543,7 @@ static void Memo_dealloc(MemoObject* self) {
         return;
     }
     memo_table_free(self->table);
-    keepvector_free(&self->keep);
+    keepalive_free(&self->keepalive);
     PyObject_GC_Del(self);  // Use GC-aware free
 }
 
@@ -556,8 +556,8 @@ static int Memo_traverse(MemoObject* self, visitproc visit, void* arg) {
             }
         }
     }
-    for (Py_ssize_t i = 0; i < self->keep.size; i++) {
-        Py_VISIT(self->keep.items[i]);
+    for (Py_ssize_t i = 0; i < self->keepalive.size; i++) {
+        Py_VISIT(self->keepalive.items[i]);
     }
     return 0;
 }
@@ -567,7 +567,7 @@ static int Memo_clear_gc(MemoObject* self) {
     if (self->table) {
         memo_table_clear(self->table);
     }
-    keepvector_clear(&self->keep);
+    keepalive_clear(&self->keepalive);
     return 0;
 }
 
@@ -578,7 +578,7 @@ PyObject* Memo_New(void) {
     self->table = NULL;
     // Since memo is designed to be reused, unless stolen, don't call PyObject_GC_Track just yet.
     // Instead, call it once we know that somebody stole the ref.
-    keepvector_init(&self->keep);
+    keepalive_init(&self->keepalive);
     return (PyObject*)self;
 }
 
@@ -597,9 +597,9 @@ static PyObject* Memo_subscript(MemoObject* self, PyObject* pykey) {
 
     /* Special-case for keepalive: memo[id(memo)] */
     if (key == (void*)self) {
-        /* Return a fresh proxy bound to the internal keep vector.
+        /* Return a fresh proxy bound to the internal keepalive vector.
        Do NOT store it in the table to avoid creating a non-GC-tracked cycle. */
-        return KeepList_New(self);
+        return KeepaliveList_New(self);
     }
 
     PyObject* value = memo_table_lookup(self->table, key);
@@ -661,7 +661,7 @@ static PyObject* Memo_clear(MemoObject* self, PyObject* noargs) {
         memo_table_clear(self->table);
     }
     /* Keep the keepalive vector capacity; only DECREF contained objects. */
-    keepvector_clear(&self->keep);
+    keepalive_clear(&self->keepalive);
     Py_RETURN_NONE;
 }
 
@@ -672,7 +672,7 @@ static PyObject* Memo___del__(MemoObject* self, PyObject* noargs) {
     if (self->table) {
         memo_table_clear(self->table);
     }
-    keepvector_clear(&self->keep);
+    keepalive_clear(&self->keepalive);
     Py_RETURN_NONE;
 }
 
@@ -690,8 +690,8 @@ static PyObject* Memo_contains(MemoObject* self, PyObject* pykey) {
 
 static PyObject* Memo_keep(MemoObject* self, PyObject* noargs) {
     (void)noargs;
-    /* Expose a (fresh) proxy each time; storage lives in self->keep. */
-    return KeepList_New(self);
+    /* Expose a (fresh) proxy each time; storage lives in self->keepalive. */
+    return KeepaliveList_New(self);
 }
 
 static PyMappingMethods Memo_as_mapping = {
@@ -743,7 +743,7 @@ static PyObject* Memo_setdefault(MemoObject* self, PyObject* const* args, Py_ssi
 
     /* Special handling: id(memo) exposes keepalive proxy without storing. */
     if (key == (void*)self) {
-        return KeepList_New(self);
+        return KeepaliveList_New(self);
     }
 
     /* Existing value? */
@@ -773,7 +773,7 @@ static PyMethodDef Memo_methods[] = {
 };
 
 PyTypeObject Memo_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium._copying._Memo",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium._Memo",
     .tp_basicsize = sizeof(MemoObject),
     .tp_dealloc = (destructor)Memo_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
@@ -797,7 +797,7 @@ int memo_ready_types(void) {
         }
     }
 
-    if (PyType_Ready(&KeepList_Type) < 0)
+    if (PyType_Ready(&KeepaliveList_Type) < 0)
         return -1;
     if (PyType_Ready(&Memo_Type) < 0)
         return -1;
