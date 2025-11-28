@@ -7,6 +7,9 @@
 #ifndef Py_BUILD_CORE_MODULE
 #  define Py_BUILD_CORE_MODULE
 #endif
+#ifndef PY_SSIZE_T_CLEAN
+    #define PY_SSIZE_T_CLEAN
+#endif
 
 #ifndef COPIUM_COMMON_H
 #define COPIUM_COMMON_H
@@ -16,10 +19,6 @@
 #define PY_VERSION_3_13_HEX 0x030D0000
 #define PY_VERSION_3_14_HEX 0x030E0000
 
-/* Must be defined before including Python.h for correct ssize_t handling. */
-#ifndef PY_SSIZE_T_CLEAN
-    #define PY_SSIZE_T_CLEAN
-#endif
 
 #ifndef LIKELY
     #if defined(__GNUC__) || defined(__clang__)
@@ -67,5 +66,7 @@
     #define ALWAYS_INLINE inline
     #define MAYBE_INLINE inline
 #endif
+
+#include <Python.h>
 
 #endif /* COPIUM_COMMON_H */

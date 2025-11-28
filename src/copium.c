@@ -34,7 +34,6 @@
 #endif
 
 #include "copium_common.h"
-#include <Python.h>
 
 #include "_memo.c"
 #include "_pinning.c"
