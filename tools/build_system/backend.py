@@ -23,6 +23,7 @@ import errno as errno_module
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import sys
 import sysconfig
@@ -38,6 +39,97 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from setuptools import Extension
+
+
+def _build_compile_command(ext: "Extension", source: Path) -> str:
+    """
+    Build a reasonably faithful cc command for a single source file.
+
+    This is for tooling (clangd/SourceKit-LSP), not for actually compiling.
+    """
+    cfg = sysconfig.get_config_vars()
+
+    cc = cfg.get("CC") or "cc"
+    cflags = cfg.get("CFLAGS") or ""
+    cppflags = cfg.get("CPPFLAGS") or ""
+
+    parts: list[str] = []
+    parts.extend(shlex.split(cc))
+    parts.extend(shlex.split(cflags))
+    parts.extend(shlex.split(cppflags))
+
+    # Macros
+    for name, value in ext.define_macros or []:
+        if value is None:
+            parts.append(f"-D{name}")
+        else:
+            parts.append(f"-D{name}={value}")
+
+    # Include dirs (this is where Python.h comes from)
+    for inc in ext.include_dirs or []:
+        parts.append(f"-I{inc}")
+
+    # Extra compile args from the Extension, if any
+    for arg in ext.extra_compile_args or []:
+        parts.append(str(arg))
+
+    parts.append("-c")
+    parts.append(str(source))
+
+    # Output is irrelevant for tooling, but some tools expect -o
+    parts.append("-o")
+    parts.append(os.devnull)
+
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def _write_compile_commands() -> None:
+    """
+    Generate compile_commands.json in PROJECT_ROOT, based on the
+    extension definitions we already have.
+
+    Safe to call even if something goes wrong; it just logs and bails.
+    """
+    try:
+        # We don't care about COPIUM_BUILD_HASH for tooling, so let
+        # _get_c_extensions() use build_hash=None (the default).
+        exts = _get_c_extensions()
+    except Exception as e:  # pragma: no cover - tooling only
+        error(f"compile_commands: failed to get extensions: {e}")
+        return
+
+    entries: list[dict[str, Any]] = []
+
+    for ext in exts:
+        for src in ext.sources or []:
+            src_path = Path(src)
+            if not src_path.is_absolute():
+                src_path = PROJECT_ROOT / src_path
+            src_path = src_path.resolve()
+
+            if not src_path.exists():
+                continue  # nothing to index
+
+            cmd = _build_compile_command(ext, src_path)
+
+            entries.append(
+                {
+                    "directory": str(PROJECT_ROOT),
+                    "file": str(src_path),
+                    "command": cmd,
+                }
+            )
+
+    if not entries:
+        echo("compile_commands: no C sources found, nothing to write")
+        return
+
+    out_path = PROJECT_ROOT / "compile_commands.json"
+    try:
+        out_path.write_text(json.dumps(entries, indent=2))
+        echo(f"compile_commands: wrote {out_path}")
+    except Exception as e:  # pragma: no cover - tooling only
+        error(f"compile_commands: failed to write {out_path}: {e}")
 
 
 class SetuptoolsBackend:
@@ -450,7 +542,7 @@ def _wheel_fingerprint(build_type: str) -> str:
         sources_hash.update(pyproject.read_bytes())
 
     # 4) Hash .pth file if present
-    pth_file = PROJECT_ROOT / "src" / "copium_autopatch.pth"
+    pth_file = PROJECT_ROOT / "src" / "_copium_autopatch.pth"
     if pth_file.exists():
         sources_hash.update(pth_file.read_bytes())
 
@@ -810,6 +902,8 @@ def build_wheel(
 ) -> str:
     """Build a wheel."""
     _ensure_cleanup_once()
+    _write_compile_commands()
+
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
         original = _inject_extensions(build_type="wheel")
@@ -869,6 +963,7 @@ def build_sdist(sdist_directory: str, config_settings: dict[str, Any] | None = N
     section in pyproject.toml during sdist.
     """
     echo("Building sdist...")
+    _write_compile_commands()
     original = _inject_extensions(build_type="sdist")
     try:
         return setuptools_build_meta.build_sdist(sdist_directory, config_settings)
@@ -883,6 +978,8 @@ def build_editable(
 ) -> str:
     """Build an editable wheel."""
     _ensure_cleanup_once()
+    _write_compile_commands()
+
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
         original = _inject_extensions(build_type="editable")
