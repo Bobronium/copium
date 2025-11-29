@@ -18,15 +18,6 @@ static ALWAYS_INLINE PyObject* deepcopy_legacy(
     PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
 
-static ALWAYS_INLINE int maybe_keepalive_legacy(
-    PyObject* copy, PyObject* src, PyObject* memo, PyObject** keepalive_pointer
-) {
-    if (copy != src) {
-        return keepalive_legacy(memo, keepalive_pointer, src);
-    }
-    return 0;
-}
-
 static MAYBE_INLINE PyObject* deepcopy_list_legacy(
     PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
 );
@@ -166,7 +157,7 @@ static MAYBE_INLINE PyObject* deepcopy_list_legacy(
         copied_item = NULL;
         i2++;
     }
-    if (maybe_keepalive_legacy(copy, obj, memo, keepalive_pointer) < 0)
+    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
         goto error;
     return copy;
 
@@ -213,7 +204,7 @@ static MAYBE_INLINE PyObject* deepcopy_tuple_legacy(
 
     if (memoize_legacy(memo, (void*)obj, copy) < 0)
         goto error;
-    if (maybe_keepalive_legacy(copy, obj, memo, keepalive_pointer) < 0)
+    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
         goto error;
     return copy;
 
@@ -259,7 +250,7 @@ static MAYBE_INLINE PyObject* deepcopy_dict_legacy(
     if (ret < 0)
         goto error_no_cleanup;
 
-    if (maybe_keepalive_legacy(copy, obj, memo, keepalive_pointer) < 0)
+    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
         goto error_no_cleanup;
     return copy;
 
@@ -319,7 +310,7 @@ static MAYBE_INLINE PyObject* deepcopy_set_legacy(
     }
     Py_DECREF(snap);
 
-    if (maybe_keepalive_legacy(copy, obj, memo, keepalive_pointer) < 0)
+    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
         goto error;
     return copy;
 
@@ -365,7 +356,7 @@ static MAYBE_INLINE PyObject* deepcopy_frozenset_legacy(
         goto error;
     if (memoize_legacy(memo, (void*)obj, copy) < 0)
         goto error;
-    if (maybe_keepalive_legacy(copy, obj, memo, keepalive_pointer) < 0)
+    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
         goto error;
     return copy;
 
@@ -389,7 +380,7 @@ static MAYBE_INLINE PyObject* deepcopy_bytearray_legacy(
         memcpy(PyByteArray_AS_STRING(copy), PyByteArray_AS_STRING(obj), (size_t)sz);
     if (memoize_legacy(memo, (void*)obj, copy) < 0)
         goto error;
-    if (maybe_keepalive_legacy(copy, obj, memo, keepalive_pointer) < 0)
+    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
         goto error;
     return copy;
 
@@ -429,7 +420,7 @@ static MAYBE_INLINE PyObject* deepcopy_method_legacy(
 
     if (memoize_legacy(memo, (void*)obj, copy) < 0)
         goto error;
-    if (maybe_keepalive_legacy(copy, obj, memo, keepalive_pointer) < 0)
+    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
         goto error;
     return copy;
 
