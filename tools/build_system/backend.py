@@ -10,10 +10,31 @@ Caching strategy:
 3. Cache build requirements (avoid setuptools invocation)
 4. Share state within single build process (prepare_metadata + build_wheel)
 
-Version strategy (via setuptools-scm):
+Version strategy (via setuptools-scm + optional build hash):
+
 - Tags (v1.2.3)     -> release version: 1.2.3
 - Main commits      -> dev version: 1.2.4.dev42
 - Dirty working dir -> dev version: 1.2.4.dev42
+- Local dev builds (COPIUM_LOCAL_DEVELOPMENT set):
+
+    <scm public>+<build_hash>
+
+  where:
+    <scm public> is setuptools-scm's public version, e.g. "0.1.0a1.dev57"
+    <build_hash> is a fingerprint over sources + build config.
+
+Build hash / fingerprint strategy:
+
+- Depends on:
+    * All src/** files with extensions: py, pyi, c, cc, cpp, cxx, h, hh, hpp, hxx
+    * pyproject.toml
+    * This backend file
+    * _copium_autopatch.pth (if present)
+    * Selected environment details and build command (config_settings)
+- Used as:
+    * Cache key for wheels and metadata
+    * Local version segment under COPIUM_LOCAL_DEVELOPMENT
+    * C macro COPIUM_BUILD_HASH
 """
 
 from __future__ import annotations
@@ -37,7 +58,6 @@ from packaging.version import Version
 # Import setuptools backend to wrap
 if TYPE_CHECKING:
     from collections.abc import Callable
-
     from setuptools import Extension
 
 
@@ -66,71 +86,129 @@ CACHE_ROOT.mkdir(exist_ok=True)
 WHEEL_CACHE = CACHE_ROOT / "wheels"
 METADATA_CACHE = CACHE_ROOT / "metadata"
 REQUIRES_CACHE = CACHE_ROOT / "requires"
-WHEEL_CACHE.mkdir(exist_ok=True)
-METADATA_CACHE.mkdir(exist_ok=True)
-REQUIRES_CACHE.mkdir(exist_ok=True)
+for d in (WHEEL_CACHE, METADATA_CACHE, REQUIRES_CACHE):
+    d.mkdir(exist_ok=True)
 
 # Single-process state
 _session_state: dict[str, Any] = {}
 
-VECTOR_CALL_PATCH_AVAILABLE = sys.version_info >= (3, 12)
+BACKEND_PATH = Path(__file__)
+SOURCE_SUFFIXES = {
+    ".py",
+    ".pyi",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+}
 
 # ============================================================================
 # Version Management (setuptools-scm integration)
 # ============================================================================
 
 
-def _parse_version_tuple(version: str) -> tuple[int | str, ...]:
+def _parse_version_tuple(
+    version: str,
+    build_hash: str | None = None,
+) -> tuple[int, int, int, str | None, int | None, str]:
     """
-    Lightweight compatibility shim using packaging.version.Version.
+    Convert a PEP 440 version string into the internal VersionInfo tuple shape:
 
-    Returns a compact tuple:
-      (major, minor, patch)                   for final releases
-      (major, minor, patch, 'rc'| 'a'|'b', n) for pre-releases
-      (major, minor, patch, 'dev', n)         for dev releases
+        (major, minor, patch, pre, dev, local)
+
+    where:
+      * pre   -> 'a1', 'b1', 'rc2', or None
+      * dev   -> integer dev number from `.devN`, or None
+      * local -> build hash (preferred) or normalized local segment / sentinel
     """
     v = Version(version)
-    major, minor, patch = ([*list(v.release), 0, 0, 0])[:3]
+
+    major = v.major
+    minor = v.minor
+    patch = v.micro
 
     if v.pre is not None:
-        label, num = v.pre  # label in {'a','b','rc'}
-        return (major, minor, patch, label, int(num))
-    if v.dev is not None:
-        return (major, minor, patch, "dev", int(v.dev))
+        label, num = v.pre  # ('a'|'b'|'rc', int)
+        pre = f"{label}{int(num)}"
+    else:
+        pre = None
 
-    return (major, minor, patch)
+    dev = v.dev
+
+    if build_hash is not None:
+        local = build_hash
+    else:
+        # Fall back to normalized local segment if present, otherwise a sentinel.
+        local = v.local or "unknown"
+
+    return (major, minor, patch, pre, dev, local)
 
 
-def _get_version_info() -> dict[str, Any]:
-    """Get version and parsed tuple from setuptools-scm."""
+def _get_version_info(build_hash: str | None = None) -> dict[str, Any]:
+    """Get version and parsed tuple from setuptools-scm.
+
+    Behavior:
+
+    - Always ask setuptools-scm for the "authoritative" version.
+      Example: 0.1.0a1.dev57+g47d269b77.d20251129
+    - Parse it with packaging.Version.
+    - If COPIUM_LOCAL_DEVELOPMENT is set AND build_hash is provided:
+        version = f"{v.public}+{build_hash}"
+      where v.public == "0.1.0a1.dev57".
+    - Otherwise, keep the original setuptools-scm version verbatim.
+    """
     fallback = {
         "version": "0.0.0+unknown",
         "commit_id": None,
-        "version_tuple": (0, 0, 0, "unknown"),
+        "version_tuple": (0, 0, 0, None, None, "unknown"),
     }
+
+    local_mode = bool(os.environ.get("COPIUM_LOCAL_DEVELOPMENT"))
+
     try:
         from setuptools_scm import get_version
 
-        version = get_version(
-            root=str(PROJECT_ROOT), version_scheme="guess-next-dev", local_scheme="no-local-version"
+        base_version = get_version(
+            root=str(PROJECT_ROOT),
+            version_scheme="guess-next-dev",
         )
-        echo("setuptools-scm:", version)
+        echo("setuptools-scm:", base_version)
     except NoExceptionError as e:
-        echo(f"Version detection failed: {e}")
+        error(f"Version detection failed via setuptools-scm: {e!r}")
         return fallback
 
-    # Commit ID is embedded in version string by setuptools-scm (the gXXXXXXX part)
-    # No need to extract separately - leave as None
-    commit_id = None
+    try:
+        v = Version(base_version)
+    except NoExceptionError as e:
+        error(f"Base version parsing failed for {base_version!r}: {e!r}")
+        return fallback
+
+    if local_mode and build_hash:
+        # Completely replace setuptools-scm's local part
+        version = f"{v.public}+{build_hash}"
+        echo(
+            "COPIUM_LOCAL_DEVELOPMENT is set; overriding local version "
+            f"part with build hash: {version}"
+        )
+    else:
+        version = base_version
 
     try:
-        version_tuple = _parse_version_tuple(version)
+        version_tuple = _parse_version_tuple(version, build_hash=build_hash)
     except ValueError as e:
-        error(e)
+        error(f"Version parsing failed for {version!r}: {e!r}")
         return fallback
 
     echo(f"Version: {version}")
     echo(f"Tuple: {version_tuple}")
+
+    # Commit ID is embedded by setuptools-scm in base_version (gXXXX...), if present.
+    # For now we don't try to parse it; leave as None.
+    commit_id = None
 
     return {
         "version": version,
@@ -141,17 +219,7 @@ def _get_version_info() -> dict[str, Any]:
 
 def _version_info_to_macros(version_info: dict[str, Any]) -> list[tuple[str, str]]:
     """Convert version info to C preprocessor macros."""
-    major, minor, patch, *rest = version_info["version_tuple"]
-    prerelease = build = None
-    match rest:
-        case [prerelease, build]:
-            ...
-        case [prerelease]:
-            ...
-        case []:
-            ...
-        case _:
-            error(f'Unexpected {version_info["version_tuple"]=}')
+    major, minor, patch, pre, dev, local = version_info["version_tuple"]
 
     macros = [
         ("COPIUM_VERSION", f'"{version_info["version"]}"'),
@@ -162,17 +230,22 @@ def _version_info_to_macros(version_info: dict[str, Any]) -> list[tuple[str, str
     if version_info["commit_id"]:
         macros.append(("COPIUM_COMMIT_ID", f'"{version_info["commit_id"]}"'))
 
-    if prerelease is not None:
-        if '"' in prerelease:
-            error(f"malformed {prerelease=}, skipping")
+    # Pre-release: 'a1', 'b1', 'rc2', etc.
+    if pre is not None:
+        if '"' in str(pre):
+            error(f"malformed {pre=}, skipping")
         else:
-            macros.append(("COPIUM_VERSION_PRERELEASE", f'"{prerelease}"'))
+            macros.append(("COPIUM_VERSION_PRE", f'"{pre}"'))
 
-    if build is not None:
-        if not isinstance(build, int):
-            error(f"malformed {build=}, expected valid int, skipping")
+    # Dev number: integer, if present.
+    if dev is not None:
+        if not isinstance(dev, int):
+            error(f"malformed {dev=}, expected valid int, skipping")
+            # still skip, loudly
         else:
-            macros.append(("COPIUM_VERSION_BUILD", str(build)))
+            macros.append(("COPIUM_VERSION_DEV", str(dev)))
+
+    # The local segment (build hash) is passed separately as COPIUM_BUILD_HASH.
 
     return macros
 
@@ -244,7 +317,7 @@ def _hash_file(path: Path) -> str:
 
 
 def _hash_dict(d: dict[str, Any]) -> str:
-    """Compute SHA256 hash of a dictionary."""
+    """Compute SHA256 hash of a dictionary (shortened)."""
     return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8]
 
 
@@ -260,16 +333,104 @@ def _environment_fingerprint() -> dict[str, Any]:
         "soabi": cfg.get("SOABI"),
         "ext_suffix": cfg.get("EXT_SUFFIX"),
         "macosx_target": os.environ.get("MACOSX_DEPLOYMENT_TARGET"),
-        "vector_call": VECTOR_CALL_PATCH_AVAILABLE,
     }
 
 
 def _project_fingerprint() -> str:
-    """Get fingerprint of project configuration."""
+    """Get fingerprint of project configuration (pyproject.toml)."""
     pyproject = PROJECT_ROOT / "pyproject.toml"
     if pyproject.exists():
         return _hash_file(pyproject)
     return "no-pyproject"
+
+
+def _build_command_fingerprint(
+    config_settings: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Normalize build command/config + relevant env overrides for hashing."""
+    cfg = config_settings or {}
+
+    normalized_cfg: dict[str, Any] = {}
+    for key, value in sorted(cfg.items(), key=lambda kv: kv[0]):
+        if isinstance(value, (list, tuple)):
+            normalized_cfg[key] = list(value)
+        else:
+            normalized_cfg[key] = value
+
+    # Capture env vars that realistically affect compilation
+    interesting_env: dict[str, str] = {}
+    for k in sorted(os.environ):
+        if k.startswith(("COPIUM_", "CFLAGS", "CPPFLAGS", "LDFLAGS")):
+            interesting_env[k] = os.environ[k]
+
+    return {
+        "config_settings": normalized_cfg,
+        "env_overrides": interesting_env,
+    }
+
+
+def _sources_fingerprint() -> str:
+    """Hash all relevant source files to detect code changes.
+
+    Extremely literal:
+    - Walks PROJECT_ROOT / "src"
+    - Considers only suffixes in _SOURCE_SUFFIXES
+    - Hashes (relative path, contents) of each file
+    - Also folds in pyproject.toml, backend, and _copium_autopatch.pth
+    """
+    h = hashlib.sha256()
+    count = 0
+
+    src_root = PROJECT_ROOT / "src"
+    if not src_root.exists():
+        error(f"Source root {src_root} does not exist; using 'no-src' fingerprint")
+        return "no-src"
+
+    for p in sorted(src_root.rglob("*")):
+        if p.is_file() and p.suffix.lower() in SOURCE_SUFFIXES:
+            try:
+                rel = p.relative_to(PROJECT_ROOT).as_posix().encode()
+            except ValueError:
+                rel = p.as_posix().encode()
+            try:
+                h.update(rel)
+                h.update(p.read_bytes())
+                count += 1
+            except OSError as e:
+                error(f"Failed to read source file for fingerprint {p}: {e!r}")
+                h.update(f"ERROR:{p}".encode())
+
+    # pyproject.toml
+    pyproject = PROJECT_ROOT / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            h.update(b"pyproject.toml")
+            h.update(pyproject.read_bytes())
+        except OSError as e:
+            error(f"Failed to read pyproject.toml for fingerprint: {e!r}")
+            h.update(b"ERROR:pyproject.toml")
+
+    # backend file
+    try:
+        h.update(b"backend")
+        h.update(BACKEND_PATH.read_bytes())
+    except OSError as e:
+        error(f"Failed to read backend file for fingerprint: {e!r}")
+        h.update(b"ERROR:backend")
+
+    # .pth file
+    pth = PROJECT_ROOT / "src" / "_copium_autopatch.pth"
+    if pth.exists():
+        try:
+            h.update(b"_copium_autopatch.pth")
+            h.update(pth.read_bytes())
+        except OSError as e:
+            error(f"Failed to read _copium_autopatch.pth for fingerprint: {e!r}")
+            h.update(b"ERROR:_copium_autopatch.pth")
+
+    digest = h.hexdigest()
+    echo(f"Computed sources fingerprint: {digest[:12]}... from {count} source files")
+    return digest
 
 
 # ============================================================================
@@ -335,7 +496,7 @@ def _get_c_extensions(
 
     # Get version info if not provided
     if version_info is None:
-        version_info = _get_version_info()
+        version_info = _get_version_info(build_hash)
 
     # Convert to C macros
     define_macros = _version_info_to_macros(version_info)
@@ -360,17 +521,47 @@ def _get_c_extensions(
 # ============================================================================
 
 
-def _inject_extensions(build_type: str = "wheel") -> Callable[..., Any]:
+def _wheel_fingerprint(
+    build_type: str,
+    config_settings: dict[str, Any] | None = None,
+) -> str:
+    """Compute fingerprint for wheel caching.
+
+    This is designed to change whenever *anything that matters* changes:
+    - Python/C sources in src/ (primary driver)
+    - pyproject.toml
+    - backend implementation (this file)
+    - selected environment details and build command
+    """
+    fp = {
+        "type": build_type,
+        "sources": _sources_fingerprint(),
+        "env": _environment_fingerprint(),
+        "build_cmd": _build_command_fingerprint(config_settings),
+    }
+    fingerprint = _hash_dict(fp)
+    echo(
+        "Build fingerprint for "
+        f"{build_type}: {fingerprint} "
+        f"(sources={str(fp['sources'])[:12]}...)"
+    )
+    return fingerprint
+
+
+def _inject_extensions(
+    build_type: str = "wheel",
+    config_settings: dict[str, Any] | None = None,
+) -> "Callable[..., Any]":
     """Monkey-patch setuptools.setup() to inject extensions, version, and build hash."""
     import setuptools
 
     original_setup = setuptools.setup
 
-    # Get version info once per build
-    version_info = _get_version_info()
+    # Compute build fingerprint to embed as COPIUM_BUILD_HASH and (optionally) in local version
+    build_hash = _wheel_fingerprint(build_type, config_settings=config_settings)
 
-    # Compute build fingerprint to embed as COPIUM_BUILD_HASH
-    build_hash = _wheel_fingerprint(build_type)
+    # Get version info once per build, with optional +build_hash local segment
+    version_info = _get_version_info(build_hash)
 
     # Get extensions with version + build hash baked in
     extensions = _get_c_extensions(version_info, build_hash)
@@ -378,7 +569,7 @@ def _inject_extensions(build_type: str = "wheel") -> Callable[..., Any]:
     def patched_setup(*args: Any, **kwargs: Any) -> Any:
         if extensions:
             kwargs.setdefault("ext_modules", []).extend(extensions)
-        # Inject version from setuptools-scm
+        # Inject version from setuptools-scm (possibly overridden)
         kwargs.setdefault("version", version_info["version"])
         return original_setup(*args, **kwargs)
 
@@ -386,84 +577,11 @@ def _inject_extensions(build_type: str = "wheel") -> Callable[..., Any]:
     return original_setup
 
 
-def _restore_setup(original: Callable[..., Any]) -> None:
+def _restore_setup(original: "Callable[..., Any]") -> None:
     """Restore original setuptools.setup()."""
     import setuptools
 
     setuptools.setup = original
-
-
-# ============================================================================
-# Wheel Fingerprinting
-# ============================================================================
-
-
-def _wheel_fingerprint(build_type: str) -> str:
-    """Compute fingerprint for wheel caching."""
-    sources_hash = hashlib.sha256()
-
-    # 1) Hash Python sources from the project (assume src-layout)
-    src_root = PROJECT_ROOT / "src"
-    if src_root.exists():
-        for py in sorted(src_root.rglob("*.py")):
-            sources_hash.update(py.read_bytes())
-
-    # 2) Hash C/C++ sources and headers that the extensions actually use
-    #    (use the file lists declared by setuptools.Extension)
-    # Do not inject the real build hash while computing the fingerprint itself.
-    # This keeps the fingerprint stable and avoids circular dependency.
-    exts = _get_c_extensions(build_hash=None)
-    c_like_exts = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
-
-    def _abs(p: str) -> Path:
-        pth = Path(p)
-        return pth if pth.is_absolute() else (PROJECT_ROOT / pth)
-
-    seen: set[Path] = set()
-
-    for e in exts:
-        # declared source files
-        for s in e.sources or []:
-            p = _abs(s)
-            if p.suffix.lower() in c_like_exts and p.exists() and p not in seen:
-                sources_hash.update(p.read_bytes())
-                seen.add(p)
-
-        # declared dependencies (headers, generated files, etc.)
-        for d in getattr(e, "depends", []) or []:
-            p = _abs(d)
-            if p.suffix.lower() in c_like_exts and p.exists() and p not in seen:
-                sources_hash.update(p.read_bytes())
-                seen.add(p)
-
-        # heuristic: also hash nearby headers next to each source
-        for s in e.sources or []:
-            sp = _abs(s)
-            if sp.exists():
-                for h in sp.parent.glob("*.h"):
-                    if h not in seen:
-                        sources_hash.update(h.read_bytes())
-                        seen.add(h)
-
-    # 3) Hash pyproject.toml if present
-    pyproject = PROJECT_ROOT / "pyproject.toml"
-    if pyproject.exists():
-        sources_hash.update(pyproject.read_bytes())
-
-    # 4) Hash .pth file if present
-    pth_file = PROJECT_ROOT / "src" / "_copium_autopatch.pth"
-    if pth_file.exists():
-        sources_hash.update(pth_file.read_bytes())
-
-    fp = {
-        "type": build_type,
-        "sources": sources_hash.hexdigest(),
-        "env": _environment_fingerprint(),
-        # Keep this so changes to the *configuration* (names, args) also bust cache
-        "extensions": [_serialize_ext(e) for e in exts],
-        "project_fp": _project_fingerprint(),
-    }
-    return _hash_dict(fp)
 
 
 # ============================================================================
@@ -497,7 +615,8 @@ def _cleanup_cache() -> None:
                 try:
                     mtime = entry.stat().st_mtime
                     entries.append((entry, mtime))
-                except OSError:
+                except OSError as e:
+                    error(f"Failed to stat cache entry {entry}: {e!r}")
                     continue
 
         # Sort by modification time (newest first)
@@ -514,7 +633,7 @@ def _cleanup_cache() -> None:
                 shutil.rmtree(entry)
                 echo(f"Cleaned up old cache: {entry.name}")
             except OSError as e:
-                echo(f"Failed to remove {entry.name}: {e}")
+                error(f"Failed to remove {entry.name}: {e!r}")
 
     def _cleanup_requires_cache() -> None:
         """Clean up requires cache JSON files."""
@@ -527,18 +646,14 @@ def _cleanup_cache() -> None:
         for entry in REQUIRES_CACHE.iterdir():
             if entry.is_file() and entry.suffix == ".json":
                 try:
-                    # Read timestamp from JSON
                     data = json.loads(entry.read_text())
-                    timestamp = data.get("timestamp", 0)
-
-                    # Extract build type from filename (e.g., "wheel-hash.json" -> "wheel")
+                    timestamp = data.get("timestamp", 0.0)
                     build_type = entry.stem.split("-")[0]
-
-                    if build_type not in by_type:
-                        by_type[build_type] = []
-                    by_type[build_type].append((entry, timestamp))
-                except (OSError, json.JSONDecodeError, KeyError):
+                except NoExceptionError as e:
+                    error(f"Failed to read requires cache {entry}: {e!r}")
                     continue
+
+                by_type.setdefault(build_type, []).append((entry, timestamp))
 
         # Clean up each build type
         for build_type, entries in by_type.items():
@@ -555,7 +670,7 @@ def _cleanup_cache() -> None:
                     entry.unlink()
                     echo(f"Cleaned up old requires cache: {entry.name}")
                 except OSError as e:
-                    echo(f"Failed to remove {entry.name}: {e}")
+                    error(f"Failed to remove {entry.name}: {e!r}")
 
     # Clean up each cache type
     _cleanup_dir(WHEEL_CACHE, "wheel-")
@@ -581,8 +696,8 @@ def _ensure_cleanup_once() -> None:
             if time.time() - last_cleanup < cleanup_interval:
                 # Cleanup was performed recently, skip
                 return
-        except OSError:
-            pass
+        except OSError as e:
+            error(f"Failed to stat cleanup marker: {e!r}")
 
     # Perform cleanup
     _cleanup_cache()
@@ -590,8 +705,8 @@ def _ensure_cleanup_once() -> None:
     # Update timestamp marker
     try:
         cleanup_marker.touch()
-    except OSError:
-        pass
+    except OSError as e:
+        error(f"Failed to update cleanup marker: {e!r}")
 
 
 # ============================================================================
@@ -612,8 +727,8 @@ def get_requires_for_build_wheel(config_settings: dict[str, Any] | None = None) 
             echo("Using cached build requirements")
             return cached["requires"]
         except NoExceptionError as e:
-            echo(f"Requires cache load failed: {e}")
-            cache_file.unlink(missing_ok=True)
+            error(f"Requires cache load failed: {e!r}")
+            cache_file.unlink()
 
     # Generate
     echo("Getting build requirements...")
@@ -624,7 +739,7 @@ def get_requires_for_build_wheel(config_settings: dict[str, Any] | None = None) 
         cache_file.write_text(json.dumps({"requires": result, "timestamp": time.time()}, indent=2))
         echo("Cached build requirements")
     except NoExceptionError as e:
-        echo(f"Requires cache save failed: {e}")
+        error(f"Requires cache save failed: {e!r}")
 
     return result
 
@@ -642,8 +757,8 @@ def get_requires_for_build_editable(config_settings: dict[str, Any] | None = Non
             echo("Using cached build requirements")
             return cached["requires"]
         except NoExceptionError as e:
-            echo(f"Requires cache load failed: {e}")
-            cache_file.unlink(missing_ok=True)
+            error(f"Requires cache load failed: {e!r}")
+            cache_file.unlink()
 
     # Generate
     echo("Getting build requirements...")
@@ -654,7 +769,7 @@ def get_requires_for_build_editable(config_settings: dict[str, Any] | None = Non
         cache_file.write_text(json.dumps({"requires": result, "timestamp": time.time()}, indent=2))
         echo("Cached build requirements")
     except NoExceptionError as e:
-        echo(f"Requires cache save failed: {e}")
+        error(f"Requires cache save failed: {e!r}")
 
     return result
 
@@ -670,8 +785,8 @@ def get_requires_for_build_sdist(config_settings: dict[str, Any] | None = None) 
             echo("Using cached build requirements (sdist)")
             return cached["requires"]
         except NoExceptionError as e:
-            echo(f"Requires cache load failed (sdist): {e}")
-            cache_file.unlink(missing_ok=True)
+            error(f"Requires cache load failed (sdist): {e!r}")
+            cache_file.unlink()
 
     echo("Getting build requirements (sdist)...")
     result = setuptools_build_meta.get_requires_for_build_sdist(config_settings)
@@ -681,7 +796,7 @@ def get_requires_for_build_sdist(config_settings: dict[str, Any] | None = None) 
         cache_file.write_text(json.dumps({"requires": result, "timestamp": time.time()}, indent=2))
         echo("Cached build requirements (sdist)")
     except NoExceptionError as e:
-        echo(f"Requires cache save failed (sdist): {e}")
+        error(f"Requires cache save failed (sdist): {e!r}")
 
     return result
 
@@ -701,7 +816,7 @@ def prepare_metadata_for_build_wheel(
         return dist_info_name
 
     # Check cross-session cache
-    fingerprint = _wheel_fingerprint("wheel")
+    fingerprint = _wheel_fingerprint("wheel", config_settings=config_settings)
     cache_dir = METADATA_CACHE / f"wheel-{fingerprint}"
     info_file = cache_dir / ".dist-info-name"
 
@@ -716,14 +831,14 @@ def prepare_metadata_for_build_wheel(
                 "name": dist_info_name,
             }
         except NoExceptionError as e:
-            echo(f"Metadata cache load failed: {e}")
+            error(f"Metadata cache load failed: {e!r}")
             shutil.rmtree(cache_dir, ignore_errors=True)
         else:
             return dist_info_name
 
     # Generate
     echo("Generating metadata...")
-    original = _inject_extensions(build_type="wheel")
+    original = _inject_extensions(build_type="wheel", config_settings=config_settings)
     try:
         result = setuptools_build_meta.prepare_metadata_for_build_wheel(
             metadata_directory, config_settings
@@ -739,7 +854,7 @@ def prepare_metadata_for_build_wheel(
         _fast_copy_tree(src, cache_dir / result)
         echo("Cached metadata")
     except NoExceptionError as e:
-        echo(f"Metadata cache save failed: {e}")
+        error(f"Metadata cache save failed: {e!r}")
 
     _session_state["wheel_metadata"] = {"path": str(src), "name": result}
     return result
@@ -760,7 +875,7 @@ def prepare_metadata_for_build_editable(
         return dist_info_name
 
     # Check cross-session cache
-    fingerprint = _wheel_fingerprint("editable")
+    fingerprint = _wheel_fingerprint("editable", config_settings=config_settings)
     cache_dir = METADATA_CACHE / f"editable-{fingerprint}"
     info_file = cache_dir / ".dist-info-name"
 
@@ -775,14 +890,14 @@ def prepare_metadata_for_build_editable(
                 "name": dist_info_name,
             }
         except NoExceptionError as e:
-            echo(f"Metadata cache load failed: {e}")
+            error(f"Metadata cache load failed: {e!r}")
             shutil.rmtree(cache_dir, ignore_errors=True)
         else:
             return dist_info_name
 
     # Generate
     echo("Generating metadata...")
-    original = _inject_extensions(build_type="editable")
+    original = _inject_extensions(build_type="editable", config_settings=config_settings)
     try:
         result = setuptools_build_meta.prepare_metadata_for_build_editable(
             metadata_directory, config_settings
@@ -798,7 +913,7 @@ def prepare_metadata_for_build_editable(
         _fast_copy_tree(src, cache_dir / result)
         echo("Cached metadata")
     except NoExceptionError as e:
-        echo(f"Metadata cache save failed: {e}")
+        error(f"Metadata cache save failed: {e!r}")
 
     _session_state["editable_metadata"] = {"path": str(src), "name": result}
     return result
@@ -814,7 +929,7 @@ def build_wheel(
 
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
-        original = _inject_extensions(build_type="wheel")
+        original = _inject_extensions(build_type="wheel", config_settings=config_settings)
         try:
             return setuptools_build_meta.build_wheel(
                 wheel_directory, config_settings, metadata_directory
@@ -823,7 +938,7 @@ def build_wheel(
             _restore_setup(original)
 
     # Check cache
-    fingerprint = _wheel_fingerprint("wheel")
+    fingerprint = _wheel_fingerprint("wheel", config_settings=config_settings)
     cache_dir = WHEEL_CACHE / f"wheel-{fingerprint}"
     cache_file = cache_dir / "wheel.whl"
     name_file = cache_dir / ".wheel-name"
@@ -835,14 +950,14 @@ def build_wheel(
             dst = Path(wheel_directory) / wheel_name
             _fast_copy(cache_file, dst)
         except NoExceptionError as e:
-            echo(f"Cache load failed: {e}")
+            error(f"Cache load failed: {e!r}")
             shutil.rmtree(cache_dir, ignore_errors=True)
         else:
             return wheel_name
 
     # Build
     echo("Building wheel...")
-    original = _inject_extensions(build_type="wheel")
+    original = _inject_extensions(build_type="wheel", config_settings=config_settings)
     try:
         result = setuptools_build_meta.build_wheel(
             wheel_directory, config_settings, metadata_directory
@@ -858,20 +973,15 @@ def build_wheel(
         _fast_copy(src, cache_file)
         echo("Cached wheel")
     except NoExceptionError as e:
-        echo(f"Cache save failed: {e}")
+        error(f"Cache save failed: {e!r}")
 
     return result
 
 
 def build_sdist(sdist_directory: str, config_settings: dict[str, Any] | None = None) -> str:
-    """Build a source distribution with version injection.
-
-    We monkey-patch setuptools.setup() so the version computed by setuptools-scm
-    (via _get_version_info) is injected, avoiding the need for a [tool.setuptools_scm]
-    section in pyproject.toml during sdist.
-    """
+    """Build a source distribution with version injection."""
     echo("Building sdist...")
-    original = _inject_extensions(build_type="sdist")
+    original = _inject_extensions(build_type="sdist", config_settings=config_settings)
     try:
         return setuptools_build_meta.build_sdist(sdist_directory, config_settings)
     finally:
@@ -888,7 +998,7 @@ def build_editable(
 
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
-        original = _inject_extensions(build_type="editable")
+        original = _inject_extensions(build_type="editable", config_settings=config_settings)
         try:
             return setuptools_build_meta.build_editable(
                 wheel_directory, config_settings, metadata_directory
@@ -897,7 +1007,7 @@ def build_editable(
             _restore_setup(original)
 
     # Check cache
-    fingerprint = _wheel_fingerprint("editable")
+    fingerprint = _wheel_fingerprint("editable", config_settings=config_settings)
     cache_dir = WHEEL_CACHE / f"editable-{fingerprint}"
     cache_file = cache_dir / "wheel.whl"
     name_file = cache_dir / ".wheel-name"
@@ -909,14 +1019,14 @@ def build_editable(
             dst = Path(wheel_directory) / wheel_name
             _fast_copy(cache_file, dst)
         except NoExceptionError as e:
-            echo(f"Cache load failed: {e}")
+            error(f"Cache load failed: {e!r}")
             shutil.rmtree(cache_dir, ignore_errors=True)
         else:
             return wheel_name
 
     # Build
     echo("Building editable wheel...")
-    original = _inject_extensions(build_type="editable")
+    original = _inject_extensions(build_type="editable", config_settings=config_settings)
     try:
         result = setuptools_build_meta.build_editable(
             wheel_directory, config_settings, metadata_directory
@@ -932,7 +1042,7 @@ def build_editable(
         _fast_copy(src, cache_file)
         echo("Cached editable wheel")
     except NoExceptionError as e:
-        echo(f"Cache save failed: {e}")
+        error(f"Cache save failed: {e!r}")
 
     return result
 

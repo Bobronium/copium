@@ -13,9 +13,9 @@ class VersionInfo(NamedTuple):
     major: int
     minor: int
     patch: int
-    prerelease: str | None
-    build: int | None
-    build_hash: str
+    pre: str | None  # 'a1,b2,rc3'
+    dev: int | None  # number of commits since last tagged release
+    local: str  # build hash, omitted from PyPI releases
 
 __version__: str
 __version_tuple__: VersionInfo
