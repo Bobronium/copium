@@ -111,10 +111,7 @@ SOURCE_SUFFIXES = {
 # ============================================================================
 
 
-def _parse_version_tuple(
-    version: str,
-    build_hash: str | None = None,
-) -> tuple[int, int, int, str | None, int | None, str]:
+def _get_version_tuple(version: str) -> tuple[int, int, int, str | None, int | None, str]:
     """
     Convert a PEP 440 version string into the internal VersionInfo tuple shape:
 
@@ -127,25 +124,12 @@ def _parse_version_tuple(
     """
     v = Version(version)
 
-    major = v.major
-    minor = v.minor
-    patch = v.micro
-
+    pre = None
     if v.pre is not None:
         label, num = v.pre  # ('a'|'b'|'rc', int)
         pre = f"{label}{int(num)}"
-    else:
-        pre = None
 
-    dev = v.dev
-
-    if build_hash is not None:
-        local = build_hash
-    else:
-        # Fall back to normalized local segment if present, otherwise a sentinel.
-        local = v.local or "unknown"
-
-    return (major, minor, patch, pre, dev, local)
+    return v.major, v.minor, v.micro, pre, v.dev, v.local
 
 
 def _get_version_info(build_hash: str | None = None) -> dict[str, Any]:
@@ -154,12 +138,12 @@ def _get_version_info(build_hash: str | None = None) -> dict[str, Any]:
     Behavior:
 
     - Always ask setuptools-scm for the "authoritative" version.
-      Example: 0.1.0a1.dev57+g47d269b77.d20251129
+      Example: 0.1.0a1.dev57
     - Parse it with packaging.Version.
     - If COPIUM_LOCAL_DEVELOPMENT is set AND build_hash is provided:
         version = f"{v.public}+{build_hash}"
       where v.public == "0.1.0a1.dev57".
-    - Otherwise, keep the original setuptools-scm version verbatim.
+    - Otherwise, never include a local version segment (no "+" part).
     """
     fallback = {
         "version": "0.0.0+unknown",
@@ -175,6 +159,7 @@ def _get_version_info(build_hash: str | None = None) -> dict[str, Any]:
         base_version = get_version(
             root=str(PROJECT_ROOT),
             version_scheme="guess-next-dev",
+            local_scheme="no-local-version",
         )
         echo("setuptools-scm:", base_version)
     except NoExceptionError as e:
@@ -188,20 +173,18 @@ def _get_version_info(build_hash: str | None = None) -> dict[str, Any]:
         return fallback
 
     if local_mode and build_hash:
-        # Completely replace setuptools-scm's local part
+        # In local development builds, append our own build hash as the local segment.
         version = f"{v.public}+{build_hash}"
+        tuple_build_hash = build_hash
         echo(
             "COPIUM_LOCAL_DEVELOPMENT is set; overriding local version "
             f"part with build hash: {version}"
         )
     else:
-        version = base_version
+        # For CI / release builds, never ship a local segment so PyPI accepts the version.
+        version = v.public
 
-    try:
-        version_tuple = _parse_version_tuple(version, build_hash=build_hash)
-    except ValueError as e:
-        error(f"Version parsing failed for {version!r}: {e!r}")
-        return fallback
+    version_tuple = _get_version_tuple(version)
 
     echo(f"Version: {version}")
     echo(f"Tuple: {version_tuple}")
@@ -541,9 +524,7 @@ def _wheel_fingerprint(
     }
     fingerprint = _hash_dict(fp)
     echo(
-        "Build fingerprint for "
-        f"{build_type}: {fingerprint} "
-        f"(sources={str(fp['sources'])[:12]}...)"
+        f"Build fingerprint for {build_type}: {fingerprint} (sources={str(fp['sources'])[:12]}...)"
     )
     return fingerprint
 
