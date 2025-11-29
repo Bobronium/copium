@@ -39,3 +39,4 @@ htmlcov/
 .task
 .pgo
 *.so
+compile_commands.json
