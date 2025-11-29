@@ -47,15 +47,15 @@
 /**
  * Create a VersionInfo namedtuple instance from static version macros.
  *
- * VersionInfo(major, minor, patch, prerelease, build, build_hash)
+ * VersionInfo(major, minor, patch, pre, dev, local)
  */
 static PyObject* _create_version_info(PyObject* version_cls) {
     PyObject* major = NULL;
     PyObject* minor = NULL;
     PyObject* patch = NULL;
-    PyObject* prerelease = NULL;
-    PyObject* build = NULL;
-    PyObject* build_hash = NULL;
+    PyObject* pre = NULL;
+    PyObject* dev = NULL;
+    PyObject* local = NULL;
     PyObject* version_tuple = NULL;
 
     major = PyLong_FromLong(COPIUM_VERSION_MAJOR);
@@ -70,28 +70,28 @@ static PyObject* _create_version_info(PyObject* version_cls) {
     if (!patch)
         goto error;
 
-#ifdef COPIUM_VERSION_PRERELEASE
-    prerelease = PyUnicode_FromString(COPIUM_VERSION_PRERELEASE);
-    if (!prerelease)
+#ifdef COPIUM_VERSION_PRE
+    pre = PyUnicode_FromString(COPIUM_VERSION_PRE);
+    if (!pre)
         goto error;
 #else
-    prerelease = Py_NewRef(Py_None);
+    pre = Py_NewRef(Py_None);
 #endif
 
-#ifdef COPIUM_VERSION_BUILD
-    build = PyLong_FromLong(COPIUM_VERSION_BUILD);
-    if (!build)
+#ifdef COPIUM_VERSION_DEV
+    dev = PyLong_FromLong(COPIUM_VERSION_DEV);
+    if (!dev)
         goto error;
 #else
-    build = Py_NewRef(Py_None);
+    dev = Py_NewRef(Py_None);
 #endif
 
-    build_hash = PyUnicode_FromString(COPIUM_BUILD_HASH);
-    if (!build_hash)
+    local = PyUnicode_FromString(COPIUM_BUILD_HASH);
+    if (!local)
         goto error;
 
     version_tuple = PyObject_CallFunction(
-        version_cls, "OOOOOO", major, minor, patch, prerelease, build, build_hash
+        version_cls, "OOOOOO", major, minor, patch, pre, dev, local
     );
     if (!version_tuple)
         goto error;
@@ -99,18 +99,18 @@ static PyObject* _create_version_info(PyObject* version_cls) {
     Py_DECREF(major);
     Py_DECREF(minor);
     Py_DECREF(patch);
-    Py_DECREF(prerelease);
-    Py_DECREF(build);
-    Py_DECREF(build_hash);
+    Py_DECREF(pre);
+    Py_DECREF(dev);
+    Py_DECREF(local);
     return version_tuple;
 
 error:
     Py_XDECREF(major);
     Py_XDECREF(minor);
     Py_XDECREF(patch);
-    Py_XDECREF(prerelease);
-    Py_XDECREF(build);
-    Py_XDECREF(build_hash);
+    Py_XDECREF(pre);
+    Py_XDECREF(dev);
+    Py_XDECREF(local);
     return NULL;
 }
 
@@ -169,9 +169,9 @@ static int _build_about_module(PyObject* parent, int (*add_submodule)(PyObject*,
         "major",
         "minor",
         "patch",
-        "prerelease",
-        "build",
-        "build_hash"
+        "pre",
+        "dev",
+        "local"
     );
     if (!version_info_cls)
         goto error;
