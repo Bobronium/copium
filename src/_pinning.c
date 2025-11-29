@@ -13,20 +13,15 @@
  *     PinObject* _duper_lookup_pin_for_object(PyObject* obj);
  *     int _duper_pinning_add_types(PyObject* module);
  */
-#define PY_SSIZE_T_CLEAN
+#ifndef _COPIUM_PINNING_C
+#define _COPIUM_PINNING_C
 
+#include "_common.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include "Python.h"
+#include "_memo.c"
 
-#if defined(__GNUC__) || defined(__clang__)
-    #define LIKELY(x) __builtin_expect(!!(x), 1)
-    #define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-    #define LIKELY(x) (x)
-    #define UNLIKELY(x) (x)
-#endif
 
 /* ------------------------------ Pin type ---------------------------------- */
 
@@ -613,107 +608,6 @@ PinObject* _duper_lookup_pin_for_object(PyObject* obj) {
     return pin_table_lookup(global_pin_table, (void*)obj);
 }
 
-/* ------------------------- Python-callable functions -----------------------
- */
-
-PyObject* py_pin(PyObject* self, PyObject* obj) {
-    (void)self;
-    if (!obj) {
-        PyErr_SetString(PyExc_TypeError, "pin(obj) missing obj");
-        return NULL;
-    }
-    PinObject* pin = create_pin_for_object(obj);
-    if (!pin)
-        return NULL;
-    if (pin_table_insert(&global_pin_table, (void*)obj, pin) < 0) {
-        Py_DECREF(pin);
-        PyErr_SetString(PyExc_RuntimeError, "pin: failed to store Pin");
-        return NULL;
-    }
-    return (PyObject*)pin;
-}
-
-PyObject* py_unpin(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
-    (void)self;
-    if (UNLIKELY(nargs < 1)) {
-        PyErr_SetString(PyExc_TypeError, "unpin() missing 1 required positional argument: 'obj'");
-        return NULL;
-    }
-    PyObject* obj = args[0];
-    int strict_mode = 0;
-
-    if (kwnames) {
-        Py_ssize_t keyword_count = PyTuple_GET_SIZE(kwnames);
-        for (Py_ssize_t i = 0; i < keyword_count; i++) {
-            PyObject* kwname = PyTuple_GET_ITEM(kwnames, i);
-            if (!PyUnicode_Check(kwname)) {
-                PyErr_SetString(PyExc_TypeError, "keyword name must be str");
-                return NULL;
-            }
-            int is_strict = PyUnicode_CompareWithASCIIString(kwname, "strict") == 0;
-            if (!is_strict) {
-                PyErr_SetString(PyExc_TypeError, "unpin() got an unexpected keyword argument");
-                return NULL;
-            }
-            PyObject* kwvalue = args[nargs + i];
-            int truthy = PyObject_IsTrue(kwvalue);
-            if (truthy < 0)
-                return NULL;
-            strict_mode = truthy;
-        }
-    }
-
-    if (!global_pin_table) {
-        if (strict_mode) {
-            PyErr_SetString(PyExc_KeyError, "object not pinned");
-            return NULL;
-        }
-        Py_RETURN_NONE;
-    }
-
-    if (pin_table_remove(global_pin_table, (void*)obj) < 0) {
-        if (strict_mode) {
-            PyErr_SetString(PyExc_KeyError, "object not pinned");
-            return NULL;
-        }
-        PyErr_Clear();
-    }
-
-    if (global_pin_table->used == 0) {
-        pin_table_free(global_pin_table);
-        global_pin_table = NULL;
-    }
-    Py_RETURN_NONE;
-}
-
-PyObject* py_pinned(PyObject* self, PyObject* obj) {
-    (void)self;
-    if (!obj) {
-        PyErr_SetString(PyExc_TypeError, "pinned(obj) missing obj");
-        return NULL;
-    }
-    PinObject* pin = _duper_lookup_pin_for_object(obj);
-    if (!pin)
-        Py_RETURN_NONE;
-    Py_INCREF(pin);
-    return (PyObject*)pin;
-}
-
-PyObject* py_clear_pins(PyObject* self, PyObject* noargs) {
-    (void)self;
-    (void)noargs;
-    if (global_pin_table) {
-        pin_table_free(global_pin_table);
-        global_pin_table = NULL;
-    }
-    Py_RETURN_NONE;
-}
-
-PyObject* py_get_pins(PyObject* self, PyObject* noargs) {
-    (void)self;
-    (void)noargs;
-    return PinsProxy_create_bound_to_global();
-}
 
 /* ------------------ Registration with collections.abc ----------------------
  */
@@ -794,3 +688,4 @@ int _duper_pinning_add_types(PyObject* module) {
 
     return ok ? -1 : 0;
 }
+#endif  // _COPIUM_PINNING_C

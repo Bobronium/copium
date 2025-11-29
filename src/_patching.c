@@ -9,6 +9,8 @@
  * Public API is registered onto the "copium" module via:
  *   int _copium_patching_add_api(PyObject* module)
  */
+#ifndef _COPIUM_PATCHING_C
+#define _COPIUM_PATCHING_C
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -153,8 +155,13 @@ static PyObject* m_unapply(PyObject* self, PyObject* const* args, Py_ssize_t nar
         PyErr_Clear();
     if (PyDict_DelItem(fn->func_dict, KEY_SAVED) < 0)
         PyErr_Clear();
-    if (PyObject_HasAttr(func, KEY_WRAPPED)) {
-        if (PyObject_DelAttr(func, KEY_WRAPPED) < 0)
+
+    /* Try to delete __wrapped__; ignore AttributeError if not present */
+    if (PyObject_DelAttr(func, KEY_WRAPPED) < 0) {
+        if (PyErr_ExceptionMatches(PyExc_AttributeError))
+            PyErr_Clear();
+        /* For other errors, also clear - we're in cleanup and unapply should succeed */
+        else
             PyErr_Clear();
     }
 
@@ -264,78 +271,71 @@ static PyObject* _make_kwargs_for_replace(PyObject* consts_tuple) {
     return kwargs;
 }
 
-/* Build a new CodeType from LEGACY_TEMPLATE_CODE with "copium.deepcopy" constant replaced by target callable */
+/* Build new code object with target_callable embedded in co_consts */
 static PyObject* _build_code_with_target(PyObject* target_callable) {
     if (!LEGACY_TEMPLATE_CODE) {
-        PyErr_SetString(PyExc_RuntimeError, "copium: template code is not initialized");
-        return NULL;
-    }
-    if (!PyCallable_Check(target_callable)) {
-        PyErr_SetString(PyExc_TypeError, "target must be callable");
+        PyErr_SetString(PyExc_RuntimeError, "copium._patch: template code not initialized");
         return NULL;
     }
 
-    PyObject* co_consts = PyObject_GetAttrString(LEGACY_TEMPLATE_CODE, "co_consts");
-    if (!co_consts)
+    PyObject* template_consts = PyObject_GetAttrString(LEGACY_TEMPLATE_CODE, "co_consts");
+    if (!template_consts)
         return NULL;
 
-    PyObject* list_obj = PySequence_List(co_consts);
-    Py_DECREF(co_consts);
-    if (!list_obj)
+    if (!PyTuple_Check(template_consts)) {
+        Py_DECREF(template_consts);
+        PyErr_SetString(PyExc_RuntimeError, "copium._patch: co_consts is not a tuple");
         return NULL;
+    }
 
+    Py_ssize_t n = PyTuple_GET_SIZE(template_consts);
+    Py_ssize_t idx = -1;
+
+    /* Find the sentinel string "copium.deepcopy" in co_consts */
     PyObject* sentinel = PyUnicode_FromString("copium.deepcopy");
     if (!sentinel) {
+        Py_DECREF(template_consts);
+        return NULL;
+    }
+
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject* item = PyTuple_GET_ITEM(template_consts, i);
+        if (PyUnicode_Check(item)) {
+            int cmp = PyUnicode_Compare(item, sentinel);
+            if (cmp == 0) {
+                idx = i;
+                break;
+            }
+        }
+    }
+
+    if (idx < 0) {
+        Py_DECREF(sentinel);
+        Py_DECREF(template_consts);
+        PyErr_SetString(PyExc_RuntimeError, "copium._patch: sentinel not found in template");
+        return NULL;
+    }
+
+    /* Build new consts with target replacing the sentinel */
+    PyObject* list_obj = PySequence_List(template_consts);
+    Py_DECREF(template_consts);
+    if (!list_obj) {
+        Py_DECREF(sentinel);
+        return NULL;
+    }
+
+    if (idx >= PyList_GET_SIZE(list_obj)) {
+        Py_DECREF(sentinel);
         Py_DECREF(list_obj);
         return NULL;
     }
 
-    Py_ssize_t n = PyList_GET_SIZE(list_obj);
-    Py_ssize_t idx = -1;
-    for (Py_ssize_t i = 0; i < n; i++) {
-        PyObject* item = PyList_GET_ITEM(list_obj, i); /* borrowed */
-        int is_eq = PyObject_RichCompareBool(item, sentinel, Py_EQ);
-        if (is_eq == -1) {
-            Py_DECREF(sentinel);
-            Py_DECREF(list_obj);
-            return NULL;
-        }
-        if (is_eq == 1) {
-            idx = i;
-            break;
-        }
+    if (PyList_SetItem(list_obj, idx, target_callable) < 0) {
+        Py_DECREF(sentinel);
+        Py_DECREF(list_obj);
+        return NULL;
     }
-
-    if (idx == -1) {
-        int found_target = 0;
-        for (Py_ssize_t i = 0; i < n; i++) {
-            PyObject* item = PyList_GET_ITEM(list_obj, i);
-            int is_eq = (item == target_callable);
-            if (is_eq) {
-                found_target = 1;
-                break;
-            }
-        }
-        if (!found_target) {
-            PyObject* repr = PyObject_Repr(list_obj);
-            if (!repr)
-                repr = PyUnicode_FromString("<unrepr>");
-            PyErr_Format(
-                PyExc_RuntimeError, "Couldn't find constant to replace in %U with target", repr
-            );
-            Py_XDECREF(repr);
-            Py_DECREF(sentinel);
-            Py_DECREF(list_obj);
-            return NULL;
-        }
-    } else {
-        if (PyList_SetItem(list_obj, idx, target_callable) < 0) {
-            Py_DECREF(sentinel);
-            Py_DECREF(list_obj);
-            return NULL;
-        }
-        Py_INCREF(target_callable); /* keep caller ownership */
-    }
+    Py_INCREF(target_callable); /* keep caller ownership */
 
     PyObject* new_consts = PyList_AsTuple(list_obj);
     Py_DECREF(list_obj);
@@ -443,9 +443,15 @@ static PyObject* m_unapply(PyObject* self, PyObject* const* args, Py_ssize_t nar
 
     if (!KEY_WRAPPED)
         KEY_WRAPPED = PyUnicode_InternFromString("__wrapped__");
-    if (KEY_WRAPPED && PyObject_HasAttr(func, KEY_WRAPPED)) {
-        if (PyObject_DelAttr(func, KEY_WRAPPED) < 0)
-            PyErr_Clear();
+
+    /* Try to delete __wrapped__; ignore AttributeError if not present */
+    if (KEY_WRAPPED) {
+        if (PyObject_DelAttr(func, KEY_WRAPPED) < 0) {
+            if (PyErr_ExceptionMatches(PyExc_AttributeError))
+                PyErr_Clear();
+            else
+                PyErr_Clear(); /* cleanup should succeed regardless */
+        }
     }
 
     Py_DECREF(LEGACY_ORIGINAL_CODE);
@@ -503,7 +509,6 @@ static int _init_legacy_template_code(void) {
         "    return \"copium.deepcopy\"(x, memo)\n";
 
     PyObject* globals = PyDict_New();
-    PyObject* locals = globals;
     if (!globals)
         return -1;
 
@@ -512,28 +517,38 @@ static int _init_legacy_template_code(void) {
         Py_DECREF(globals);
         return -1;
     }
+
     PyObject* warnings = PyImport_ImportModule("warnings");
-    PyObject* old_filters = PyObject_GetAttrString(warnings, "filters");
+    PyObject* old_filters = NULL;
+    PyObject* filters_copy = NULL;
 
-    PyObject* filters_copy = PySequence_List(old_filters);  // shallow copy
-    PyObject* ignore =
-        PyObject_CallMethod(warnings, "simplefilter", "sO", "ignore", PyExc_SyntaxWarning);
-    Py_XDECREF(ignore);
+    if (warnings) {
+        old_filters = PyObject_GetAttrString(warnings, "filters");
+        if (old_filters) {
+            filters_copy = PySequence_List(old_filters);  // shallow copy
+        }
+        PyObject* ignore =
+            PyObject_CallMethod(warnings, "simplefilter", "sO", "ignore", PyExc_SyntaxWarning);
+        Py_XDECREF(ignore);
+    }
 
-    PyObject* res = PyRun_StringFlags(src, Py_file_input, globals, locals, NULL);
+    PyObject* res = PyRun_StringFlags(src, Py_file_input, globals, globals, NULL);
+
+    /* Restore warnings filters before checking for errors */
+    if (warnings && filters_copy) {
+        PyObject_SetAttrString(warnings, "filters", filters_copy);
+    }
+    Py_XDECREF(filters_copy);
+    Py_XDECREF(old_filters);
+    Py_XDECREF(warnings);
+
     if (!res) {
         Py_DECREF(globals);
         return -1;
     }
     Py_DECREF(res);
-    if (filters_copy) {
-        PyObject_SetAttrString(warnings, "filters", filters_copy);
-        Py_DECREF(filters_copy);
-    }
 
-    Py_XDECREF(old_filters);
-    Py_XDECREF(warnings);
-    PyObject* deepcopy_fn = PyDict_GetItemString(locals, "deepcopy"); /* borrowed */
+    PyObject* deepcopy_fn = PyDict_GetItemString(globals, "deepcopy"); /* borrowed */
     if (!deepcopy_fn) {
         Py_DECREF(globals);
         PyErr_SetString(PyExc_RuntimeError, "Failed to locate synthesized deepcopy()");
@@ -580,4 +595,5 @@ int _copium_patching_add_api(PyObject* module) {
     #endif
     return 0;
 }
-#endif /* version branch */
+#endif  /* version branch */
+#endif  // _COPIUM_PATCHING_C

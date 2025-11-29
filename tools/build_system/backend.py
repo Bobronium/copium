@@ -23,6 +23,7 @@ import errno as errno_module
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import sys
 import sysconfig
@@ -450,7 +451,7 @@ def _wheel_fingerprint(build_type: str) -> str:
         sources_hash.update(pyproject.read_bytes())
 
     # 4) Hash .pth file if present
-    pth_file = PROJECT_ROOT / "src" / "copium_autopatch.pth"
+    pth_file = PROJECT_ROOT / "src" / "_copium_autopatch.pth"
     if pth_file.exists():
         sources_hash.update(pth_file.read_bytes())
 
@@ -810,6 +811,7 @@ def build_wheel(
 ) -> str:
     """Build a wheel."""
     _ensure_cleanup_once()
+
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
         original = _inject_extensions(build_type="wheel")
@@ -883,6 +885,7 @@ def build_editable(
 ) -> str:
     """Build an editable wheel."""
     _ensure_cleanup_once()
+
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
         original = _inject_extensions(build_type="editable")

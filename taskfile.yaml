@@ -1,4 +1,3 @@
-
 version: '3'
 
 vars:
@@ -75,55 +74,65 @@ tasks:
     env:
       MYPYPATH: src
     cmd: |
-        bash -euo pipefail -c '
-          run_typecheck () {
-            local PYV="$1"
-            echo "▶ Typechecking Python $PYV"
-            uv sync --inexact --quiet --extra typecheck
-            uv run --no-sync mypy tests/api --python-version "$PYV"
-            uv run --no-sync pyright tests/api --pythonversion "$PYV"
-          }
-          if [ "{{.MATRIX}}" != "1" ] && [ -z "{{.VERSIONS}}" ]; then
-            run_typecheck "{{ .PY_CURRENT }}"; exit 0; fi
-          for v in {{ .SELECTED_PY_VERSIONS }}; do run_typecheck "$v"; done
-        '
+      bash -euo pipefail -c '
+        run_typecheck () {
+          local PYV="$1"
+          echo "▶ Typechecking Python $PYV"
+          uv sync --inexact --quiet --extra typecheck
+          uv run --no-sync mypy tests/api --python-version "$PYV"
+          uv run --no-sync pyright tests/api --pythonversion "$PYV"
+        }
+        if [ "{{.MATRIX}}" != "1" ] && [ -z "{{.VERSIONS}}" ]; then
+          run_typecheck "{{ .PY_CURRENT }}"; exit 0; fi
+        for v in {{ .SELECTED_PY_VERSIONS }}; do run_typecheck "$v"; done
+      '
 
   test:
     desc: Run tests
     cmd: |
-        bash -euo pipefail -c '
-          if [ "{{.MATRIX}}" != "1" ] && [ -z "{{.VERSIONS}}" ]; then
-            echo "▶ Tests on current environment"
-            uv sync --inexact --quiet --extra test --reinstall-package copium
-            uv run pytest
-            exit 0
-          fi
-          for V in {{ .SELECTED_PY_VERSIONS }}; do
-            echo "▶ Tests on Python $V"
-            VENV=".task/venv${V}"
-            if [ ! -d "$VENV" ]; then uv venv --clear --no-project --python "$V" "$VENV"; fi
-            ACT="$VENV/bin/activate"; [ -f "$VENV/Scripts/activate" ] && ACT="$VENV/Scripts/activate"
-            . "$ACT"
-            uv sync --active --inexact --quiet --extra test --reinstall-package copium
-            uv run --active pytest tests {{.CLI_ARGS}}
-            deactivate
-          done
-        '
+      bash -euo pipefail -c '
+        if [ "{{.MATRIX}}" != "1" ] && [ -z "{{.VERSIONS}}" ]; then
+          echo "▶ Tests on current environment"
+          uv sync --inexact --quiet --extra test --reinstall-package copium
+          uv run pytest
+          exit 0
+        fi
+        for V in {{ .SELECTED_PY_VERSIONS }}; do
+          echo "▶ Tests on Python $V"
+          VENV=".task/venv${V}"
+          if [ ! -d "$VENV" ]; then uv venv --clear --no-project --python "$V" "$VENV"; fi
+          ACT="$VENV/bin/activate"; [ -f "$VENV/Scripts/activate" ] && ACT="$VENV/Scripts/activate"
+          . "$ACT"
+          uv sync --active --inexact --quiet --extra test --reinstall-package copium
+          uv run --active pytest tests {{.CLI_ARGS}}
+          deactivate
+        done
+      '
 
   build:wheel:
     desc: Regular optimized wheel (LTO + -O3 by default)
     cmds:
-    - python -m pip install -U build
-    - COPIUM_LTO=${COPIUM_LTO:-1} COPIUM_O3=${COPIUM_O3:-1} python -m build --wheel
+      - python -m pip install -U build
+      - COPIUM_LTO=${COPIUM_LTO:-1} COPIUM_O3=${COPIUM_O3:-1} python -m build --wheel
 
   pgo:train:
     desc: Two-stage PGO training pass (instrument + pytest + merge)
     cmds:
-    - chmod +x tools/pgo_train.sh
-    - COPIUM_PGO_PROFILE_DIR={{.PROFILE_DIR}} bash tools/pgo_train.sh
+      - chmod +x tools/pgo_train.sh
+      - COPIUM_PGO_PROFILE_DIR={{.PROFILE_DIR}} bash tools/pgo_train.sh
 
   pgo:build:
     desc: Final wheel compiled with PGO profile data
     cmds:
-    - python -m pip install -U build
-    - COPIUM_PGO=use COPIUM_PGO_PROFILE_DIR={{.PROFILE_DIR}} python -m build --wheel
+      - python -m pip install -U build
+      - COPIUM_PGO=use COPIUM_PGO_PROFILE_DIR={{.PROFILE_DIR}} python -m build --wheel
+
+  compile_commands:
+    desc: Generate compile_commands.json for C files and CPython sources
+    vars:
+      PYTHON_VERSION: '{{ .PY | default .PY_CURRENT }}'
+      CPYTHON_SRC: '{{ .CPYTHON_SRC | default "" }}'
+    env:
+      CPYTHON_SRC: '{{ .CPYTHON_SRC }}'
+    cmds:
+      - uv run --no-sync --isolated --python {{ .PYTHON_VERSION }} python tools/generate_compile_commands.py
