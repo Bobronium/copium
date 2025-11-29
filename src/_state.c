@@ -1,6 +1,6 @@
 #ifndef _COPIUM_STATE_C
 #define _COPIUM_STATE_C
-#include "copium_common.h"
+#include "_common.h"
 
 typedef struct {
     // Interned strings for attribute lookups

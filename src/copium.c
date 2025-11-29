@@ -25,7 +25,7 @@
     #define _GNU_SOURCE 1
 #endif
 
-#include "copium_common.h"
+#include "_common.h"
 
 /* ========================================================================== */
 /*                         Internal Implementation                            */

@@ -1,7 +1,7 @@
 #ifndef _COPIUM_DICT_ITER_C
 #define _COPIUM_DICT_ITER_C
 
-#include "copium_common.h"
+#include "_common.h"
 
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
 static Py_tss_t g_dictiter_tss = Py_tss_NEEDS_INIT;

@@ -19,7 +19,7 @@
 #ifndef COPIUM___ABOUT___C
 #define COPIUM___ABOUT___C
 
-#include "copium_common.h"
+#include "_common.h"
 
 /* Version macros injected at build time */
 #ifndef COPIUM_VERSION

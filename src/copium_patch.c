@@ -18,7 +18,7 @@
 #ifndef COPIUM_PATCH_C
 #define COPIUM_PATCH_C
 
-#include "copium_common.h"
+#include "_common.h"
 
 /* ------------------------------------------------------------------------- */
 

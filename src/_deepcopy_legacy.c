@@ -1,7 +1,7 @@
 #ifndef _COPIUM_DEEPCOPY_LEGACY_C
 #define _COPIUM_DEEPCOPY_LEGACY_C
 
-#include "copium_common.h"
+#include "_common.h"
 #include "_state.c"
 #include "_dict_iter.c"
 #include "_reduce_helpers.c"

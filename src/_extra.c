@@ -1,6 +1,6 @@
 #ifndef _COPIUM_EXTRA_C
 #define _COPIUM_EXTRA_C
-#include "copium_common.h"
+#include "_common.h"
 
 static ALWAYS_INLINE PyObject* build_list_by_calling_noargs(PyObject* callable, Py_ssize_t n) {
     if (n < 0) {

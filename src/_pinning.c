@@ -16,7 +16,7 @@
 #ifndef _COPIUM_PINNING_C
 #define _COPIUM_PINNING_C
 
-#include "copium_common.h"
+#include "_common.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>

@@ -14,7 +14,7 @@
 #ifndef _COPIUM_INIT_C
 #define _COPIUM_INIT_C
 
-#include "copium_common.h"
+#include "_common.h"
 
 /* Tracks initialization state for proper cleanup in reverse order */
 static struct {

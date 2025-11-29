@@ -14,7 +14,7 @@
 #ifndef COPIUM_EXTRA_C
 #define COPIUM_EXTRA_C
 
-#include "copium_common.h"
+#include "_common.h"
 #include "_state.c"
 #include "_type_checks.c"
 #include "_memo.c"

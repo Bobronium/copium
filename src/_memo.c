@@ -13,7 +13,7 @@
 #ifndef _COPIUM_MEMO_C
 #define _COPIUM_MEMO_C
 
-#include "copium_common.h"
+#include "_common.h"
 #include "_state.c"
 
 #include <stdint.h>

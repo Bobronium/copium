@@ -19,7 +19,7 @@
 #ifndef COPIUM__EXPERIMENTAL_C
 #define COPIUM__EXPERIMENTAL_C
 
-#include "copium_common.h"
+#include "_common.h"
 #include "_pinning.c"
 
 

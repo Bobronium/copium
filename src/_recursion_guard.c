@@ -9,7 +9,7 @@
     #include <windows.h>
 #endif
 
-#include "copium_common.h"
+#include "_common.h"
 
 #ifndef COPIUM_STACKCHECK_STRIDE
     #define COPIUM_STACKCHECK_STRIDE 32u
