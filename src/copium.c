@@ -5,46 +5,386 @@
  */
 
 /*
- * Public module definition & API glue for the copium extension.
+ * copium - Fast, full-native deepcopy for Python
  *
- * Module structure:
- *   copium (main):
- *     - copy(obj)
- *     - deepcopy(x, memo=None)
- *     - replace(obj, /, **changes)  [Python >= 3.13]
+ * Main module providing:
+ *   - copy(obj)                  - shallow copy
+ *   - deepcopy(obj, memo=None)   - deep copy
+ *   - replace(obj, **changes)    - replace fields (Python >= 3.13)
+ *   - Error                      - copy.Error exception
  *
- *   copium.extra:
- *     - replicate(obj, n, /, *, compile_after=20)
- *     - repeatcall(function, size, /)
- *
- *   copium.patch:
- *     - enable() / disable() / enabled()
- *     - apply() / unapply() / applied() / get_vectorcall_ptr()
- *
- *   copium._experimental (only when duper.snapshots available):
- *     - pin(obj)
- *     - unpin(obj, *, strict=False)
- *     - pinned(obj)
- *     - clear_pins()
- *     - get_pins()
+ * Submodules:
+ *   - copium.patch        - stdlib patching (enable, disable, enabled)
+ *   - copium.extra        - batch utilities (replicate, repeatcall)
+ *   - copium.__about__    - version information
+ *   - copium._experimental - pin API (when duper.snapshots available)
  */
-/* Enable GNU extensions so pthread_getattr_np is declared on Linux */
+
+/* Enable GNU extensions for pthread_getattr_np on Linux */
 #ifndef _GNU_SOURCE
-#  define _GNU_SOURCE 1
+    #define _GNU_SOURCE 1
 #endif
 
 #include "copium_common.h"
 
+/* ========================================================================== */
+/*                         Internal Implementation                            */
+/* ========================================================================== */
+
+#include "_state.c"
+#include "_dict_iter.c"
+#include "_type_checks.c"
+#include "_recursion_guard.c"
+#include "_reduce_helpers.c"
 #include "_memo.c"
+#include "_deepcopy.c"
+#include "_memo_legacy.c"
+#include "_deepcopy_legacy.c"
+#include "_copy.c"
 #include "_pinning.c"
-#include "_copying.c"
-#include "_patch_api.c"
-#include "_copy_api.c"
-#include "_extra_api.c"
+#include "_patching.c"
+#include "_init.c"
 
-/* ===================== Method tables for submodules ======================== */
+/* ========================================================================== */
+/*                            Submodules                                      */
+/* ========================================================================== */
 
-/* Main module: copy/deepcopy/replace */
+#include "copium_patch.c"
+#include "copium_extra.c"
+#include "copium___about__.c"
+#include "copium__experimental.c"
+
+/* ========================================================================== */
+/*                              Main API                                      */
+/* ========================================================================== */
+
+PyObject* py_copy(PyObject* self, PyObject* obj) {
+    (void)self;
+
+    {
+        PyTypeObject* tp = Py_TYPE(obj);
+        if (is_atomic_immutable(tp)) {
+            return Py_NewRef(obj);
+        }
+    }
+
+    if (PySlice_Check(obj))
+        return Py_NewRef(obj);
+    if (PyFrozenSet_CheckExact(obj))
+        return Py_NewRef(obj);
+
+    if (PyType_IsSubtype(Py_TYPE(obj), &PyType_Type))
+        return Py_NewRef(obj);
+
+    if (is_empty_initializable(obj)) {
+        PyObject* fresh = make_empty_same_type(obj);
+        if (fresh == Py_None)
+            Py_DECREF(fresh);
+        else
+            return fresh;
+    }
+
+    {
+        PyObject* maybe = try_stdlib_mutable_copy(obj);
+        if (!maybe)
+            return NULL;
+        if (maybe != Py_None)
+            return maybe;
+        Py_DECREF(maybe);
+    }
+
+    {
+        PyObject* cp = PyObject_GetAttrString(obj, "__copy__");
+        if (cp) {
+            PyObject* out = PyObject_CallNoArgs(cp);
+            Py_DECREF(cp);
+            return out;
+        }
+        PyErr_Clear();
+    }
+
+    PyTypeObject* obj_type = Py_TYPE(obj);
+    PyObject* reduce_result = try_reduce_via_registry(obj, obj_type);
+    if (!reduce_result) {
+        if (PyErr_Occurred())
+            return NULL;
+        reduce_result = call_reduce_method_preferring_ex(obj);
+        if (!reduce_result)
+            return NULL;
+    }
+
+    PyObject *constructor = NULL, *args = NULL, *state = NULL, *listiter = NULL, *dictiter = NULL;
+    int unpack_result =
+        validate_reduce_tuple(reduce_result, &constructor, &args, &state, &listiter, &dictiter);
+    if (unpack_result == REDUCE_ERROR) {
+        Py_DECREF(reduce_result);
+        return NULL;
+    }
+    if (unpack_result == REDUCE_STRING) {
+        Py_DECREF(reduce_result);
+        return Py_NewRef(obj);
+    }
+
+    PyObject* out = NULL;
+    if (PyTuple_GET_SIZE(args) == 0) {
+        out = PyObject_CallNoArgs(constructor);
+    } else {
+        out = PyObject_CallObject(constructor, args);
+    }
+    if (!out) {
+        Py_DECREF(reduce_result);
+        return NULL;
+    }
+
+    if ((state && state != Py_None) || (listiter && listiter != Py_None) ||
+        (dictiter && dictiter != Py_None)) {
+        PyObject* applied = reconstruct_state(
+            out,
+            state ? state : Py_None,
+            listiter ? listiter : Py_None,
+            dictiter ? dictiter : Py_None
+        );
+        if (!applied) {
+            Py_DECREF(out);
+            Py_DECREF(reduce_result);
+            return NULL;
+        }
+        Py_DECREF(applied);
+    }
+
+    Py_DECREF(reduce_result);
+    return out;
+}
+
+PyObject* py_deepcopy(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
+    PyObject* obj = NULL;
+    PyObject* memo_arg = Py_None;
+
+    if (!kwnames || PyTuple_GET_SIZE(kwnames) == 0) {
+        if (UNLIKELY(nargs < 1)) {
+            PyErr_Format(PyExc_TypeError, "deepcopy() missing 1 required positional argument: 'x'");
+            return NULL;
+        }
+        if (UNLIKELY(nargs > 2)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "deepcopy() takes from 1 to 2 positional arguments but %zd were given",
+                nargs
+            );
+            return NULL;
+        }
+        obj = args[0];
+        memo_arg = (nargs == 2) ? args[1] : Py_None;
+        goto have_args;
+    }
+
+    const Py_ssize_t kwcount = PyTuple_GET_SIZE(kwnames);
+    if (kwcount == 1) {
+        PyObject* kw0 = PyTuple_GET_ITEM(kwnames, 0);
+        const int is_memo =
+            PyUnicode_Check(kw0) && PyUnicode_CompareWithASCIIString(kw0, "memo") == 0;
+
+        if (is_memo) {
+            if (UNLIKELY(nargs < 1)) {
+                PyErr_Format(
+                    PyExc_TypeError, "deepcopy() missing 1 required positional argument: 'x'"
+                );
+                return NULL;
+            }
+            if (UNLIKELY(nargs > 2)) {
+                PyErr_Format(
+                    PyExc_TypeError,
+                    "deepcopy() takes from 1 to 2 positional arguments but %zd were given",
+                    nargs
+                );
+                return NULL;
+            }
+            if (UNLIKELY(nargs == 2)) {
+                PyErr_SetString(
+                    PyExc_TypeError, "deepcopy() got multiple values for argument 'memo'"
+                );
+                return NULL;
+            }
+            obj = args[0];
+            memo_arg = args[nargs + 0];
+            goto have_args;
+        }
+    }
+
+    {
+        Py_ssize_t i;
+        int seen_memo_kw = 0;
+
+        if (UNLIKELY(nargs > 2)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "deepcopy() takes from 1 to 2 positional arguments but %zd were given",
+                nargs
+            );
+            return NULL;
+        }
+
+        if (nargs >= 1)
+            obj = args[0];
+        if (nargs == 2)
+            memo_arg = args[1];
+
+        const Py_ssize_t kwc = PyTuple_GET_SIZE(kwnames);
+        for (i = 0; i < kwc; i++) {
+            PyObject* name = PyTuple_GET_ITEM(kwnames, i);
+            PyObject* val = args[nargs + i];
+
+            if (!(PyUnicode_Check(name))) {
+                PyErr_SetString(PyExc_TypeError, "deepcopy() keywords must be strings");
+                return NULL;
+            }
+
+            if (PyUnicode_CompareWithASCIIString(name, "x") == 0) {
+                if (UNLIKELY(obj != NULL)) {
+                    PyErr_SetString(
+                        PyExc_TypeError, "deepcopy() got multiple values for argument 'x'"
+                    );
+                    return NULL;
+                }
+                obj = val;
+                continue;
+            }
+
+            if (PyUnicode_CompareWithASCIIString(name, "memo") == 0) {
+                if (UNLIKELY(seen_memo_kw || nargs == 2)) {
+                    PyErr_SetString(
+                        PyExc_TypeError, "deepcopy() got multiple values for argument 'memo'"
+                    );
+                    return NULL;
+                }
+                memo_arg = val;
+                seen_memo_kw = 1;
+                continue;
+            }
+
+            PyErr_Format(
+                PyExc_TypeError, "deepcopy() got an unexpected keyword argument '%U'", name
+            );
+            return NULL;
+        }
+
+        if (UNLIKELY(obj == NULL)) {
+            PyErr_Format(PyExc_TypeError, "deepcopy() missing 1 required positional argument: 'x'");
+            return NULL;
+        }
+    }
+
+have_args:
+    if (memo_arg == Py_None) {
+        PyTypeObject* tp = Py_TYPE(obj);
+        if (is_atomic_immutable(tp)) {
+            return Py_NewRef(obj);
+        }
+        PyObject* memo_local = get_tss_memo();
+        if (!memo_local)
+            return NULL;
+        MemoObject* memo = (MemoObject*)memo_local;
+
+        PyObject* result = deepcopy(obj, memo);
+        cleanup_tss_memo(memo, memo_local);
+        return result;
+    }
+
+    PyObject* result = NULL;
+
+    if (Py_TYPE(memo_arg) == &Memo_Type) {
+        MemoObject* memo = (MemoObject*)memo_arg;
+        Py_INCREF(memo_arg);
+        result = deepcopy(obj, memo);
+        Py_DECREF(memo_arg);
+        return result;
+    }
+
+    else {
+        /* deepcopy_py handles version-specific ordering of immutable check vs memo lookup */
+        Py_INCREF(memo_arg);
+        PyObject* memo = memo_arg;
+        PyObject* keep_list = NULL; /* lazily created on first append */
+
+        result = deepcopy_legacy(obj, memo, &keep_list);
+
+        Py_XDECREF(keep_list);
+        Py_DECREF(memo);
+        return result;
+    }
+}
+
+#if PY_VERSION_HEX >= PY_VERSION_3_13_HEX
+PyObject* py_replace(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
+    (void)self;
+    if (UNLIKELY(nargs == 0)) {
+        PyErr_SetString(PyExc_TypeError, "replace() missing 1 required positional argument: 'obj'");
+        return NULL;
+    }
+    if (UNLIKELY(nargs > 1)) {
+        PyErr_Format(
+            PyExc_TypeError, "replace() takes 1 positional argument but %zd were given", nargs
+        );
+        return NULL;
+    }
+    PyObject* obj = args[0];
+    PyObject* cls = (PyObject*)Py_TYPE(obj);
+
+    PyObject* func = PyObject_GetAttrString(cls, "__replace__");
+    if (!func) {
+        PyErr_Clear();
+        PyErr_Format(
+            PyExc_TypeError, "replace() does not support %.200s objects", Py_TYPE(obj)->tp_name
+        );
+        return NULL;
+    }
+    if (!PyCallable_Check(func)) {
+        Py_DECREF(func);
+        PyErr_SetString(PyExc_TypeError, "__replace__ is not callable");
+        return NULL;
+    }
+
+    PyObject* posargs = PyTuple_New(1);
+    if (!posargs) {
+        Py_DECREF(func);
+        return NULL;
+    }
+    Py_INCREF(obj);
+    PyTuple_SET_ITEM(posargs, 0, obj);
+
+    PyObject* kwargs = NULL;
+    if (kwnames && PyTuple_GET_SIZE(kwnames) > 0) {
+        kwargs = PyDict_New();
+        if (!kwargs) {
+            Py_DECREF(func);
+            Py_DECREF(posargs);
+            return NULL;
+        }
+        Py_ssize_t kwcount = PyTuple_GET_SIZE(kwnames);
+        for (Py_ssize_t i = 0; i < kwcount; i++) {
+            PyObject* key = PyTuple_GET_ITEM(kwnames, i);
+            PyObject* val = args[nargs + i];
+            if (PyDict_SetItem(kwargs, key, val) < 0) {
+                Py_DECREF(func);
+                Py_DECREF(posargs);
+                Py_DECREF(kwargs);
+                return NULL;
+            }
+        }
+    }
+
+    PyObject* out = PyObject_Call(func, posargs, kwargs);
+    Py_DECREF(func);
+    Py_DECREF(posargs);
+    Py_XDECREF(kwargs);
+    return out;
+}
+#endif
+
+/* ========================================================================== */
+/*                         Module Definition                                  */
+/* ========================================================================== */
+
 static PyMethodDef main_methods[] = {
     {"copy",
      (PyCFunction)py_copy,
@@ -77,83 +417,6 @@ static PyMethodDef main_methods[] = {
     {NULL, NULL, 0, NULL}
 };
 
-/* Utils submodule: replicate/repeatcall */
-static PyMethodDef extra_methods[] = {
-    {"replicate",
-     (PyCFunction)(void*)py_replicate,
-     METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR(
-         "replicate(obj, n, /, *, compile_after=20)\n--\n\n"
-         "Returns n copies of the object in a list.\n\n"
-         "Equivalent of [deepcopy(obj) for _ in range(n)], but faster."
-     )},
-    {"repeatcall",
-     (PyCFunction)(void*)py_repeatcall,
-     METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR(
-         "repeatcall(function, size, /)\n--\n\n"
-         "Call function repeatedly size times and return the list of results.\n\n"
-         "Equivalent of [function() for _ in range(size)], but faster."
-     )},
-    {NULL, NULL, 0, NULL}
-};
-
-/* Patch submodule: enable/disable/enabled + patching functions */
-static PyMethodDef patch_methods[] = {
-    {"enable",
-     (PyCFunction)py_enable,
-     METH_NOARGS,
-     PyDoc_STR(
-         "enable()\n--\n\n"
-         "Patch copy.deepcopy to forward to copium.deepcopy.\n\n"
-         ":return: True if copium was enabled, False if it was already enabled."
-     )},
-    {"disable",
-     (PyCFunction)py_disable,
-     METH_NOARGS,
-     PyDoc_STR(
-         "disable()\n--\n\n"
-         "Undo enable(): restore original copy.deepcopy if applied.\n\n"
-         ":return: True if copium was disabled, False if it was already disabled."
-     )},
-    {"enabled",
-     (PyCFunction)py_enabled,
-     METH_NOARGS,
-     PyDoc_STR(
-         "enabled()\n--\n\n"
-         "Return True if copy.deepcopy is currently applied to copium.\n\n"
-         ":return: Whether copium is currently enabled."
-     )},
-    {NULL, NULL, 0, NULL}
-};
-
-/* Experimental submodule: pin API (conditional) */
-static PyMethodDef experimental_methods[] = {
-    {"pin", (PyCFunction)py_pin, METH_O, PyDoc_STR("pin(obj, /)\n--\n\nReturn a Pin for obj.")},
-    {"unpin",
-     (PyCFunction)(void*)py_unpin,
-     METH_FASTCALL | METH_KEYWORDS,
-     PyDoc_STR(
-         "unpin(obj, /, *, strict=False)\n--\n\n"
-         "Remove the pin for obj. If strict is True, raise if obj is not pinned."
-     )},
-    {"pinned",
-     (PyCFunction)py_pinned,
-     METH_O,
-     PyDoc_STR("pinned(obj, /)\n--\n\nReturn the Pin for obj or None.")},
-    {"clear_pins",
-     (PyCFunction)py_clear_pins,
-     METH_NOARGS,
-     PyDoc_STR("clear_pins(/)\n--\n\nRemove all pins.")},
-    {"get_pins",
-     (PyCFunction)py_get_pins,
-     METH_NOARGS,
-     PyDoc_STR("get_pins(/)\n--\n\nReturn a live mapping of id(obj) -> Pin.")},
-    {NULL, NULL, 0, NULL}
-};
-
-/* ===================== Module definitions ================================== */
-
 static int copium_exec(PyObject* module);
 
 static struct PyModuleDef_Slot main_slots[] = {
@@ -176,176 +439,20 @@ static struct PyModuleDef main_module_def = {
     NULL
 };
 
-static struct PyModuleDef extra_module_def = {
-    PyModuleDef_HEAD_INIT,
-    "copium.extra",
-    "Convenience utilities for batch copying operations.",
-    -1,
-    extra_methods,
-    NULL,
-    NULL,
-    NULL,
-    NULL
-};
-
-static struct PyModuleDef patch_module_def = {
-    PyModuleDef_HEAD_INIT,
-    "copium.patch",
-    "Monkey-patching utilities for stdlib copy module.",
-    -1,
-    patch_methods,
-    NULL,
-    NULL,
-    NULL,
-    NULL
-};
-
-static struct PyModuleDef experimental_module_def = {
-    PyModuleDef_HEAD_INIT,
-    "copium._experimental",
-    "Experimental Pin API (requires duper.snapshots).",
-    -1,
-    experimental_methods,
-    NULL,
-    NULL,
-    NULL,
-    NULL
-};
-
-/* ===================== Version submodule (__about__) ====================== */
-
-/* Version macros injected at build time */
-#ifndef COPIUM_VERSION
-    #define COPIUM_VERSION "0.0.0+unknown"
-#endif
-
-#ifndef COPIUM_VERSION_MAJOR
-    #define COPIUM_VERSION_MAJOR 0
-#endif
-
-#ifndef COPIUM_VERSION_MINOR
-    #define COPIUM_VERSION_MINOR 0
-#endif
-
-#ifndef COPIUM_VERSION_PATCH
-    #define COPIUM_VERSION_PATCH 0
-#endif
-
-/* COPIUM_VERSION_PRERELEASE is only defined if present (otherwise None) */
-/* COPIUM_VERSION_BUILD is only defined if present (otherwise None) */
-/* COPIUM_COMMIT_ID is only defined if available (otherwise None) */
+/* ========================================================================== */
+/*                         Submodule Helpers                                  */
+/* ========================================================================== */
 
 /**
- * Create a VersionInfo namedtuple instance from static version macros
- * Expected format:
- *   VersionInfo(
- *       major: int,
- *       minor: int,
- *       patch: int,
- *       prerelease: str | None,
- *       build: int | None,
- *       build_hash: str
- *   )
- */
-static PyObject* _create_version_info(PyObject* version_cls) {
-#ifndef COPIUM_BUILD_HASH
-    #error "COPIUM_BUILD_HASH must be defined by the build backend"
-#endif
-
-    /* All objects that need cleanup on error */
-    PyObject* major = NULL;
-    PyObject* minor = NULL;
-    PyObject* patch = NULL;
-    PyObject* prerelease = NULL;
-    PyObject* build = NULL;
-    PyObject* build_hash = NULL;
-    PyObject* version_tuple = NULL;
-
-    major = PyLong_FromLong(COPIUM_VERSION_MAJOR);
-    if (!major)
-        goto error;
-
-    minor = PyLong_FromLong(COPIUM_VERSION_MINOR);
-    if (!minor)
-        goto error;
-
-    patch = PyLong_FromLong(COPIUM_VERSION_PATCH);
-    if (!patch)
-        goto error;
-
-    /* Handle prerelease (string or None) */
-#ifdef COPIUM_VERSION_PRERELEASE
-    prerelease = PyUnicode_FromString(COPIUM_VERSION_PRERELEASE);
-    if (!prerelease)
-        goto error;
-#else
-    prerelease = Py_NewRef(Py_None);
-#endif
-
-    /* Handle build (int or None) */
-#ifdef COPIUM_VERSION_BUILD
-    build = PyLong_FromLong(COPIUM_VERSION_BUILD);
-    if (!build)
-        goto error;
-#else
-    build = Py_NewRef(Py_None);
-#endif
-
-    /* Required build_hash (string) */
-    build_hash = PyUnicode_FromString(COPIUM_BUILD_HASH);
-    if (!build_hash)
-        goto error;
-
-    /* Create VersionInfo instance */
-    version_tuple = PyObject_CallFunction(
-        version_cls, "OOOOOO", major, minor, patch, prerelease, build, build_hash
-    );
-    if (!version_tuple)
-        goto error;
-
-    /* Success: cleanup temporaries and return */
-    Py_DECREF(major);
-    Py_DECREF(minor);
-    Py_DECREF(patch);
-    Py_DECREF(prerelease);
-    Py_DECREF(build);
-    Py_DECREF(build_hash);
-    return version_tuple;
-
-error:
-    Py_XDECREF(major);
-    Py_XDECREF(minor);
-    Py_XDECREF(patch);
-    Py_XDECREF(prerelease);
-    Py_XDECREF(build);
-    Py_XDECREF(build_hash);
-    return NULL;
-}
-
-static PyModuleDef about_module_def = {
-    PyModuleDef_HEAD_INIT,
-    "copium.__about__",
-    "Version information for copium",
-    -1,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL
-};
-
-/* ===================== Helper for adding submodule =========================
+ * Add a submodule to parent and register in sys.modules.
  *
- * NOTE: This function does NOT steal or decref the parent reference on failure.
- * The caller is responsible for cleaning up their own references.
- * On success, the submodule reference is stolen by PyModule_AddObject.
+ * NOTE: On success, reference to submodule is stolen.
+ * On failure, submodule is decref'd.
  */
 static int _add_submodule(PyObject* parent, const char* name, PyObject* submodule) {
-    if (!submodule) {
+    if (!submodule)
         return -1;
-    }
 
-    /* Build full module name (e.g., "copium.patch") */
     PyObject* parent_name = PyModule_GetNameObject(parent);
     if (!parent_name) {
         Py_DECREF(submodule);
@@ -359,14 +466,12 @@ static int _add_submodule(PyObject* parent, const char* name, PyObject* submodul
         return -1;
     }
 
-    /* Set __name__ on submodule */
     if (PyObject_SetAttrString(submodule, "__name__", full_name) < 0) {
         Py_DECREF(full_name);
         Py_DECREF(submodule);
         return -1;
     }
 
-    /* Register in sys.modules so it can be imported */
     PyObject* sys_modules = PyImport_GetModuleDict();
     if (!sys_modules) {
         Py_DECREF(full_name);
@@ -381,207 +486,51 @@ static int _add_submodule(PyObject* parent, const char* name, PyObject* submodul
     }
     Py_DECREF(full_name);
 
-    /* Add to parent as attribute */
     if (PyModule_AddObject(parent, name, submodule) < 0) {
         Py_DECREF(submodule);
         return -1;
     }
-    /* PyModule_AddObject steals the reference on success */
 
     return 0;
 }
 
-/* ===================== Module initialization =============================== */
+/* ========================================================================== */
+/*                         Module Initialization                              */
+/* ========================================================================== */
 
 PyMODINIT_FUNC PyInit_copium(void) {
-#if PY_VERSION_HEX >= 0x03050000
     return PyModuleDef_Init(&main_module_def);
-#else
-    PyObject* module = PyModule_Create(&main_module_def);
-    if (module == NULL)
-        return NULL;
-    if (copium_exec(module) < 0) {
-        Py_DECREF(module);
-        return NULL;
-    }
-    return module;
-#endif
 }
 
 static int copium_exec(PyObject* module) {
     /* Initialize internal state */
-    if (_copium_copying_init(module) < 0) {
+    if (_copium_init(module) < 0)
         return -1;
-    }
 
     /* Create and attach extra submodule */
     PyObject* extra_module = PyModule_Create(&extra_module_def);
-    if (_add_submodule(module, "extra", extra_module) < 0) {
+    if (_add_submodule(module, "extra", extra_module) < 0)
         return -1;
-    }
 
     /* Create and attach patch submodule */
     PyObject* patch_module = PyModule_Create(&patch_module_def);
-    if (_add_submodule(module, "patch", patch_module) < 0) {
+    if (_add_submodule(module, "patch", patch_module) < 0)
         return -1;
-    }
 
-    /* Add low-level patching API (apply/unapply/applied/get_vectorcall_ptr) to patch module */
-    if (_copium_patching_add_api(patch_module) < 0) {
+    /* Add low-level patching API to patch module */
+    if (_copium_patching_add_api(patch_module) < 0)
         return -1;
-    }
 
-    /* Conditionally create and attach experimental submodule */
-    if (_copium_copying_duper_available()) {
+    /* Conditionally create experimental submodule */
+    if (_copium_duper_available()) {
         PyObject* experimental_module = PyModule_Create(&experimental_module_def);
-        if (_add_submodule(module, "_experimental", experimental_module) < 0) {
+        if (_add_submodule(module, "_experimental", experimental_module) < 0)
             return -1;
-        }
     }
 
-    /* === Build __about__ submodule === */
-
-    /* Objects that need cleanup on error in this section */
-    PyObject* about_module = NULL;
-    PyObject* collections = NULL;
-    PyObject* namedtuple = NULL;
-    PyObject* version_info_cls = NULL;
-    PyObject* version_tuple = NULL;
-    PyObject* author_cls = NULL;
-    PyObject* author_instance = NULL;
-    PyObject* authors_tuple = NULL;
-
-    about_module = PyModule_Create(&about_module_def);
-    if (!about_module) {
+    /* Build and attach __about__ submodule */
+    if (_build_about_module(module, _add_submodule) < 0)
         return -1;
-    }
-
-    /* Add version string to __about__ */
-    if (PyModule_AddStringConstant(about_module, "__version__", COPIUM_VERSION) < 0) {
-        goto about_error;
-    }
-
-    /* Import collections.namedtuple for creating VersionInfo and Author */
-    collections = PyImport_ImportModule("collections");
-    if (!collections) {
-        goto about_error;
-    }
-
-    namedtuple = PyObject_GetAttrString(collections, "namedtuple");
-    Py_CLEAR(collections);
-    if (!namedtuple) {
-        goto about_error;
-    }
-
-    /* Create VersionInfo namedtuple class */
-    version_info_cls = PyObject_CallFunction(
-        namedtuple,
-        "s[ssssss]",
-        "VersionInfo",
-        "major",
-        "minor",
-        "patch",
-        "prerelease",
-        "build",
-        "build_hash"
-    );
-    if (!version_info_cls) {
-        goto about_error;
-    }
-
-    /* Add VersionInfo class to __about__ module */
-    Py_INCREF(version_info_cls); /* AddObject steals, but we still need it */
-    if (PyModule_AddObject(about_module, "VersionInfo", version_info_cls) < 0) {
-        Py_DECREF(version_info_cls); /* undo the extra incref */
-        goto about_error;
-    }
-
-    /* Create VersionInfo instance from static macros */
-    version_tuple = _create_version_info(version_info_cls);
-    Py_CLEAR(version_info_cls); /* no longer needed */
-    if (!version_tuple) {
-        goto about_error;
-    }
-
-    if (PyModule_AddObject(about_module, "__version_tuple__", version_tuple) < 0) {
-        goto about_error;
-    }
-    version_tuple = NULL; /* stolen by AddObject */
-
-    /* Add __commit_id__ (string or None) */
-#ifdef COPIUM_COMMIT_ID
-    if (PyModule_AddStringConstant(about_module, "__commit_id__", COPIUM_COMMIT_ID) < 0) {
-        goto about_error;
-    }
-#else
-    {
-        PyObject* none_ref = Py_NewRef(Py_None);
-        if (PyModule_AddObject(about_module, "__commit_id__", none_ref) < 0) {
-            Py_DECREF(none_ref);
-            goto about_error;
-        }
-    }
-#endif
-
-    /* Add __build_hash__ (required string) */
-#ifndef COPIUM_BUILD_HASH
-    #error "COPIUM_BUILD_HASH must be defined by the build backend"
-#endif
-    if (PyModule_AddStringConstant(about_module, "__build_hash__", COPIUM_BUILD_HASH) < 0) {
-        goto about_error;
-    }
-
-    /* Create Author namedtuple class */
-    author_cls = PyObject_CallFunction(namedtuple, "s[ss]", "Author", "name", "email");
-    Py_CLEAR(namedtuple);
-    if (!author_cls) {
-        goto about_error;
-    }
-
-    /* Add Author class to __about__ module */
-    Py_INCREF(author_cls); /* AddObject steals, but we still need it */
-    if (PyModule_AddObject(about_module, "Author", author_cls) < 0) {
-        Py_DECREF(author_cls); /* undo the extra incref */
-        goto about_error;
-    }
-
-    /* Create Author instance */
-    author_instance =
-        PyObject_CallFunction(author_cls, "ss", "Arseny Boykov (Bobronium)", "hi@bobronium.me");
-    Py_CLEAR(author_cls);
-    if (!author_instance) {
-        goto about_error;
-    }
-
-    /* Create tuple containing the author */
-    authors_tuple = PyTuple_Pack(1, author_instance);
-    Py_CLEAR(author_instance);
-    if (!authors_tuple) {
-        goto about_error;
-    }
-
-    /* Add __authors__ to __about__ module */
-    if (PyModule_AddObject(about_module, "__authors__", authors_tuple) < 0) {
-        goto about_error;
-    }
-    authors_tuple = NULL; /* stolen by AddObject */
-
-    /* Attach __about__ to parent module */
-    if (_add_submodule(module, "__about__", about_module) < 0) {
-        /* _add_submodule already decrefs submodule on failure */
-        return -1;
-    }
 
     return 0;
-
-about_error:
-    Py_XDECREF(about_module);
-    Py_XDECREF(collections);
-    Py_XDECREF(namedtuple);
-    Py_XDECREF(version_info_cls);
-    Py_XDECREF(version_tuple);
-    Py_XDECREF(author_cls);
-    Py_XDECREF(author_instance);
-    Py_XDECREF(authors_tuple);
-    return -1;
 }

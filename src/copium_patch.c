@@ -1,18 +1,45 @@
-#ifndef _COPIUM_PATCH_API_C
-#define _COPIUM_PATCH_API_C
+/*
+ * SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
+ *
+ * SPDX-License-Identifier: MIT
+ */
 
-#include "_patching.c"
+/*
+ * copium.patch submodule
+ *
+ * Monkey-patching utilities for stdlib copy module:
+ *   - enable()  - patch copy.deepcopy to use copium
+ *   - disable() - restore original copy.deepcopy
+ *   - enabled() - check if patch is active
+ *
+ * Low-level patching API (apply/unapply/applied/get_vectorcall_ptr)
+ * is added via _copium_patching_add_api() from _patching.c
+ */
+#ifndef COPIUM_PATCH_C
+#define COPIUM_PATCH_C
+
+#include "copium_common.h"
+
+/* ------------------------------------------------------------------------- */
 
 static PyObject* _get_attr_str(PyObject* obj, const char* name) {
-    return PyObject_GetAttrString(obj, name);
+    PyObject* attr = PyObject_GetAttrString(obj, name);
+    if (!attr) {
+        PyErr_Format(PyExc_AttributeError, "object has no attribute '%s'", name);
+        return NULL;
+    }
+    return attr;
 }
 
 static int _truthy(PyObject* obj) {
+    if (obj == NULL)
+        return -1;
     int result = PyObject_IsTrue(obj);
     Py_DECREF(obj);
     return result;
 }
 
+/* ------------------------------------------------------------------------- */
 
 static PyObject* py_enable(PyObject* self, PyObject* noargs) {
     (void)noargs;
@@ -185,5 +212,46 @@ static PyObject* py_enabled(PyObject* self, PyObject* noargs) {
 }
 
 
+/* ------------------------------------------------------------------------- */
 
-#endif
+static PyMethodDef patch_methods[] = {
+    {"enable",
+     (PyCFunction)py_enable,
+     METH_NOARGS,
+     PyDoc_STR(
+         "enable()\n--\n\n"
+         "Patch copy.deepcopy to forward to copium.deepcopy.\n\n"
+         ":return: True if copium was enabled, False if it was already enabled."
+     )},
+    {"disable",
+     (PyCFunction)py_disable,
+     METH_NOARGS,
+     PyDoc_STR(
+         "disable()\n--\n\n"
+         "Undo enable(): restore original copy.deepcopy if applied.\n\n"
+         ":return: True if copium was disabled, False if it was already disabled."
+     )},
+    {"enabled",
+     (PyCFunction)py_enabled,
+     METH_NOARGS,
+     PyDoc_STR(
+         "enabled()\n--\n\n"
+         "Return True if copy.deepcopy is currently patched to use copium.\n\n"
+         ":return: Whether copium is currently enabled."
+     )},
+    {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef patch_module_def = {
+    PyModuleDef_HEAD_INIT,
+    "copium.patch",
+    "Monkey-patching utilities for stdlib copy module.",
+    -1,
+    patch_methods,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
+
+#endif /* COPIUM_PATCH_C */

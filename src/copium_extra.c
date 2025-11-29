@@ -1,9 +1,26 @@
-#ifndef _COPIUM_EXTRA_API_C
-#define _COPIUM_EXTRA_API_C
+/*
+ * SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
+ *
+ * SPDX-License-Identifier: MIT
+ */
 
+/*
+ * copium.extra submodule
+ *
+ * Batch copying utilities:
+ *   - replicate(obj, n) - create n deep copies
+ *   - repeatcall(fn, n) - call fn() n times, collect results
+ */
+#ifndef COPIUM_EXTRA_C
+#define COPIUM_EXTRA_C
+
+#include "copium_common.h"
+#include "_state.c"
+#include "_type_checks.c"
+#include "_memo.c"
 #include "_deepcopy.c"
 #include "_extra.c"
-#include "_type_checks.c"
+#include "_pinning.c"
 
 PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
     (void)self;
@@ -184,4 +201,38 @@ PyObject* py_repeatcall(
     return build_list_by_calling_noargs(func, n);
 }
 
-#endif
+/* ------------------------------------------------------------------------- */
+
+static PyMethodDef extra_methods[] = {
+    {"replicate",
+     (PyCFunction)(void*)py_replicate,
+     METH_FASTCALL | METH_KEYWORDS,
+     PyDoc_STR(
+         "replicate(obj, n, /)\n--\n\n"
+         "Returns n deep copies of the object in a list.\n\n"
+         "Equivalent of [deepcopy(obj) for _ in range(n)], but faster."
+     )},
+    {"repeatcall",
+     (PyCFunction)(void*)py_repeatcall,
+     METH_FASTCALL | METH_KEYWORDS,
+     PyDoc_STR(
+         "repeatcall(function, size, /)\n--\n\n"
+         "Call function repeatedly size times and return the list of results.\n\n"
+         "Equivalent of [function() for _ in range(size)], but faster."
+     )},
+    {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef extra_module_def = {
+    PyModuleDef_HEAD_INIT,
+    "copium.extra",
+    "Batch copying utilities for copium.",
+    -1,
+    extra_methods,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
+
+#endif /* COPIUM_EXTRA_C */
