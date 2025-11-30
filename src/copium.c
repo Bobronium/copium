@@ -280,20 +280,19 @@ have_args:
         if (is_atomic_immutable(tp)) {
             return Py_NewRef(obj);
         }
-        PyObject* memo_local = get_tss_memo();
-        if (!memo_local)
+        PyMemoObject* memo = get_tss_memo();
+        if (!memo)
             return NULL;
-        MemoObject* memo = (MemoObject*)memo_local;
 
         PyObject* result = deepcopy(obj, memo);
-        cleanup_tss_memo(memo, memo_local);
+        cleanup_tss_memo(memo);
         return result;
     }
 
     PyObject* result = NULL;
 
     if (Py_TYPE(memo_arg) == &Memo_Type) {
-        MemoObject* memo = (MemoObject*)memo_arg;
+        PyMemoObject* memo = (PyMemoObject*)memo_arg;
         Py_INCREF(memo_arg);
         result = deepcopy(obj, memo);
         Py_DECREF(memo_arg);
