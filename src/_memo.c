@@ -41,13 +41,13 @@ typedef struct {
 } KeepaliveVector;
 
 /* Exact runtime layout of the memo object (must begin with PyObject_HEAD). */
-typedef struct _MemoObject {
+typedef struct _PyMemoObject {
     PyObject_HEAD MemoTable* table;
     KeepaliveVector keepalive;
-} MemoObject;
+} PyMemoObject;
 
 /* Forward decl to refer to Memo_Type in helpers */
-typedef struct _MemoObject MemoObject;
+typedef struct _PyMemoObject PyMemoObject;
 
 #define MEMO_TOMBSTONE ((void*)(uintptr_t)(-1))
 
@@ -403,18 +403,18 @@ int memo_table_remove(MemoTable* table, void* key) {
 PyTypeObject Memo_Type;
 
 /* _KeepaliveList proxy ============================================================
- * A thin Python object that forwards to MemoObject.keep.
- * It is *not* the owner of the storage; it keeps a strong ref to MemoObject.
+ * A thin Python object that forwards to PyMemoObject.keep.
+ * It is *not* the owner of the storage; it keeps a strong ref to PyMemoObject.
  */
 
 typedef struct {
-    PyObject_HEAD MemoObject* owner; /* strong ref to the memo owning the vector */
+    PyObject_HEAD PyMemoObject* owner; /* strong ref to the memo owning the vector */
 } KeepaliveListObject;
 
 static PyTypeObject KeepaliveList_Type;
 
 /* Forward decls */
-static PyObject* KeepaliveList_New(MemoObject* owner);
+static PyObject* KeepaliveList_New(PyMemoObject* owner);
 
 static void KeepaliveList_dealloc(KeepaliveListObject* self) {
     Py_XDECREF(self->owner);
@@ -501,7 +501,7 @@ static PyMethodDef KeepaliveList_methods[] = {
     {NULL, NULL, 0, NULL}
 };
 
-static PyObject* KeepaliveList_New(MemoObject* owner) {
+static PyObject* KeepaliveList_New(PyMemoObject* owner) {
     KeepaliveListObject* self = PyObject_New(KeepaliveListObject, &KeepaliveList_Type);
     if (!self)
         return NULL;
@@ -522,7 +522,7 @@ static PyTypeObject KeepaliveList_Type = {
 
 /* --------------------------- Memo object impl ------------------------------ */
 
-static void Memo_dealloc(MemoObject* self) {
+static void Memo_dealloc(PyMemoObject* self) {
     PyObject_GC_UnTrack(self);  // Stop tracking before destruction
     if (PyObject_CallFinalizerFromDealloc((PyObject*)self)) {
         return;
@@ -532,7 +532,7 @@ static void Memo_dealloc(MemoObject* self) {
     PyObject_GC_Del(self);  // Use GC-aware free
 }
 
-static int Memo_traverse(MemoObject* self, visitproc visit, void* arg) {
+static int Memo_traverse(PyMemoObject* self, visitproc visit, void* arg) {
     if (self->table) {
         for (Py_ssize_t i = 0; i < self->table->size; i++) {
             void* key = self->table->slots[i].key;
@@ -547,7 +547,7 @@ static int Memo_traverse(MemoObject* self, visitproc visit, void* arg) {
     return 0;
 }
 
-static int Memo_clear_gc(MemoObject* self) {
+static int Memo_clear_gc(PyMemoObject* self) {
     // Break all references
     if (self->table) {
         memo_table_clear(self->table);
@@ -556,22 +556,22 @@ static int Memo_clear_gc(MemoObject* self) {
     return 0;
 }
 
-PyObject* Memo_New(void) {
-    MemoObject* self = PyObject_GC_New(MemoObject, &Memo_Type);
+PyMemoObject* Memo_New(void) {
+    PyMemoObject* self = PyObject_GC_New(PyMemoObject, &Memo_Type);
     if (!self)
         return NULL;
     self->table = NULL;
     // Since memo is designed to be reused, unless stolen, don't call PyObject_GC_Track just yet.
     // Instead, call it once we know that somebody stole the ref.
     keepalive_init(&self->keepalive);
-    return (PyObject*)self;
+    return self;
 }
 
-static Py_ssize_t Memo_len(MemoObject* self) {
+static Py_ssize_t Memo_len(PyMemoObject* self) {
     return self->table ? self->table->used : 0;
 }
 
-static PyObject* Memo_subscript(MemoObject* self, PyObject* pykey) {
+static PyObject* Memo_subscript(PyMemoObject* self, PyObject* pykey) {
     if (!PyLong_Check(pykey)) {
         PyErr_SetString(PyExc_KeyError, "keys must be integers");
         return NULL;
@@ -596,7 +596,7 @@ static PyObject* Memo_subscript(MemoObject* self, PyObject* pykey) {
     return value;
 }
 
-static int Memo_ass_subscript(MemoObject* self, PyObject* pykey, PyObject* value) {
+static int Memo_ass_subscript(PyMemoObject* self, PyObject* pykey, PyObject* value) {
     if (!PyLong_Check(pykey)) {
         PyErr_SetString(PyExc_KeyError, "keys must be integers");
         return -1;
@@ -616,7 +616,7 @@ static int Memo_ass_subscript(MemoObject* self, PyObject* pykey, PyObject* value
     }
 }
 
-static PyObject* Memo_iter(MemoObject* self) {
+static PyObject* Memo_iter(PyMemoObject* self) {
     PyObject* keys_list = PyList_New(0);
     if (!keys_list)
         return NULL;
@@ -639,7 +639,7 @@ static PyObject* Memo_iter(MemoObject* self) {
     return it;
 }
 
-static PyObject* Memo_clear(MemoObject* self, PyObject* noargs) {
+static PyObject* Memo_clear(PyMemoObject* self, PyObject* noargs) {
     (void)noargs;
     /* Keep the allocated table capacity for reuse; just clear contents. */
     if (self->table) {
@@ -652,7 +652,7 @@ static PyObject* Memo_clear(MemoObject* self, PyObject* noargs) {
 
 /* __del__: drop strong references held by the memo so user-retained memos
    can clean up deterministically when collected. */
-static PyObject* Memo___del__(MemoObject* self, PyObject* noargs) {
+static PyObject* Memo___del__(PyMemoObject* self, PyObject* noargs) {
     (void)noargs;
     if (self->table) {
         memo_table_clear(self->table);
@@ -661,7 +661,7 @@ static PyObject* Memo___del__(MemoObject* self, PyObject* noargs) {
     Py_RETURN_NONE;
 }
 
-static PyObject* Memo_contains(MemoObject* self, PyObject* pykey) {
+static PyObject* Memo_contains(PyMemoObject* self, PyObject* pykey) {
     if (!PyLong_Check(pykey)) {
         PyErr_SetString(PyExc_KeyError, "keys must be integers");
         return NULL;
@@ -673,7 +673,7 @@ static PyObject* Memo_contains(MemoObject* self, PyObject* pykey) {
     return PyBool_FromLong(value != NULL);
 }
 
-static PyObject* Memo_keep(MemoObject* self, PyObject* noargs) {
+static PyObject* Memo_keep(PyMemoObject* self, PyObject* noargs) {
     (void)noargs;
     /* Expose a (fresh) proxy each time; storage lives in self->keepalive. */
     return KeepaliveList_New(self);
@@ -684,7 +684,7 @@ static PyMappingMethods Memo_as_mapping = {
 };
 
 /* Late-bound 'get' to keep identical signature as before */
-static PyObject* Memo_get(MemoObject* self, PyObject* const* args, Py_ssize_t nargs) {
+static PyObject* Memo_get(PyMemoObject* self, PyObject* const* args, Py_ssize_t nargs) {
     if (nargs < 1 || nargs > 2) {
         PyErr_SetString(PyExc_TypeError, "get expected 1 or 2 arguments");
         return NULL;
@@ -712,7 +712,7 @@ static PyObject* Memo_get(MemoObject* self, PyObject* const* args, Py_ssize_t na
     }
 }
 
-static PyObject* Memo_setdefault(MemoObject* self, PyObject* const* args, Py_ssize_t nargs) {
+static PyObject* Memo_setdefault(PyMemoObject* self, PyObject* const* args, Py_ssize_t nargs) {
     if (nargs < 1 || nargs > 2) {
         PyErr_SetString(PyExc_TypeError, "setdefault expected 1 or 2 arguments");
         return NULL;
@@ -759,7 +759,7 @@ static PyMethodDef Memo_methods[] = {
 
 PyTypeObject Memo_Type = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium._Memo",
-    .tp_basicsize = sizeof(MemoObject),
+    .tp_basicsize = sizeof(PyMemoObject),
     .tp_dealloc = (destructor)Memo_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
     .tp_as_mapping = &Memo_as_mapping,
@@ -789,10 +789,10 @@ int memo_ready_types(void) {
     return 0;
 }
 
-static ALWAYS_INLINE PyObject* get_tss_memo(void) {
+static ALWAYS_INLINE PyMemoObject* get_tss_memo(void) {
     void* val = PyThread_tss_get(&module_state.memo_tss);
     if (val == NULL) {
-        PyObject* memo = Memo_New();
+        PyMemoObject* memo = Memo_New();
         if (memo == NULL)
             return NULL;
         if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
@@ -802,13 +802,13 @@ static ALWAYS_INLINE PyObject* get_tss_memo(void) {
         return memo;
     }
 
-    PyObject* existing = (PyObject*)val;
+    PyMemoObject* existing = (PyMemoObject*)val;
     if (Py_REFCNT(existing) > 1) {
         // Memo got stolen in between runs somehow.
         // Highly unlikely, but we'll detach it anyway and enable gc tracking for it.
         PyObject_GC_Track(existing);
 
-        PyObject* memo = Memo_New();
+        PyMemoObject* memo = Memo_New();
         if (memo == NULL)
             return NULL;
 
@@ -822,8 +822,8 @@ static ALWAYS_INLINE PyObject* get_tss_memo(void) {
     return existing;
 }
 
-static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* memo, PyObject* memo_local) {
-    Py_ssize_t refcount = Py_REFCNT(memo_local);
+static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
+    Py_ssize_t refcount = Py_REFCNT(memo);
 
     if (refcount == 1) {
         keepalive_clear(&memo->keepalive);
@@ -831,13 +831,22 @@ static ALWAYS_INLINE int cleanup_tss_memo(MemoObject* memo, PyObject* memo_local
         memo_table_reset(&memo->table);
         return 1;
     } else {
-        PyObject_GC_Track(memo_local);
+        PyObject_GC_Track(memo);
         if (PyThread_tss_set(&module_state.memo_tss, NULL) != 0) {
-            Py_DECREF(memo_local);
+            Py_DECREF(memo);
             Py_FatalError("copium: unexpected TTS state during memo cleanup");
         }
-        Py_DECREF(memo_local);
+        Py_DECREF(memo);
         return 0;
     }
+}
+
+/* Combined memo insert + keepalive. Returns 0 on success, -1 on error. */
+static ALWAYS_INLINE int memoize(PyMemoObject* memo, PyObject* original, PyObject* copy, Py_ssize_t hash) {
+    if (memo_table_insert_h(&memo->table, (void*)original, copy, hash) < 0)
+        return -1;
+    if (keepalive_append(&memo->keepalive, original) < 0)
+        return -1;
+    return 0;
 }
 #endif  // _COPIUM_MEMO_C

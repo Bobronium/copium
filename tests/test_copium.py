@@ -28,14 +28,24 @@ def test_deepcopy_keepalive_internal(copy) -> None:
     """
     Note: this test is not part of Lib/test/test_copy.py.
     """
-    x = []
 
     class A:
         def __deepcopy__(self, memo):
-            assert memo[id(memo)][0] is x
+            keepalive = memo[id(memo)]
+            try:
+                assert keepalive[0] is x  # this would be true for stdlib
+            except AssertionError:
+                assert keepalive[0] is container  # copium saves objects to keepalive early
+                assert keepalive[1] is x
+                assert len(keepalive) == 2
+            else:
+                assert len(keepalive) == 1
+
+
             return self
 
-    copied = copy.deepcopy([x, a := A()])
+    container = [x := [], a := A()]
+    copied = copy.deepcopy(container)
 
     assert copied == [x, a]
 
