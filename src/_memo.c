@@ -16,8 +16,7 @@
 #include "_common.h"
 #include "_state.c"
 #include "_abc_registration.c"
-#include "dictobject.h"
-#include "pytypedefs.h"
+
 
 #include <stdint.h>
 #include <stdlib.h>
