@@ -28,7 +28,9 @@ static MAYBE_INLINE PyObject* deepcopy_frozenset(
 static MAYBE_INLINE PyObject* deepcopy_bytearray(
     PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
 );
-static MAYBE_INLINE PyObject* deepcopy_method(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_method(
+    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+);
 static PyObject* deepcopy_object(
     PyObject* obj, PyTypeObject* tp, PyMemoObject* memo, Py_ssize_t id_hash
 );
@@ -148,7 +150,9 @@ error:
     return NULL;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_tuple(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_tuple(
+    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+) {
     // Owned refs that need cleanup on error
     PyObject* copy = NULL;
     PyObject* copied = NULL;
@@ -367,7 +371,9 @@ error:
     return NULL;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_method(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_method(
+    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+) {
     // Owned refs that need cleanup on error
     PyObject* func = NULL;
     PyObject* self = NULL;
@@ -437,8 +443,9 @@ static PyObject* deepcopy_object(
     }
 
     PyObject *callable, *argtup, *state, *listitems, *dictitems;
-    int valid =
-        validate_reduce_tuple(reduce_result, &callable, &argtup, &state, &listitems, &dictitems);
+    int valid = validate_reduce_tuple(
+        reduce_result, &callable, &argtup, &state, &listitems, &dictitems
+    );
     if (valid == REDUCE_ERROR)
         goto error;
     if (valid == REDUCE_STRING) {

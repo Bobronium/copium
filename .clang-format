@@ -1,5 +1,5 @@
 ---
-Language: Cpp
+Language: C
 AccessModifierOffset: -2
 AlignAfterOpenBracket: BlockIndent
 AlignConsecutiveAssignments:
@@ -145,8 +145,8 @@ ObjCBreakBeforeNestedBlockParam: true
 ObjCSpaceAfterProperty: false
 ObjCSpaceBeforeProtocolList: true
 PackConstructorInitializers: NextLine
-PenaltyBreakAssignment: 2
-PenaltyBreakBeforeFirstCallParameter: 1
+PenaltyBreakAssignment: 2000
+PenaltyBreakBeforeFirstCallParameter: 0
 PenaltyBreakComment: 300
 PenaltyBreakFirstLessLess: 120
 PenaltyBreakOpenParenthesis: 0

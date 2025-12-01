@@ -245,8 +245,9 @@ static int _init_pinning(PyObject* module) {
         return 0; /* Not an error - pinning is optional */
     }
 
-    module_state.create_precompiler_reconstructor =
-        PyObject_GetAttrString(mod_snapshots, "create_precompiler_reconstructor");
+    module_state.create_precompiler_reconstructor = PyObject_GetAttrString(
+        mod_snapshots, "create_precompiler_reconstructor"
+    );
     if (!module_state.create_precompiler_reconstructor) {
         PyErr_Clear();
     }

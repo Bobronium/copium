@@ -527,8 +527,9 @@ static int _init_legacy_template_code(void) {
         if (old_filters) {
             filters_copy = PySequence_List(old_filters);  // shallow copy
         }
-        PyObject* ignore =
-            PyObject_CallMethod(warnings, "simplefilter", "sO", "ignore", PyExc_SyntaxWarning);
+        PyObject* ignore = PyObject_CallMethod(
+            warnings, "simplefilter", "sO", "ignore", PyExc_SyntaxWarning
+        );
         Py_XDECREF(ignore);
     }
 

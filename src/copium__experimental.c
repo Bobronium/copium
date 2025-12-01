@@ -22,7 +22,6 @@
 #include "_common.h"
 #include "_pinning.c"
 
-
 PyObject* py_pin(PyObject* self, PyObject* obj) {
     (void)self;
     if (!obj) {
@@ -122,12 +121,8 @@ PyObject* py_get_pins(PyObject* self, PyObject* noargs) {
     return PinsProxy_create_bound_to_global();
 }
 
-
 static PyMethodDef experimental_methods[] = {
-    {"pin",
-     (PyCFunction)py_pin,
-     METH_O,
-     PyDoc_STR("pin(obj, /)\n--\n\nReturn a Pin for obj.")},
+    {"pin", (PyCFunction)py_pin, METH_O, PyDoc_STR("pin(obj, /)\n--\n\nReturn a Pin for obj.")},
     {"unpin",
      (PyCFunction)(void*)py_unpin,
      METH_FASTCALL | METH_KEYWORDS,

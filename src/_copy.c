@@ -9,7 +9,6 @@
 
 #include "_state.c"
 
-
 static PyObject* reconstruct_state(
     PyObject* new_obj, PyObject* state, PyObject* listiter, PyObject* dictiter
 ) {

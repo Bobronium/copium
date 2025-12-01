@@ -68,8 +68,9 @@ static void _copium_init_stack_bounds(void) {
     typedef VOID(WINAPI * GetStackLimitsFn)(PULONG_PTR, PULONG_PTR);
     HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
     if (hKernel32) {
-        GetStackLimitsFn fn =
-            (GetStackLimitsFn)GetProcAddress(hKernel32, "GetCurrentThreadStackLimits");
+        GetStackLimitsFn fn = (GetStackLimitsFn)GetProcAddress(
+            hKernel32, "GetCurrentThreadStackLimits"
+        );
         if (fn) {
             ULONG_PTR low = 0, high = 0;
             fn(&low, &high);

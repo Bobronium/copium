@@ -465,8 +465,9 @@ static PyObject* deepcopy_object_legacy(
     }
 
     PyObject *callable, *argtup, *state, *listitems, *dictitems;
-    int valid =
-        validate_reduce_tuple(reduce_result, &callable, &argtup, &state, &listitems, &dictitems);
+    int valid = validate_reduce_tuple(
+        reduce_result, &callable, &argtup, &state, &listitems, &dictitems
+    );
     if (valid == REDUCE_ERROR)
         goto error;
     if (valid == REDUCE_STRING) {

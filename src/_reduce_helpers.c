@@ -9,7 +9,6 @@
 
 #include "_state.c"
 
-
 typedef enum {
     REDUCE_ERROR = -1,
     REDUCE_TUPLE = 0,

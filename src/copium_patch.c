@@ -103,8 +103,9 @@ static PyObject* py_enable(PyObject* self, PyObject* noargs) {
         return NULL;
     }
 
-    PyObject* result =
-        PyObject_CallFunction(function_apply, "OO", py_deepcopy_object, native_deepcopy);
+    PyObject* result = PyObject_CallFunction(
+        function_apply, "OO", py_deepcopy_object, native_deepcopy
+    );
     Py_DECREF(function_apply);
     Py_DECREF(py_deepcopy_object);
     Py_DECREF(native_deepcopy);
@@ -210,7 +211,6 @@ static PyObject* py_enabled(PyObject* self, PyObject* noargs) {
         Py_RETURN_TRUE;
     Py_RETURN_FALSE;
 }
-
 
 /* ------------------------------------------------------------------------- */
 

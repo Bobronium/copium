@@ -23,7 +23,6 @@
 #include "_memo.c"
 #include "_abc_registration.c"
 
-
 /* ------------------------------ Pin type ---------------------------------- */
 
 typedef struct {
@@ -608,7 +607,6 @@ PinObject* _duper_lookup_pin_for_object(PyObject* obj) {
         return NULL;
     return pin_table_lookup(global_pin_table, (void*)obj);
 }
-
 
 /* -------------- Public function: add types to module on init ---------------
  */

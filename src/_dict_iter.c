@@ -59,8 +59,9 @@ static int _copium_dict_watcher_cb(
 static ALWAYS_INLINE void dict_iter_init(DictIterGuard* iter_guard, PyObject* dict) {
     iter_guard->dict = dict;
     iter_guard->pos = 0;
-    iter_guard->size0 =
-        PyDict_Size(dict); /* snapshot initial size (errors unlikely; -1 harmless) */
+    iter_guard->size0 = PyDict_Size(
+        dict
+    ); /* snapshot initial size (errors unlikely; -1 harmless) */
     iter_guard->watching = 0;
     iter_guard->mutated = 0;
     iter_guard->size_changed = 0;
@@ -141,7 +142,7 @@ static ALWAYS_INLINE int dict_iter_next(
     return 0;
 }
 
-    #else /* < 3.14: keep version-tag based guard (uses private fields, but gated) */
+#else /* < 3.14: keep version-tag based guard (uses private fields, but gated) */
 
 typedef struct {
     PyObject* dict;
@@ -175,7 +176,7 @@ static ALWAYS_INLINE int dict_iter_next(
     }
     return 0;
 }
-    #endif
+#endif
 
 static int dict_iter_module_init(void) {
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX

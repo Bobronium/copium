@@ -133,7 +133,9 @@ static struct PyModuleDef about_module_def = {
  *
  * Returns 0 on success, -1 on error.
  */
-static int _build_about_module(PyObject* parent, int (*add_submodule)(PyObject*, const char*, PyObject*)) {
+static int _build_about_module(
+    PyObject* parent, int (*add_submodule)(PyObject*, const char*, PyObject*)
+) {
     PyObject* about_module = NULL;
     PyObject* collections = NULL;
     PyObject* namedtuple = NULL;
@@ -163,15 +165,7 @@ static int _build_about_module(PyObject* parent, int (*add_submodule)(PyObject*,
 
     /* VersionInfo class */
     version_info_cls = PyObject_CallFunction(
-        namedtuple,
-        "s[ssssss]",
-        "VersionInfo",
-        "major",
-        "minor",
-        "patch",
-        "pre",
-        "dev",
-        "local"
+        namedtuple, "s[ssssss]", "VersionInfo", "major", "minor", "patch", "pre", "dev", "local"
     );
     if (!version_info_cls)
         goto error;
@@ -223,8 +217,9 @@ static int _build_about_module(PyObject* parent, int (*add_submodule)(PyObject*,
     }
 
     /* Author instance */
-    author_instance =
-        PyObject_CallFunction(author_cls, "ss", "Arseny Boykov (Bobronium)", "hi@bobronium.me");
+    author_instance = PyObject_CallFunction(
+        author_cls, "ss", "Arseny Boykov (Bobronium)", "hi@bobronium.me"
+    );
     Py_CLEAR(author_cls);
     if (!author_instance)
         goto error;

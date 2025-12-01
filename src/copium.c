@@ -114,8 +114,9 @@ PyObject* py_copy(PyObject* self, PyObject* obj) {
     }
 
     PyObject *constructor = NULL, *args = NULL, *state = NULL, *listiter = NULL, *dictiter = NULL;
-    int unpack_result =
-        validate_reduce_tuple(reduce_result, &constructor, &args, &state, &listiter, &dictiter);
+    int unpack_result = validate_reduce_tuple(
+        reduce_result, &constructor, &args, &state, &listiter, &dictiter
+    );
     if (unpack_result == REDUCE_ERROR) {
         Py_DECREF(reduce_result);
         return NULL;
@@ -181,8 +182,8 @@ PyObject* py_deepcopy(PyObject* self, PyObject* const* args, Py_ssize_t nargs, P
     const Py_ssize_t kwcount = PyTuple_GET_SIZE(kwnames);
     if (kwcount == 1) {
         PyObject* kw0 = PyTuple_GET_ITEM(kwnames, 0);
-        const int is_memo =
-            PyUnicode_Check(kw0) && PyUnicode_CompareWithASCIIString(kw0, "memo") == 0;
+        const int is_memo = PyUnicode_Check(kw0) &&
+            PyUnicode_CompareWithASCIIString(kw0, "memo") == 0;
 
         if (is_memo) {
             if (UNLIKELY(nargs < 1)) {
