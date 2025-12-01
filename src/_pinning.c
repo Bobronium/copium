@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "_memo.c"
+#include "_abc_registration.c"
 
 
 /* ------------------------------ Pin type ---------------------------------- */
@@ -608,21 +609,6 @@ PinObject* _duper_lookup_pin_for_object(PyObject* obj) {
     return pin_table_lookup(global_pin_table, (void*)obj);
 }
 
-
-/* ------------------ Registration with collections.abc ----------------------
- */
-
-static int register_type_with_abc(PyObject* abc_type, PyObject* concrete_type) {
-    PyObject* register_method = PyObject_GetAttrString(abc_type, "register");
-    if (!register_method)
-        return -1;
-    PyObject* res = PyObject_CallOneArg(register_method, concrete_type);
-    Py_DECREF(register_method);
-    if (!res)
-        return -1;
-    Py_DECREF(res);
-    return 0;
-}
 
 /* -------------- Public function: add types to module on init ---------------
  */

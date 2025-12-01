@@ -8,7 +8,9 @@ import gc
 import sys
 import time
 import weakref
+from collections.abc import Callable
 from collections.abc import Generator
+from collections.abc import MutableMapping
 from contextlib import contextmanager
 from types import MappingProxyType
 from typing import Any
@@ -23,77 +25,21 @@ from tests.conftest import CASE_PARAMS
 from tests.conftest import EVIL_CASE_PARAMS
 from tests.conftest import CopyModule
 
-
-def test_deepcopy_keepalive_internal(copy) -> None:
-    """
-    Note: this test is not part of Lib/test/test_copy.py.
-    """
-    x = []
-
-    class A:
-        def __deepcopy__(self, memo):
-            assert memo[id(memo)][0] is x
-            return self
-
-    copied = copy.deepcopy([x, a := A()])
-
-    assert copied == [x, a]
+ValidMemoOptions = Literal["absent", "dict", "None", "mutable_mapping"]
+AllMemoOption = Literal["absent", "dict", "None", "mutable_mapping", "mappingproxy", "invalid"]
+AbsentMemoOption = Literal["absent", "None"]
 
 
-def test_deepcopy_keepalive_internal_add(copy) -> None:
-    """
-    Note: this test is not part of Lib/test/test_copy.py.
-    """
-    x = []
-
-    class A:
-        ref: weakref.ref = None
-
-        def __deepcopy__(self, memo):
-            if A.ref is None:
-                A.ref = weakref.ref(ref := A())
-                memo.setdefault(id(memo), []).append(ref)
-            else:
-                assert A.ref(), "expected keepalive to keep track of A.ref"
-            return self
-
-    copied = copy.deepcopy([x, a := A(), b := A()])
-
-    assert copied == [x, a, b]
+def memo_params_from(literal: Any) -> Any:
+    return [pytest.param(option, id=f"memo_{option}") for option in literal.__args__]
 
 
-def test_deepcopy_memo_dict_keepalive_internal(copy) -> None:
-    """
-    Note: this test is not part of Lib/test/test_copy.py.
-    """
-    x = []
-
-    class A:
-        def __deepcopy__(self, memo):
-            assert memo[id(memo)][0] is x
-            return self
-
-    copied = copy.deepcopy([x, a := A()], {})
-
-    assert copied == [x, a]
+ALL_MEMO_PARAMS = memo_params_from(AllMemoOption)
+VALID_MEMO_PARAMS = memo_params_from(ValidMemoOptions)
+ABSENT_MEMO_PARAMS = memo_params_from(AbsentMemoOption)
 
 
-def test_mutable_keys(copy):
-    from datamodelzoo.constructed import MutableKey
-
-    original_key = MutableKey()
-    original = {MutableKey("copied"): 420, original_key: 42}
-    copied = copy.deepcopy(original)
-
-    assert copied[MutableKey("copied")] == 42, "deepcopy computed wrong hash for copied key"
-    assert original_key not in copied
-
-
-MemoOption = Literal["absent", "dict", "None", "mutable_mapping", "mappingproxy", "invalid"]
-MEMO_PARAMS = [pytest.param(option, id=f"memo_{option}") for option in MemoOption.__args__]
-
-
-def memo_kwargs(memo: MemoOption) -> dict[str, Any]:
+def memo_kwargs(memo: AllMemoOption) -> dict[str, Any]:
     if memo == "dict":
         kwargs = {"memo": {}}
     elif memo == "None":
@@ -107,6 +53,16 @@ def memo_kwargs(memo: MemoOption) -> dict[str, Any]:
     else:
         kwargs = {}
     return kwargs
+
+
+class ContainerThatUsesDifferentCopy:
+    def __init__(self, data, copier):
+        self.data = data
+        self.copier = copier
+
+    def __deepcopy__(self, memo: MutableMapping):
+        data = self.copier(self.data, memo)
+        return ContainerThatUsesDifferentCopy(data, self.copier)
 
 
 EXPECTED_ERROR_DIVERGENCES = {
@@ -128,15 +84,154 @@ EXPECTED_ERROR_DIVERGENCES = {
 }
 
 
-@pytest.mark.parametrize("memo", MEMO_PARAMS)
-@pytest.mark.parametrize("case", CASE_PARAMS + EVIL_CASE_PARAMS)
-def test_duper_deepcopy_parity(case: Case, copy: CopyModule, memo: MemoOption) -> None:
-    candidate_name = f"{copy.deepcopy.__module__}.{copy.deepcopy.__name__}"
+@pytest.mark.parametrize("memo_option", VALID_MEMO_PARAMS)
+def test_deepcopy_memo_implementation_details(copy, memo_option) -> None:
+    """
+    This test is here mostly to document current behavior, not necessarily to enforce it.
+
+    Python docs explicitly say to treat memo as an opaque object:
+    https://docs.python.org/3.14/library/copy.html#object.__deepcopy__
+    """
+
+    class A:
+        def __deepcopy__(self, memo: MutableMapping):
+            self.memo = memo
+            return self
+
+    container = [x := [], a := A()]
+    copied = copy.deepcopy(container, **memo_kwargs(memo_option))
+
+    assert copied == [x, a]
+    assert copied[1] is a
+
+    memo: MutableMapping = a.memo
+
+    assert memo[id(x)] is copied[0]
+    assert memo[id(container)] is copied
+
+    assert id(a) not in memo
+
+    assert len(memo) == 3
+
+    # keepalive is an implementation detail
+    # and I haven't found any direct usage of it outside of Lib/copy.py.
+    # Still, copium strives to be interchangeable, so it's good to document the behavior.
+    keepalive = memo[id(memo)]
     try:
-        baseline_value = stdlib_copy.deepcopy(case.obj, **memo_kwargs(memo))
+        # stdlib saves objects to keepalive only after they are deep copied
+        assert keepalive[0] is x
+    except AssertionError:
+        # copium saves objects to keepalive as soon as they memoized
+        assert keepalive[0] is container
+        assert keepalive[1] is x
+    else:
+        assert keepalive[1] is container
+
+    assert len(keepalive) == 2
+
+    assert id(memo) in memo
+    assert id(memo) in memo
+    assert keepalive in memo.values()
+
+    if memo_option in {"absent", "None"} and copy is copium:
+        assert repr(memo) == f"memo({dict(memo)})"
+
+
+@pytest.mark.parametrize("memo_option", VALID_MEMO_PARAMS)
+def test_deepcopy_keepalive_internal_add(copy, memo_option) -> None:
+    """
+    Note: this test is not part of Lib/test/test_copy.py.
+    """
+    class Referenced:
+        ...
+
+    class A:
+        weak_ref: weakref.ref = None
+
+        def __deepcopy__(self, memo):
+            """
+            This will be called two times:
+            1. create new object and store weakref to it on class body
+            2. check that weak_ref is still pointing to the object
+            """
+            if A.weak_ref is None:
+                A.weak_ref = weakref.ref(strong_ref := Referenced())
+                memo.setdefault(id(memo), []).append(strong_ref)
+            else:
+                assert A.weak_ref(), "expected keepalive to keep track of A.ref"
+            return self
+
+
+    copied = copy.deepcopy([x := [], a := A(), b := A()], **memo_kwargs(memo_option))
+
+    assert copied == [x, a, b]
+
+
+def test_mutable_keys(copy):
+    from datamodelzoo.constructed import MutableKey
+
+    original_key = MutableKey()
+    original = {MutableKey("copied"): 420, original_key: 42}
+    copied = copy.deepcopy(original)
+
+    assert copied[MutableKey("copied")] == 42, "deepcopy computed wrong hash for copied key"
+    assert original_key not in copied
+
+
+@pytest.mark.parametrize("memo", ALL_MEMO_PARAMS)
+@pytest.mark.parametrize("case", CASE_PARAMS + EVIL_CASE_PARAMS)
+def test_copium_deepcopy_parity_with_stdlib(case: Case, memo: AllMemoOption) -> None:
+    """
+    Make sure that copium produces the same behavior as stdlib.
+    """
+    assert_parity_with_stdlib(
+        case,
+        copium,
+        memo,
+        lambda: case.obj,
+    )
+
+
+@pytest.mark.parametrize("memo", ABSENT_MEMO_PARAMS)
+@pytest.mark.parametrize("case", CASE_PARAMS + EVIL_CASE_PARAMS)
+@pytest.mark.parametrize(
+    "copy,nested_copy",
+    [
+        pytest.param(copium, stdlib_copy, id="copium-stdlib-nested"),
+        pytest.param(copium, copium, id="copium-copium-nested"),
+        pytest.param(stdlib_copy, copium, id="stdlib-copium-nested"),
+    ],
+)
+def test_copium_deepcopy_compatibility_with_stdlib(
+    case: Case,
+    memo: AllMemoOption,
+    copy: CopyModule,
+    nested_copy,
+) -> None:
+    """
+    Make sure that copium can be used interchangeably with deepcopy when using copium.memo.
+    """
+    assert_parity_with_stdlib(
+        case,
+        copy,
+        memo,
+        lambda: ContainerThatUsesDifferentCopy(case.obj, nested_copy.deepcopy),
+    )
+
+
+def assert_parity_with_stdlib(
+    case: Case,
+    copy: CopyModule,
+    memo: Literal["absent", "dict", "None", "mutable_mapping", "mappingproxy", "invalid"],
+    get_obj: Callable[[], Any],
+):
+    candidate_name = f"{copy.deepcopy.__module__}.{copy.deepcopy.__name__}"
+
+    try:
+        baseline_value = stdlib_copy.deepcopy(get_obj(), **memo_kwargs(memo))
     except Exception as baseline_error:
         try:
-            candidate_value = copy.deepcopy(case.obj, **memo_kwargs(memo))
+            candidate_value = copy.deepcopy(get_obj(), **memo_kwargs(memo))
         except Exception as candidate_error:
             if "evil" in case.name:
                 # relax 1:1 error requirement for cases that intentionally break protocol
@@ -155,14 +250,14 @@ def test_duper_deepcopy_parity(case: Case, copy: CopyModule, memo: MemoOption) -
             ) from baseline_error
     else:
         try:
-            candidate_value = copy.deepcopy(case.obj, **memo_kwargs(memo))
+            candidate_value = copy.deepcopy(get_obj(), **memo_kwargs(memo))
         except Exception as unexpected_candidate_error:
             raise AssertionError(
                 f"{candidate_name} failed unexpectedly when copy.deepcopy didn't"
             ) from unexpected_candidate_error
 
         assert_equivalent_transformations(
-            case.obj,
+            get_obj(),
             baseline_value,
             candidate_value,
         )

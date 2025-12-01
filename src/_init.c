@@ -15,6 +15,10 @@
 #define _COPIUM_INIT_C
 
 #include "_common.h"
+#include "_state.c"
+#include "_dict_iter.c"
+#include "_memo.c"
+#include "_pinning.c"
 
 /* Tracks initialization state for proper cleanup in reverse order */
 static struct {
@@ -291,6 +295,10 @@ int _copium_init(PyObject* module) {
     if (memo_ready_types() < 0)
         goto error;
     _init_state.memo_types_ready = 1;
+
+    /* Register Memo with collections.abc.MutableMapping */
+    if (memo_register_abcs() < 0)
+        goto error;
 
     if (_init_pinning(module) < 0)
         goto error;

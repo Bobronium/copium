@@ -18,22 +18,22 @@
     #include "pycore_setobject.h"
 #endif
 
-static MAYBE_INLINE PyObject* deepcopy_list(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
-static MAYBE_INLINE PyObject* deepcopy_tuple(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
-static MAYBE_INLINE PyObject* deepcopy_dict(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
-static MAYBE_INLINE PyObject* deepcopy_set(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_list(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_tuple(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_dict(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_set(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
 static MAYBE_INLINE PyObject* deepcopy_frozenset(
-    PyObject* obj, MemoObject* memo, Py_ssize_t id_hash
+    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
 );
 static MAYBE_INLINE PyObject* deepcopy_bytearray(
-    PyObject* obj, MemoObject* memo, Py_ssize_t id_hash
+    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
 );
-static MAYBE_INLINE PyObject* deepcopy_method(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash);
+static MAYBE_INLINE PyObject* deepcopy_method(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
 static PyObject* deepcopy_object(
-    PyObject* obj, PyTypeObject* tp, MemoObject* memo, Py_ssize_t id_hash
+    PyObject* obj, PyTypeObject* tp, PyMemoObject* memo, Py_ssize_t id_hash
 );
 
-static ALWAYS_INLINE PyObject* deepcopy(PyObject* obj, MemoObject* memo) {
+static ALWAYS_INLINE PyObject* deepcopy(PyObject* obj, PyMemoObject* memo) {
     assert(memo != NULL && "deepcopy_c: memo must not be NULL");
 
     PyTypeObject* tp = Py_TYPE(obj);
@@ -88,11 +88,7 @@ static ALWAYS_INLINE PyObject* deepcopy(PyObject* obj, MemoObject* memo) {
             if (!res)
                 return NULL;
             if (res != obj) {
-                if (memo_table_insert_h(&memo->table, (void*)obj, res, h) < 0) {
-                    Py_DECREF(res);
-                    return NULL;
-                }
-                if (keepalive_append(&memo->keepalive, obj) < 0) {
+                if (memoize(memo, obj, res, h) < 0) {
                     Py_DECREF(res);
                     return NULL;
                 }
@@ -105,7 +101,7 @@ static ALWAYS_INLINE PyObject* deepcopy(PyObject* obj, MemoObject* memo) {
     return res;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_list(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_list(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
     // Owned refs that need cleanup on error
     PyObject* copy = NULL;
     PyObject* copied_item = NULL;
@@ -118,7 +114,7 @@ static MAYBE_INLINE PyObject* deepcopy_list(PyObject* obj, MemoObject* memo, Py_
     for (Py_ssize_t i = 0; i < sz; ++i) {
         PyList_SET_ITEM(copy, i, Py_NewRef(Py_None));
     }
-    if (memo_table_insert_h(&memo->table, (void*)obj, copy, id_hash) < 0)
+    if (memoize(memo, obj, copy, id_hash) < 0)
         goto error;
 
     for (Py_ssize_t i = 0; i < sz; ++i) {
@@ -144,10 +140,6 @@ static MAYBE_INLINE PyObject* deepcopy_list(PyObject* obj, MemoObject* memo, Py_
         copied_item = NULL;
         i2++;
     }
-    if (keepalive_append(&memo->keepalive, obj) < 0) {
-        Py_DECREF(copy);
-        return NULL;
-    }
     return copy;
 
 error:
@@ -156,7 +148,7 @@ error:
     return NULL;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_tuple(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_tuple(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
     // Owned refs that need cleanup on error
     PyObject* copy = NULL;
     PyObject* copied = NULL;
@@ -190,12 +182,8 @@ static MAYBE_INLINE PyObject* deepcopy_tuple(PyObject* obj, MemoObject* memo, Py
         return Py_NewRef(existing);
     }
 
-    if (memo_table_insert_h(&memo->table, (void*)obj, copy, id_hash) < 0)
+    if (memoize(memo, obj, copy, id_hash) < 0)
         goto error;
-    if (keepalive_append(&memo->keepalive, obj) < 0) {
-        Py_DECREF(copy);
-        return NULL;
-    }
     return copy;
 
 error:
@@ -204,7 +192,7 @@ error:
     return NULL;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_dict(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_dict(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
     // Owned refs that need cleanup on error
     PyObject* copy = NULL;
     PyObject* ckey = NULL;
@@ -214,7 +202,7 @@ static MAYBE_INLINE PyObject* deepcopy_dict(PyObject* obj, MemoObject* memo, Py_
     copy = _PyDict_NewPresized(sz);
     if (!copy)
         goto error_no_cleanup;
-    if (memo_table_insert_h(&memo->table, (void*)obj, copy, id_hash) < 0)
+    if (memoize(memo, obj, copy, id_hash) < 0)
         goto error_no_cleanup;
 
     // NOTE: iter_guard is declared here, after early returns.
@@ -242,10 +230,6 @@ static MAYBE_INLINE PyObject* deepcopy_dict(PyObject* obj, MemoObject* memo, Py_
     if (ret < 0)
         goto error_no_cleanup;  // dict_iter_next already cleaned up on -1
 
-    if (keepalive_append(&memo->keepalive, obj) < 0) {
-        Py_DECREF(copy);
-        return NULL;
-    }
     return copy;
 
 error:
@@ -259,7 +243,7 @@ error_no_cleanup:
     return NULL;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_set(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_set(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
     // Owned refs that need cleanup on error
     PyObject* copy = NULL;
     PyObject* snap = NULL;
@@ -268,7 +252,7 @@ static MAYBE_INLINE PyObject* deepcopy_set(PyObject* obj, MemoObject* memo, Py_s
     copy = PySet_New(NULL);
     if (!copy)
         goto error;
-    if (memo_table_insert_h(&memo->table, (void*)obj, copy, id_hash) < 0)
+    if (memoize(memo, obj, copy, id_hash) < 0)
         goto error;
 
     /* Snapshot into a pre-sized tuple without invoking user code. */
@@ -307,10 +291,6 @@ static MAYBE_INLINE PyObject* deepcopy_set(PyObject* obj, MemoObject* memo, Py_s
     }
     Py_DECREF(snap);
 
-    if (keepalive_append(&memo->keepalive, obj) < 0) {
-        Py_DECREF(copy);
-        return NULL;
-    }
     return copy;
 
 error:
@@ -321,7 +301,7 @@ error:
 }
 
 static MAYBE_INLINE PyObject* deepcopy_frozenset(
-    PyObject* obj, MemoObject* memo, Py_ssize_t id_hash
+    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
 ) {
     // Owned refs that need cleanup on error
     PyObject* temp = NULL;
@@ -356,12 +336,8 @@ static MAYBE_INLINE PyObject* deepcopy_frozenset(
     temp = NULL;
     if (!copy)
         goto error;
-    if (memo_table_insert_h(&memo->table, (void*)obj, copy, id_hash) < 0)
+    if (memoize(memo, obj, copy, id_hash) < 0)
         goto error;
-    if (keepalive_append(&memo->keepalive, obj) < 0) {
-        Py_DECREF(copy);
-        return NULL;
-    }
     return copy;
 
 error:
@@ -372,7 +348,7 @@ error:
 }
 
 static MAYBE_INLINE PyObject* deepcopy_bytearray(
-    PyObject* obj, MemoObject* memo, Py_ssize_t id_hash
+    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
 ) {
     PyObject* copy = NULL;
 
@@ -382,12 +358,8 @@ static MAYBE_INLINE PyObject* deepcopy_bytearray(
         goto error;
     if (sz)
         memcpy(PyByteArray_AS_STRING(copy), PyByteArray_AS_STRING(obj), (size_t)sz);
-    if (memo_table_insert_h(&memo->table, (void*)obj, copy, id_hash) < 0)
+    if (memoize(memo, obj, copy, id_hash) < 0)
         goto error;
-    if (keepalive_append(&memo->keepalive, obj) < 0) {
-        Py_DECREF(copy);
-        return NULL;
-    }
     return copy;
 
 error:
@@ -395,7 +367,7 @@ error:
     return NULL;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_method(PyObject* obj, MemoObject* memo, Py_ssize_t id_hash) {
+static MAYBE_INLINE PyObject* deepcopy_method(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
     // Owned refs that need cleanup on error
     PyObject* func = NULL;
     PyObject* self = NULL;
@@ -423,12 +395,8 @@ static MAYBE_INLINE PyObject* deepcopy_method(PyObject* obj, MemoObject* memo, P
     if (!copy)
         goto error;
 
-    if (memo_table_insert_h(&memo->table, (void*)obj, copy, id_hash) < 0)
+    if (memoize(memo, obj, copy, id_hash) < 0)
         goto error;
-    if (keepalive_append(&memo->keepalive, obj) < 0) {
-        Py_DECREF(copy);
-        return NULL;
-    }
     return copy;
 
 error:
@@ -442,7 +410,7 @@ error:
 // Reduce protocol implementation for C-memo path.
 // This is the cold fallback path - not marked ALWAYS_INLINE to avoid code bloat.
 static PyObject* deepcopy_object(
-    PyObject* obj, PyTypeObject* tp, MemoObject* memo, Py_ssize_t id_hash
+    PyObject* obj, PyTypeObject* tp, PyMemoObject* memo, Py_ssize_t id_hash
 ) {
     // All owned refs declared at top for cleanup
     PyObject* reduce_result = NULL;
@@ -603,7 +571,7 @@ static PyObject* deepcopy_object(
     }
 
     // Memoize early to handle self-referential structures
-    if (memo_table_insert_h(&memo->table, (void*)obj, inst, id_hash) < 0)
+    if (memoize(memo, obj, inst, id_hash) < 0)
         goto error;
 
     // Handle state (BUILD semantics)
@@ -815,12 +783,6 @@ static PyObject* deepcopy_object(
 
         Py_DECREF(it);
         it = NULL;
-    }
-
-    // Keep alive original object if reconstruction returned different object
-    if (inst != obj) {
-        if (keepalive_append(&memo->keepalive, obj) < 0)
-            goto error;
     }
 
     Py_DECREF(reduce_result);
