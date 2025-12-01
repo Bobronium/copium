@@ -17,7 +17,6 @@
 #include "_state.c"
 #include "_abc_registration.c"
 
-
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -543,17 +542,15 @@ static PySequenceMethods KeepaliveList_as_sequence = {
     0                                    /* sq_inplace_repeat */
 };
 
-static PyObject *
-KeepaliveList_repr(KeepaliveListObject *self)
-{
-    PyObject *list;
-    PyObject *inner_repr;
-    PyObject *wrapped;
+static PyObject* KeepaliveList_repr(KeepaliveListObject* self) {
+    PyObject* list;
+    PyObject* inner_repr;
+    PyObject* wrapped;
 
     /* Equivalent to: list(self) */
-    list = PySequence_List((PyObject *)self);
+    list = PySequence_List((PyObject*)self);
     if (list == NULL) {
-        return NULL;  /* Propagate any error (e.g. no owner, etc.) */
+        return NULL; /* Propagate any error (e.g. no owner, etc.) */
     }
 
     /* Equivalent to: repr(list(self)) */
@@ -631,17 +628,15 @@ typedef enum {
 } MemoIterKind;
 
 typedef struct {
-    PyObject_HEAD
-    PyMemoObject* owner;  /* strong ref */
+    PyObject_HEAD PyMemoObject* owner; /* strong ref */
 } MemoView;
 
 typedef struct {
-    PyObject_HEAD
-    PyMemoObject* owner;      /* strong ref */
+    PyObject_HEAD PyMemoObject* owner; /* strong ref */
     MemoIterKind kind;
     Py_ssize_t index;
-    MemoTable* seen_table;    /* for mutation detection */
-    int keepalive_done;       /* 1 if keepalive was already yielded */
+    MemoTable* seen_table; /* for mutation detection */
+    int keepalive_done;    /* 1 if keepalive was already yielded */
 } MemoViewIter;
 
 static void MemoView_dealloc(MemoView* self) {
@@ -697,8 +692,7 @@ static PySequenceMethods MemoView_as_sequence = {
 };
 
 static PyTypeObject MemoKeysView_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "dict_keys",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "dict_keys",
     .tp_basicsize = sizeof(MemoView),
     .tp_dealloc = (destructor)MemoView_dealloc,
     .tp_repr = (reprfunc)MemoKeysView_repr,
@@ -709,8 +703,7 @@ static PyTypeObject MemoKeysView_Type = {
 };
 
 static PyTypeObject MemoValuesView_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "dict_values",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "dict_values",
     .tp_basicsize = sizeof(MemoView),
     .tp_dealloc = (destructor)MemoView_dealloc,
     .tp_repr = (reprfunc)MemoValuesView_repr,
@@ -721,8 +714,7 @@ static PyTypeObject MemoValuesView_Type = {
 };
 
 static PyTypeObject MemoItemsView_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "dict_items",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "dict_items",
     .tp_basicsize = sizeof(MemoView),
     .tp_dealloc = (destructor)MemoView_dealloc,
     .tp_repr = (reprfunc)MemoItemsView_repr,
@@ -746,9 +738,9 @@ static int MemoViewIter_traverse(MemoViewIter* self, visitproc visit, void* arg)
 static PyObject* MemoViewIter_iternext(MemoViewIter* self) {
     if (!self->owner)
         return NULL;
-    
+
     MemoTable* table = self->owner->table;
-    
+
     /* Iterate over table entries if table exists */
     if (table) {
         /* Check for mutation */
@@ -756,14 +748,14 @@ static PyObject* MemoViewIter_iternext(MemoViewIter* self) {
             PyErr_SetString(PyExc_RuntimeError, "memo changed size during iteration");
             return NULL;
         }
-        
+
         while (self->index < table->size) {
             Py_ssize_t idx = self->index++;
             void* slot_key = table->slots[idx].key;
-            
+
             if (!slot_key || slot_key == MEMO_TOMBSTONE)
                 continue;
-            
+
             if (self->kind == MEMO_IT_KEYS) {
                 return PyLong_FromVoidPtr(slot_key);
             } else if (self->kind == MEMO_IT_VALUES) {
@@ -786,12 +778,12 @@ static PyObject* MemoViewIter_iternext(MemoViewIter* self) {
             }
         }
     }
-    
+
     /* Yield keepalive at end if non-empty and not yet done */
     if (!self->keepalive_done && self->owner->keepalive.size > 0) {
         self->keepalive_done = 1;
         void* keep_key = (void*)self->owner;
-        
+
         if (self->kind == MEMO_IT_KEYS) {
             return PyLong_FromVoidPtr(keep_key);
         } else if (self->kind == MEMO_IT_VALUES) {
@@ -816,13 +808,12 @@ static PyObject* MemoViewIter_iternext(MemoViewIter* self) {
             return pair;
         }
     }
-    
+
     return NULL; /* StopIteration */
 }
 
 static PyTypeObject MemoViewIter_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "copium._memo_iterator",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium._memo_iterator",
     .tp_basicsize = sizeof(MemoViewIter),
     .tp_dealloc = (destructor)MemoViewIter_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
@@ -1085,7 +1076,7 @@ static PyObject* Memo_copy(PyMemoObject* self, PyObject* noargs) {
     PyMemoObject* new_memo = Memo_New();
     if (!new_memo)
         return NULL;
-    
+
     if (self->table) {
         for (Py_ssize_t i = 0; i < self->table->size; i++) {
             void* key = self->table->slots[i].key;
@@ -1098,7 +1089,7 @@ static PyObject* Memo_copy(PyMemoObject* self, PyObject* noargs) {
             }
         }
     }
-    
+
     /* Copy keepalive too */
     for (Py_ssize_t i = 0; i < self->keepalive.size; i++) {
         if (keepalive_append(&new_memo->keepalive, self->keepalive.items[i]) < 0) {
@@ -1106,7 +1097,7 @@ static PyObject* Memo_copy(PyMemoObject* self, PyObject* noargs) {
             return NULL;
         }
     }
-    
+
     PyObject_GC_Track(new_memo);
     return (PyObject*)new_memo;
 }
@@ -1125,16 +1116,16 @@ static PyObject* Memo_pop(PyMemoObject* self, PyObject* const* args, Py_ssize_t 
     void* key = PyLong_AsVoidPtr(pykey);
     if (key == NULL && PyErr_Occurred())
         return NULL;
-    
+
     PyObject* value = memo_table_pop(self->table, key);
     if (value) {
         return value; /* already owned */
     }
-    
+
     if (nargs == 2) {
         return Py_NewRef(args[1]);
     }
-    
+
     PyErr_SetObject(PyExc_KeyError, pykey);
     return NULL;
 }
@@ -1148,13 +1139,13 @@ static PyObject* Memo_popitem(PyMemoObject* self, PyObject* noargs) {
         PyErr_SetString(PyExc_KeyError, "popitem(): memo is empty");
         return NULL;
     }
-    
+
     PyObject* key_obj = PyLong_FromVoidPtr(key);
     if (!key_obj) {
         Py_DECREF(value);
         return NULL;
     }
-    
+
     PyObject* pair = PyTuple_New(2);
     if (!pair) {
         Py_DECREF(key_obj);
@@ -1167,24 +1158,26 @@ static PyObject* Memo_popitem(PyMemoObject* self, PyObject* noargs) {
 }
 
 /* update([other], **kwds) - for memo, we only support mapping or iterable of pairs */
-static PyObject* Memo_update(PyMemoObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
+static PyObject* Memo_update(
+    PyMemoObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames
+) {
     /* Memo keys are integers (pointers), so kwargs don't make sense */
     if (kwnames && PyTuple_GET_SIZE(kwnames) > 0) {
         PyErr_SetString(PyExc_TypeError, "memo.update() does not accept keyword arguments");
         return NULL;
     }
-    
+
     if (nargs > 1) {
         PyErr_SetString(PyExc_TypeError, "update expected at most 1 argument");
         return NULL;
     }
-    
+
     if (nargs == 0) {
         Py_RETURN_NONE;
     }
-    
+
     PyObject* other = args[0];
-    
+
     /* Check if it's a Memo */
     if (Py_TYPE(other) == &Memo_Type) {
         PyMemoObject* other_memo = (PyMemoObject*)other;
@@ -1200,21 +1193,21 @@ static PyObject* Memo_update(PyMemoObject* self, PyObject* const* args, Py_ssize
         }
         Py_RETURN_NONE;
     }
-    
+
     /* Check if it has keys() - treat as mapping */
     PyObject* keys_method = PyObject_GetAttrString(other, "keys");
     if (keys_method) {
         Py_DECREF(keys_method);
-        
+
         PyObject* keys = PyMapping_Keys(other);
         if (!keys)
             return NULL;
-        
+
         PyObject* iter = PyObject_GetIter(keys);
         Py_DECREF(keys);
         if (!iter)
             return NULL;
-        
+
         PyObject* key_obj;
         while ((key_obj = PyIter_Next(iter)) != NULL) {
             PyObject* value = PyObject_GetItem(other, key_obj);
@@ -1223,7 +1216,7 @@ static PyObject* Memo_update(PyMemoObject* self, PyObject* const* args, Py_ssize
                 Py_DECREF(iter);
                 return NULL;
             }
-            
+
             if (!PyLong_Check(key_obj)) {
                 PyErr_SetString(PyExc_TypeError, "memo keys must be integers");
                 Py_DECREF(value);
@@ -1231,7 +1224,7 @@ static PyObject* Memo_update(PyMemoObject* self, PyObject* const* args, Py_ssize
                 Py_DECREF(iter);
                 return NULL;
             }
-            
+
             void* key = PyLong_AsVoidPtr(key_obj);
             Py_DECREF(key_obj);
             if (key == NULL && PyErr_Occurred()) {
@@ -1239,7 +1232,7 @@ static PyObject* Memo_update(PyMemoObject* self, PyObject* const* args, Py_ssize
                 Py_DECREF(iter);
                 return NULL;
             }
-            
+
             int rc = memo_table_insert(&self->table, key, value);
             Py_DECREF(value);
             if (rc < 0) {
@@ -1250,16 +1243,16 @@ static PyObject* Memo_update(PyMemoObject* self, PyObject* const* args, Py_ssize
         Py_DECREF(iter);
         if (PyErr_Occurred())
             return NULL;
-        
+
         Py_RETURN_NONE;
     }
     PyErr_Clear();
-    
+
     /* Treat as iterable of (key, value) pairs */
     PyObject* iter = PyObject_GetIter(other);
     if (!iter)
         return NULL;
-    
+
     PyObject* item;
     while ((item = PyIter_Next(iter)) != NULL) {
         if (!PyTuple_Check(item) || PyTuple_GET_SIZE(item) != 2) {
@@ -1268,24 +1261,24 @@ static PyObject* Memo_update(PyMemoObject* self, PyObject* const* args, Py_ssize
             Py_DECREF(iter);
             return NULL;
         }
-        
+
         PyObject* key_obj = PyTuple_GET_ITEM(item, 0);
         PyObject* value = PyTuple_GET_ITEM(item, 1);
-        
+
         if (!PyLong_Check(key_obj)) {
             PyErr_SetString(PyExc_TypeError, "memo keys must be integers");
             Py_DECREF(item);
             Py_DECREF(iter);
             return NULL;
         }
-        
+
         void* key = PyLong_AsVoidPtr(key_obj);
         if (key == NULL && PyErr_Occurred()) {
             Py_DECREF(item);
             Py_DECREF(iter);
             return NULL;
         }
-        
+
         int rc = memo_table_insert(&self->table, key, value);
         Py_DECREF(item);
         if (rc < 0) {
@@ -1296,14 +1289,12 @@ static PyObject* Memo_update(PyMemoObject* self, PyObject* const* args, Py_ssize
     Py_DECREF(iter);
     if (PyErr_Occurred())
         return NULL;
-    
+
     Py_RETURN_NONE;
 }
 
 static PyMappingMethods Memo_as_mapping = {
-    (lenfunc)Memo_len,
-    (binaryfunc)Memo_subscript,
-    (objobjargproc)Memo_ass_subscript
+    (lenfunc)Memo_len, (binaryfunc)Memo_subscript, (objobjargproc)Memo_ass_subscript
 };
 
 static PySequenceMethods Memo_as_sequence = {
@@ -1324,12 +1315,12 @@ static PyObject* Memo_get(PyMemoObject* self, PyObject* const* args, Py_ssize_t 
     void* key = PyLong_AsVoidPtr(pykey);
     if (key == NULL && PyErr_Occurred())
         return NULL;
-    
+
     PyObject* value = memo_table_lookup(self->table, key);
     if (value) {
         return Py_NewRef(value);
     }
-    
+
     /* Return default or None */
     if (nargs == 2) {
         return Py_NewRef(args[1]);
@@ -1375,7 +1366,7 @@ static PyObject* Memo_richcompare(PyMemoObject* self, PyObject* other, int op) {
     if (op != Py_EQ && op != Py_NE) {
         Py_RETURN_NOTIMPLEMENTED;
     }
-    
+
     /* Only compare with other Memo objects for now */
     if (Py_TYPE(other) != &Memo_Type) {
         /* Could also compare with dicts, but let's keep it simple */
@@ -1384,19 +1375,19 @@ static PyObject* Memo_richcompare(PyMemoObject* self, PyObject* other, int op) {
         else
             Py_RETURN_TRUE;
     }
-    
+
     PyMemoObject* other_memo = (PyMemoObject*)other;
-    
+
     Py_ssize_t self_len = self->table ? self->table->used : 0;
     Py_ssize_t other_len = other_memo->table ? other_memo->table->used : 0;
-    
+
     if (self_len != other_len) {
         if (op == Py_EQ)
             Py_RETURN_FALSE;
         else
             Py_RETURN_TRUE;
     }
-    
+
     /* Check all keys and values match */
     if (self->table) {
         for (Py_ssize_t i = 0; i < self->table->size; i++) {
@@ -1422,14 +1413,14 @@ static PyObject* Memo_richcompare(PyMemoObject* self, PyObject* other, int op) {
             }
         }
     }
-    
+
     if (op == Py_EQ)
         Py_RETURN_TRUE;
     else
         Py_RETURN_FALSE;
 }
 
-static PyObject *Memo_as_dict(PyMemoObject *self) {
+static PyObject* Memo_as_dict(PyMemoObject* self) {
     /* self->table can be NULL for a freshly created memo that has
        not stored anything yet. In that case we just want an empty dict. */
     Py_ssize_t size = 0;
@@ -1441,7 +1432,7 @@ static PyObject *Memo_as_dict(PyMemoObject *self) {
         }
     }
 
-    PyObject *dict = _PyDict_NewPresized(size);
+    PyObject* dict = _PyDict_NewPresized(size);
     if (dict == NULL) {
         return NULL;
     }
@@ -1455,10 +1446,10 @@ static PyObject *Memo_as_dict(PyMemoObject *self) {
 }
 
 /* __repr__ */
-static PyObject *Memo_repr(PyMemoObject *self) {
-    PyObject *dict = Memo_as_dict(self);
-    PyObject *inner_repr;
-    PyObject *wrapped;
+static PyObject* Memo_repr(PyMemoObject* self) {
+    PyObject* dict = Memo_as_dict(self);
+    PyObject* inner_repr;
+    PyObject* wrapped;
 
     if (dict == NULL) {
         return NULL;
@@ -1478,21 +1469,32 @@ static PyObject *Memo_repr(PyMemoObject *self) {
 }
 
 static PyGetSetDef Memo_getset[] = {
-    {"data", (getter)Memo_as_dict, NULL,
-     "dict view of the memo contents", NULL},
+    {"data", (getter)Memo_as_dict, NULL, "dict view of the memo contents", NULL},
     {NULL, NULL, NULL, NULL, NULL}
 };
 
 static PyMethodDef Memo_methods[] = {
     {"clear", (PyCFunction)Memo_clear, METH_NOARGS, "Remove all items from the memo."},
     {"copy", (PyCFunction)Memo_copy, METH_NOARGS, "Return a shallow copy of the memo."},
-    {"get", (PyCFunction)Memo_get, METH_FASTCALL, "Return the value for key if key is in the memo, else default."},
+    {"get",
+     (PyCFunction)Memo_get,
+     METH_FASTCALL,
+     "Return the value for key if key is in the memo, else default."},
     {"items", (PyCFunction)Memo_items, METH_NOARGS, "Return a view of the memo's items."},
     {"keys", (PyCFunction)Memo_keys, METH_NOARGS, "Return a view of the memo's keys."},
-    {"pop", (PyCFunction)Memo_pop, METH_FASTCALL, "Remove specified key and return the corresponding value."},
+    {"pop",
+     (PyCFunction)Memo_pop,
+     METH_FASTCALL,
+     "Remove specified key and return the corresponding value."},
     {"popitem", (PyCFunction)Memo_popitem, METH_NOARGS, "Remove and return a (key, value) pair."},
-    {"setdefault", (PyCFunction)Memo_setdefault, METH_FASTCALL, "Insert key with a value of default if key is not in the memo."},
-    {"update", (PyCFunction)Memo_update, METH_FASTCALL | METH_KEYWORDS, "Update the memo from a mapping or iterable of pairs."},
+    {"setdefault",
+     (PyCFunction)Memo_setdefault,
+     METH_FASTCALL,
+     "Insert key with a value of default if key is not in the memo."},
+    {"update",
+     (PyCFunction)Memo_update,
+     METH_FASTCALL | METH_KEYWORDS,
+     "Update the memo from a mapping or iterable of pairs."},
     {"values", (PyCFunction)Memo_values, METH_NOARGS, "Return a view of the memo's values."},
     {"__contains__", (PyCFunction)Memo_contains_method, METH_O, "Return True if key is in memo."},
     {"keep", (PyCFunction)Memo_keep, METH_NOARGS, "Return the keepalive list proxy."},
@@ -1501,8 +1503,7 @@ static PyMethodDef Memo_methods[] = {
 };
 
 PyTypeObject Memo_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "copium.memo",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "copium.memo",
     .tp_basicsize = sizeof(PyMemoObject),
     .tp_dealloc = (destructor)Memo_dealloc,
     .tp_repr = (reprfunc)Memo_repr,
@@ -1599,7 +1600,9 @@ static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
 }
 
 /* Combined memo insert + keepalive. Returns 0 on success, -1 on error. */
-static ALWAYS_INLINE int memoize(PyMemoObject* memo, PyObject* original, PyObject* copy, Py_ssize_t hash) {
+static ALWAYS_INLINE int memoize(
+    PyMemoObject* memo, PyObject* original, PyObject* copy, Py_ssize_t hash
+) {
     if (memo_table_insert_h(&memo->table, (void*)original, copy, hash) < 0)
         return -1;
     if (keepalive_append(&memo->keepalive, original) < 0)
