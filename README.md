@@ -45,7 +45,7 @@ Fast drop-in replacement for `copy.deepcopy()`.
 - 🎯 behaves exactly the same as `copy.deepcopy()` for all [`datamodelzoo.CASES`](https://github.com/Bobronium/datamodelzoo/blob/00ec1632b4037670628c865a0db2c8bc259abb75/src/datamodelzoo/__init__.py#L18)
 - 🛡️ tested for refcount, recursion, threading and memo edge cases
 - 🐍 pre-built wheels for Python 3.10-3.14 on Linux/macOS/Windows (x64/ARM64)
-- 🔓 passes all tests on free-threaded Python builds
+- 🔓 passes all tesee-frts on threaded Pyth buildons
 
 ## Installation
 
