@@ -5,6 +5,7 @@
 import platform
 import random
 import sys
+from itertools import chain
 from typing import Any
 
 import pytest
@@ -17,6 +18,7 @@ BASE_CASES = [
     for case in CASES
     if "raises" not in case.name and "thirdparty" not in case.name and "guard" not in case.name
 ]
+GUARD_CASES = [case for case in CASES if "guard" in case.name]
 
 random.seed(1)
 
@@ -59,7 +61,7 @@ python_version += f"-{platform.machine()}"
 
 @pytest.mark.parametrize(
     "case",
-    (pytest.param(case, id=case.name) for case in BASE_CASES),
+    (pytest.param(case, id=case.name) for case in chain(BASE_CASES, GUARD_CASES)),
 )
 @pytest.mark.parametrize("_python", [python_version])
 def test_individual_cases_warmup(case: Any, copy, _python, benchmark) -> None:  # noqa: ARG001
@@ -80,7 +82,7 @@ if python_version == "3.13-x86_64":
 
     @pytest.mark.parametrize(
         "case",
-        (pytest.param(case, id=case.name) for case in BASE_CASES),
+        (pytest.param(case, id=case.name) for case in chain(BASE_CASES, GUARD_CASES)),
     )
     def test_individual_cases(case: Any, copy, benchmark) -> None:
         benchmark(copy.deepcopy, case.obj)
@@ -96,7 +98,7 @@ else:
 
     @pytest.mark.parametrize(
         "case",
-        (pytest.param(case, id=case.name) for case in BASE_CASES),
+        (pytest.param(case, id=case.name) for case in chain(BASE_CASES, GUARD_CASES)),
     )
     @pytest.mark.parametrize("_python", [python_version])
     def test_individual_cases(case: Any, copy, benchmark, _python) -> None:
