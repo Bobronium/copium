@@ -379,11 +379,11 @@ static ALWAYS_INLINE int memo_table_insert_h(
     }
 }
 
-int memo_table_remove(MemoTable* table, void* key) {
+static ALWAYS_INLINE int memo_table_remove_h(MemoTable* table, void* key, Py_ssize_t hash) {
     if (!table)
         return -1;
     Py_ssize_t mask = table->size - 1;
-    Py_ssize_t idx = hash_pointer(key) & mask;
+    Py_ssize_t idx = hash & mask;
     for (;;) {
         void* slot_key = table->slots[idx].key;
         if (!slot_key)
@@ -397,6 +397,10 @@ int memo_table_remove(MemoTable* table, void* key) {
         }
         idx = (idx + 1) & mask;
     }
+}
+
+int memo_table_remove(MemoTable* table, void* key) {
+    return memo_table_remove_h(table, key, hash_pointer(key));
 }
 
 /* Remove and return value (for pop). Returns borrowed ref to value before removal. */
@@ -1608,6 +1612,12 @@ static ALWAYS_INLINE int memoize(
     if (keepalive_append(&memo->keepalive, original) < 0)
         return -1;
     return 0;
+}
+
+/* Remove object from memo on error cleanup. Keepalive entry remains (harmless).
+   Returns 0 on success, -1 if not found. */
+static ALWAYS_INLINE int forget(PyMemoObject* memo, PyObject* original, Py_ssize_t hash) {
+    return memo_table_remove_h(memo->table, (void*)original, hash);
 }
 
 /* -------------------- Adaptive Fallback Helpers ---------------------------- */
