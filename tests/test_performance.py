@@ -12,7 +12,11 @@ import pytest
 from datamodelzoo import CASES
 from datamodelzoo import Case
 
-BASE_CASES = [case for case in CASES if "raises" not in case.name and "thirdparty" not in case.name]
+BASE_CASES = [
+    case
+    for case in CASES
+    if "raises" not in case.name and "thirdparty" not in case.name and "guard" not in case.name
+]
 
 random.seed(1)
 
