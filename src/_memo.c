@@ -1674,7 +1674,7 @@ static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
 static ALWAYS_INLINE int memoize(
     PyMemoObject* memo, PyObject* original, PyObject* copy, Py_ssize_t hash
 ) {
-    if (memo_insert_logged(memo, (void*)original, copy, hash) < 0)
+    if (memo_table_insert_h(&memo->table, (void*)original, copy, hash) < 0)
         return -1;
     if (keepalive_append(&memo->keepalive, original) < 0)
         return -1;
@@ -1696,7 +1696,8 @@ static ALWAYS_INLINE MemoCheckpoint memo_checkpoint(PyMemoObject* memo) {
 }
 
 static void memo_rollback(PyMemoObject* memo, MemoCheckpoint checkpoint) {
-    for (Py_ssize_t i = checkpoint; i < memo->undo_log.size; i++) {
+    Py_ssize_t end = memo->undo_log.size;
+    for (Py_ssize_t i = checkpoint; i < end; i++) {
         void* key = memo->undo_log.keys[i];
         /* Remove from memo table. Ignore errors (entry might not exist
          * if it was already removed or if memoize partially failed). */
