@@ -41,10 +41,18 @@ typedef struct {
     Py_ssize_t capacity;
 } KeepaliveVector;
 
+/* Undo log for rollback support - tracks keys inserted since last checkpoint */
+typedef struct {
+    void** keys;
+    Py_ssize_t size;
+    Py_ssize_t capacity;
+} MemoUndoLog;
+
 /* Exact runtime layout of the memo object (must begin with PyObject_HEAD). */
 typedef struct _PyMemoObject {
     PyObject_HEAD MemoTable* table;
     KeepaliveVector keepalive;
+    MemoUndoLog undo_log;
 } PyMemoObject;
 
 /* Forward decl to refer to Memo_Type in helpers */
@@ -149,6 +157,56 @@ void keepalive_shrink_if_large(KeepaliveVector* kv) {
             kv->capacity = target;
         }
         /* If realloc fails, we keep the larger buffer; correctness preserved. */
+    }
+}
+
+/* ------------------------------ Undo log impl ------------------------------ */
+
+static void undo_log_init(MemoUndoLog* log) {
+    log->keys = NULL;
+    log->size = 0;
+    log->capacity = 0;
+}
+
+static int undo_log_append(MemoUndoLog* log, void* key) {
+    if (log->size >= log->capacity) {
+        Py_ssize_t new_cap = log->capacity > 0 ? log->capacity * 2 : 16;
+        void** new_keys = (void**)PyMem_Realloc(log->keys, (size_t)new_cap * sizeof(void*));
+        if (!new_keys)
+            return -1;
+        log->keys = new_keys;
+        log->capacity = new_cap;
+    }
+    log->keys[log->size++] = key;
+    return 0;
+}
+
+static void undo_log_clear(MemoUndoLog* log) {
+    log->size = 0;
+    /* Keep allocated buffer for reuse */
+}
+
+static void undo_log_free(MemoUndoLog* log) {
+    PyMem_Free(log->keys);
+    log->keys = NULL;
+    log->size = 0;
+    log->capacity = 0;
+}
+
+/* Shrink undo log capacity if it ballooned past a threshold */
+static void undo_log_shrink_if_large(MemoUndoLog* log) {
+    if (!log || !log->keys)
+        return;
+    /* Use same thresholds as keepalive */
+    if (log->capacity > COPIUM_KEEP_RETAIN_MAX) {
+        Py_ssize_t target = COPIUM_KEEP_RETAIN_TARGET;
+        if (target < log->size)
+            target = log->size ? log->size : 1;
+        void** ni = (void**)PyMem_Realloc(log->keys, (size_t)target * sizeof(void*));
+        if (ni) {
+            log->keys = ni;
+            log->capacity = target;
+        }
     }
 }
 
@@ -880,6 +938,7 @@ static void Memo_dealloc(PyMemoObject* self) {
     }
     memo_table_free(self->table);
     keepalive_free(&self->keepalive);
+    undo_log_free(&self->undo_log);
     PyObject_GC_Del(self);  // Use GC-aware free
 }
 
@@ -907,6 +966,10 @@ static int Memo_clear_gc(PyMemoObject* self) {
     return 0;
 }
 
+static ALWAYS_INLINE int memo_insert_logged(
+    PyMemoObject* memo, void* key, PyObject* value, Py_ssize_t hash
+);
+
 PyMemoObject* Memo_New(void) {
     PyMemoObject* self = PyObject_GC_New(PyMemoObject, &Memo_Type);
     if (!self)
@@ -915,6 +978,7 @@ PyMemoObject* Memo_New(void) {
     // Since memo is designed to be reused, unless stolen, don't call PyObject_GC_Track just yet.
     // Instead, call it once we know that somebody stole the ref.
     keepalive_init(&self->keepalive);
+    undo_log_init(&self->undo_log);
     return self;
 }
 
@@ -966,7 +1030,8 @@ static int Memo_ass_subscript(PyMemoObject* self, PyObject* pykey, PyObject* val
         }
         return res;
     } else {
-        return memo_table_insert(&(self->table), key, value);
+        /* Use logged insert to support rollback for __deepcopy__ fallback */
+        return memo_insert_logged(self, key, value, hash_pointer(key));
     }
 }
 
@@ -1590,6 +1655,8 @@ static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
     if (refcount == 1) {
         keepalive_clear(&memo->keepalive);
         keepalive_shrink_if_large(&memo->keepalive);
+        undo_log_clear(&memo->undo_log);
+        undo_log_shrink_if_large(&memo->undo_log);
         memo_table_reset(&memo->table);
         return 1;
     } else {
@@ -1607,7 +1674,7 @@ static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
 static ALWAYS_INLINE int memoize(
     PyMemoObject* memo, PyObject* original, PyObject* copy, Py_ssize_t hash
 ) {
-    if (memo_table_insert_h(&memo->table, (void*)original, copy, hash) < 0)
+    if (memo_insert_logged(memo, (void*)original, copy, hash) < 0)
         return -1;
     if (keepalive_append(&memo->keepalive, original) < 0)
         return -1;
@@ -1618,6 +1685,37 @@ static ALWAYS_INLINE int memoize(
    Returns 0 on success, -1 if not found. */
 static ALWAYS_INLINE int forget(PyMemoObject* memo, PyObject* original, Py_ssize_t hash) {
     return memo_table_remove_h(memo->table, (void*)original, hash);
+}
+
+/* --------------------- Checkpoint/Rollback Support ------------------------- */
+
+typedef Py_ssize_t MemoCheckpoint;
+
+static ALWAYS_INLINE MemoCheckpoint memo_checkpoint(PyMemoObject* memo) {
+    return memo->undo_log.size;
+}
+
+static void memo_rollback(PyMemoObject* memo, MemoCheckpoint checkpoint) {
+    for (Py_ssize_t i = checkpoint; i < memo->undo_log.size; i++) {
+        void* key = memo->undo_log.keys[i];
+        /* Remove from memo table. Ignore errors (entry might not exist
+         * if it was already removed or if memoize partially failed). */
+        memo_table_remove(memo->table, key);
+    }
+    memo->undo_log.size = checkpoint;
+}
+
+static ALWAYS_INLINE int memo_insert_logged(
+    PyMemoObject* memo, void* key, PyObject* value, Py_ssize_t hash
+) {
+    int result = memo_table_insert_h(&memo->table, key, value, hash);
+    if (result < 0)
+        return -1;
+    if (result == 0) {
+        if (undo_log_append(&memo->undo_log, key) < 0)
+            return -1;
+    }
+    return 0;
 }
 
 /* -------------------- Adaptive Fallback Helpers ---------------------------- */
@@ -1652,7 +1750,6 @@ static PyObject* memo_to_dict(PyMemoObject* memo) {
 
     return dict;
 }
-
 
 static int memo_sync_from_dict(PyMemoObject* memo, PyObject* dict, Py_ssize_t original_size) {
     Py_ssize_t current_size = PyDict_Size(dict);

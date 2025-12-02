@@ -420,6 +420,8 @@ error:
 static PyObject* deepcopy_custom(
     PyObject* obj,  PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t id_hash
 ) {
+    MemoCheckpoint checkpoint = memo_checkpoint(memo);
+
     PyObject* res = PyObject_CallOneArg(__deepcopy__, (PyObject*)memo);
 
     /* Adaptive fallback: if __deepcopy__ fails with TypeError or AssertionError,
@@ -427,6 +429,11 @@ static PyObject* deepcopy_custom(
     if (!res &&
         (PyErr_ExceptionMatches(PyExc_TypeError) || PyErr_ExceptionMatches(PyExc_AssertionError))) {
         PyErr_Clear();
+
+        /* Rollback memo to state before the failed attempt.
+         * This removes any partial/half-baked objects that were memoized during
+         * the failed __deepcopy__ call. */
+        memo_rollback(memo, checkpoint);
 
         PyObject* dict_memo = memo_to_dict(memo);
         if (!dict_memo) {
