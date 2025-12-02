@@ -8,6 +8,7 @@ import sys
 from typing import Any
 
 import pytest
+
 from datamodelzoo import CASES
 from datamodelzoo import Case
 
@@ -51,15 +52,27 @@ if not getattr(sys, "_is_gil_enabled", lambda: True)():
     python_version += "t"
 python_version += f"-{platform.machine()}"
 
+
+@pytest.mark.parametrize(
+    "case",
+    (pytest.param(case, id=case.name) for case in BASE_CASES),
+)
+@pytest.mark.parametrize("_python", [python_version])
+def test_individual_cases_warmup(case: Any, copy, _python, benchmark) -> None:  # noqa: ARG001
+    copy.deepcopy(case.obj)
+
+
+@pytest.mark.parametrize(
+    "case",
+    (pytest.param(case, id=case.name) for case in COMBINED_CASES),
+)
+@pytest.mark.parametrize("_python", [python_version])
+def test_combined_cases_warmup(case: Any, copy, _python, benchmark) -> None:  # noqa: ARG001
+    copy.deepcopy(case.obj)
+
+
 if python_version == "3.13-x86_64":
     # backwards compatibility with previous benchmarks runs
-
-    @pytest.mark.parametrize(
-        "case",
-        (pytest.param(case, id=case.name) for case in COMBINED_CASES),
-    )
-    def test_combined_cases(case: Any, copy, benchmark) -> None:
-        benchmark(copy.deepcopy, case.obj)
 
     @pytest.mark.parametrize(
         "case",
@@ -68,15 +81,14 @@ if python_version == "3.13-x86_64":
     def test_individual_cases(case: Any, copy, benchmark) -> None:
         benchmark(copy.deepcopy, case.obj)
 
-else:
-
     @pytest.mark.parametrize(
         "case",
         (pytest.param(case, id=case.name) for case in COMBINED_CASES),
     )
-    @pytest.mark.parametrize("_python", [python_version])
-    def test_combined_cases(case: Any, copy, benchmark, _python) -> None:
+    def test_combined_cases(case: Any, copy, benchmark) -> None:
         benchmark(copy.deepcopy, case.obj)
+
+else:
 
     @pytest.mark.parametrize(
         "case",
@@ -84,4 +96,12 @@ else:
     )
     @pytest.mark.parametrize("_python", [python_version])
     def test_individual_cases(case: Any, copy, benchmark, _python) -> None:
+        benchmark(copy.deepcopy, case.obj)
+
+    @pytest.mark.parametrize(
+        "case",
+        (pytest.param(case, id=case.name) for case in COMBINED_CASES),
+    )
+    @pytest.mark.parametrize("_python", [python_version])
+    def test_combined_cases(case: Any, copy, benchmark, _python) -> None:
         benchmark(copy.deepcopy, case.obj)

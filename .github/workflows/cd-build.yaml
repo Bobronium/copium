@@ -78,7 +78,7 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
-          run: uv run --with "${{ steps.bench_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance
+          run: uv run --with "${{ steps.bench_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
 
       - name: Find compatible wheel for shuffle tests
         if: ${{ matrix.build.os != 'windows-11-arm' }}
