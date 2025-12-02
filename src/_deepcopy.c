@@ -31,6 +31,9 @@ static MAYBE_INLINE PyObject* deepcopy_bytearray(
 static MAYBE_INLINE PyObject* deepcopy_method(
     PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
 );
+static MAYBE_INLINE PyObject* deepcopy_custom(
+      PyObject* obj,  PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t id_hash
+);
 static PyObject* deepcopy_object(
     PyObject* obj, PyTypeObject* tp, PyMemoObject* memo, Py_ssize_t id_hash
 );
@@ -78,24 +81,13 @@ static ALWAYS_INLINE PyObject* deepcopy(PyObject* obj, PyMemoObject* memo) {
     if (is_stdlib_immutable(tp))  // touch non-static types last
         return Py_NewRef(obj);
 
-    /* Robustly detect a user-defined __deepcopy__ via optional lookup (single step, non-raising on miss). */
     {
-        PyObject* deepcopy_meth = NULL;
-        int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
+        PyObject* __deepcopy__ = NULL;
+        int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &__deepcopy__);
         if (has_deepcopy < 0)
             return NULL;
         if (has_deepcopy) {
-            PyObject* res = PyObject_CallOneArg(deepcopy_meth, (PyObject*)memo);
-            Py_DECREF(deepcopy_meth);
-            if (!res)
-                return NULL;
-            if (res != obj) {
-                if (memoize(memo, obj, res, h) < 0) {
-                    Py_DECREF(res);
-                    return NULL;
-                }
-            }
-            return res;
+            return deepcopy_custom(obj, __deepcopy__, memo, h);
         }
     }
 
@@ -411,6 +403,54 @@ error:
     Py_XDECREF(cself);
     Py_XDECREF(copy);
     return NULL;
+}
+
+static PyObject* deepcopy_custom(
+    PyObject* obj,  PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t id_hash
+) {
+    PyObject* res = PyObject_CallOneArg(__deepcopy__, (PyObject*)memo);
+
+    /* Adaptive fallback: if __deepcopy__ fails with TypeError or AssertionError,
+     * retry with a dict memo. Some C extensions require dict-type memo. */
+    if (!res &&
+        (PyErr_ExceptionMatches(PyExc_TypeError) || PyErr_ExceptionMatches(PyExc_AssertionError))) {
+        PyErr_Clear();
+
+        PyObject* dict_memo = memo_to_dict(memo);
+        if (!dict_memo) {
+            Py_DECREF(__deepcopy__);
+            return NULL;
+        }
+
+        Py_ssize_t dict_size_before = PyDict_Size(dict_memo);
+
+        res = PyObject_CallOneArg(__deepcopy__, dict_memo);
+
+        if (res) {
+            /* Sync any new entries back to native memo */
+            if (memo_sync_from_dict(memo, dict_memo, dict_size_before) < 0) {
+                Py_DECREF(dict_memo);
+                Py_DECREF(__deepcopy__);
+                Py_DECREF(res);
+                return NULL;
+            }
+        }
+
+        Py_DECREF(dict_memo);
+    }
+
+    Py_DECREF(__deepcopy__);
+
+    if (!res)
+        return NULL;
+
+    if (res != obj) {
+        if (memoize(memo, obj, res, id_hash) < 0) {
+            Py_DECREF(res);
+            return NULL;
+        }
+    }
+    return res;
 }
 
 // Reduce protocol implementation for C-memo path.

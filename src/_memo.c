@@ -1609,4 +1609,70 @@ static ALWAYS_INLINE int memoize(
         return -1;
     return 0;
 }
+
+/* -------------------- Adaptive Fallback Helpers ---------------------------- */
+
+static PyObject* memo_to_dict(PyMemoObject* memo) {
+    Py_ssize_t size = memo->table ? memo->table->used : 0;
+    PyObject* dict = _PyDict_NewPresized(size);
+    if (!dict)
+        return NULL;
+
+    if (!memo->table)
+        return dict;
+
+    // Leave keepalive list out of it
+    for (Py_ssize_t i = 0; i < memo->table->size; i++) {
+        void* key = memo->table->slots[i].key;
+        if (key && key != MEMO_TOMBSTONE) {
+            PyObject* py_key = PyLong_FromVoidPtr(key);
+            if (!py_key) {
+                Py_DECREF(dict);
+                return NULL;
+            }
+            PyObject* value = memo->table->slots[i].value;
+            if (PyDict_SetItem(dict, py_key, value) < 0) {
+                Py_DECREF(py_key);
+                Py_DECREF(dict);
+                return NULL;
+            }
+            Py_DECREF(py_key);
+        }
+    }
+
+    return dict;
+}
+
+
+static int memo_sync_from_dict(PyMemoObject* memo, PyObject* dict, Py_ssize_t original_size) {
+    Py_ssize_t current_size = PyDict_Size(dict);
+    if (current_size < 0)
+        return -1;
+
+    if (current_size == original_size)
+        return 0;
+
+    PyObject *py_key, *value;
+    Py_ssize_t pos = 0;
+    Py_ssize_t idx = 0;
+
+    while (PyDict_Next(dict, &pos, &py_key, &value)) {
+        /* Skip first original_size entries—already in native memo */
+        if (idx++ < original_size)
+            continue;
+
+        if (!PyLong_CheckExact(py_key))
+            continue;
+
+        void* key = PyLong_AsVoidPtr(py_key);
+        if (key == NULL)
+            return -1;
+
+        /* Insert directly—no lookup needed, entry is new by construction */
+        if (memo_table_insert(&memo->table, key, value) < 0)
+            return -1;
+    }
+
+    return 0;
+}
 #endif  // _COPIUM_MEMO_C
