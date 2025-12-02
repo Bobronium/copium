@@ -58,7 +58,7 @@ python_version += f"-{platform.machine()}"
     (pytest.param(case, id=case.name) for case in BASE_CASES),
 )
 @pytest.mark.parametrize("_python", [python_version])
-def test_individual_cases_warmup(case: Any, copy, _python, benchmark) -> None:
+def test_individual_cases_warmup(case: Any, copy, _python, benchmark) -> None:  # noqa: ARG001
     copy.deepcopy(case.obj)
 
 
@@ -67,7 +67,7 @@ def test_individual_cases_warmup(case: Any, copy, _python, benchmark) -> None:
     (pytest.param(case, id=case.name) for case in COMBINED_CASES),
 )
 @pytest.mark.parametrize("_python", [python_version])
-def test_combined_cases_warmup(case: Any, copy, _python, benchmark) -> None:
+def test_combined_cases_warmup(case: Any, copy, _python, benchmark) -> None:  # noqa: ARG001
     copy.deepcopy(case.obj)
 
 
