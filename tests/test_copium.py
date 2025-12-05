@@ -142,8 +142,8 @@ def test_deepcopy_keepalive_internal_add(copy, memo_option) -> None:
     """
     Note: this test is not part of Lib/test/test_copy.py.
     """
-    class Referenced:
-        ...
+
+    class Referenced: ...
 
     class A:
         weak_ref: weakref.ref = None
@@ -161,7 +161,6 @@ def test_deepcopy_keepalive_internal_add(copy, memo_option) -> None:
                 assert A.weak_ref(), "expected keepalive to keep track of A.ref"
             return self
 
-
     copied = copy.deepcopy([x := [], a := A(), b := A()], **memo_kwargs(memo_option))
 
     assert copied == [x, a, b]
@@ -178,6 +177,8 @@ def test_mutable_keys(copy):
     assert original_key not in copied
 
 
+@pytest.mark.filterwarnings(r"ignore:\s+Seems like 'copium.memo' was rejected")
+@pytest.mark.filterwarnings("error")
 @pytest.mark.parametrize("memo", ALL_MEMO_PARAMS)
 @pytest.mark.parametrize("case", CASE_PARAMS + EVIL_CASE_PARAMS)
 def test_copium_deepcopy_parity_with_stdlib(case: Case, memo: AllMemoOption) -> None:
@@ -192,6 +193,8 @@ def test_copium_deepcopy_parity_with_stdlib(case: Case, memo: AllMemoOption) -> 
     )
 
 
+@pytest.mark.filterwarnings(r"ignore:\s+Seems like 'copium.memo' was rejected")
+@pytest.mark.filterwarnings("error")
 @pytest.mark.parametrize("memo", ABSENT_MEMO_PARAMS)
 @pytest.mark.parametrize("case", CASE_PARAMS + EVIL_CASE_PARAMS)
 @pytest.mark.parametrize(

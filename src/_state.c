@@ -46,6 +46,13 @@ typedef struct {
     // because deepcopy is synchronous and doesn't yield.
     Py_tss_t memo_tss;
 
+    // Fallback configuration (read from env vars at module init, immutable thereafter)
+    int no_memo_fallback;          // COPIUM_NO_MEMO_FALLBACK - disable fallback entirely
+    int use_dict_memo;             // COPIUM_USE_DICT_MEMO - use dict memo for full compatibility
+    PyObject* ignored_errors;  // Tuple of error suffixes to suppress warnings for
+    PyObject*
+        ignored_errors_joined;  // Pre-joined string for warning message (or NULL if empty)
+
 } ModuleState;
 
 static ModuleState module_state = {0};

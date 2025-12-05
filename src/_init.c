@@ -36,6 +36,12 @@ static struct {
 static void _copium_cleanup(void) {
     /* Clean up in reverse order of initialization */
 
+    /* Clean up fallback config (no flag needed, always safe to clear) */
+    Py_CLEAR(module_state.ignored_errors);
+    Py_CLEAR(module_state.ignored_errors_joined);
+    module_state.no_memo_fallback = 0;
+    module_state.use_dict_memo = 0;
+
     if (_init_state.dict_iter_ready) {
         dict_iter_module_cleanup();
         _init_state.dict_iter_ready = 0;
@@ -263,7 +269,83 @@ static int _init_pinning(PyObject* module) {
 
 /* -------------------------------------------------------------------------- */
 
+/* Parse COPIUM_NO_MEMO_FALLBACK_WARNING env var into a tuple of strings */
+static PyObject* _parse_ignored_errors(void) {
+    const char* env_val = getenv("COPIUM_NO_MEMO_FALLBACK_WARNING");
+    if (!env_val || !env_val[0]) {
+        return PyTuple_New(0);
+    }
+
+    /* Count separators to determine tuple size */
+    Py_ssize_t count = 1;
+    const char* p = env_val;
+    while ((p = strstr(p, "::")) != NULL) {
+        count++;
+        p += 2;
+    }
+
+    PyObject* result = PyTuple_New(count);
+    if (!result)
+        return NULL;
+
+    /* Split by "::" and populate tuple */
+    const char* start = env_val;
+    Py_ssize_t idx = 0;
+    while (1) {
+        const char* sep = strstr(start, "::");
+        Py_ssize_t len = sep ? (sep - start) : (Py_ssize_t)strlen(start);
+
+        if (len > 0) {
+            PyObject* s = PyUnicode_FromStringAndSize(start, len);
+            if (!s) {
+                Py_DECREF(result);
+                return NULL;
+            }
+            PyTuple_SET_ITEM(result, idx++, s);
+        }
+
+        if (!sep)
+            break;
+        start = sep + 2;
+    }
+
+    /* Shrink tuple if we skipped empty segments */
+    if (idx < count) {
+        if (_PyTuple_Resize(&result, idx) < 0) {
+            return NULL;
+        }
+    }
+
+    return result;
+}
+
 int _copium_init(PyObject* module) {
+    /* Initialize fallback configuration from environment (before anything else) */
+    const char* no_fallback_env = getenv("COPIUM_NO_MEMO_FALLBACK");
+    module_state.no_memo_fallback = (no_fallback_env != NULL && no_fallback_env[0] != '\0');
+
+    const char* use_dict_memo_env = getenv("COPIUM_USE_DICT_MEMO");
+    module_state.use_dict_memo = (use_dict_memo_env != NULL && use_dict_memo_env[0] != '\0');
+
+    module_state.ignored_errors = _parse_ignored_errors();
+    if (!module_state.ignored_errors)
+        goto error;
+
+    /* Pre-join recoverable errors for warning message construction */
+    if (PyTuple_GET_SIZE(module_state.ignored_errors) > 0) {
+        PyObject* sep = PyUnicode_FromString("::");
+        if (!sep)
+            goto error;
+        module_state.ignored_errors_joined = PyUnicode_Join(
+            sep, module_state.ignored_errors
+        );
+        Py_DECREF(sep);
+        if (!module_state.ignored_errors_joined)
+            goto error;
+    } else {
+        module_state.ignored_errors_joined = NULL;
+    }
+
     if (_init_strings() < 0)
         goto error;
     _init_state.strings_ready = 1;

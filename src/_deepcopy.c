@@ -12,6 +12,9 @@
 #include "_type_checks.c"
 #include "_recursion_guard.c"
 #include "_reduce_helpers.c"
+#include "_fallback.c"
+
+#include "object.h"
 
 /* _PySet_NextEntry() */
 #if PY_VERSION_HEX >= PY_VERSION_3_13_HEX
@@ -32,7 +35,7 @@ static MAYBE_INLINE PyObject* deepcopy_method(
     PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
 );
 static MAYBE_INLINE PyObject* deepcopy_custom(
-      PyObject* obj,  PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* obj, PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t id_hash
 );
 static PyObject* deepcopy_object(
     PyObject* obj, PyTypeObject* tp, PyMemoObject* memo, Py_ssize_t id_hash
@@ -237,11 +240,6 @@ memoized_error:
 memoized_error_no_cleanup:
     forget(memo, obj, id_hash);
     goto error_no_cleanup;
-
-error:
-#if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
-    dict_iter_cleanup(&iter_guard);
-#endif
 error_no_cleanup:
     Py_XDECREF(copy);
     Py_XDECREF(ckey);
@@ -418,57 +416,29 @@ error:
 }
 
 static PyObject* deepcopy_custom(
-    PyObject* obj,  PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* obj, PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t id_hash
 ) {
+    PyObject* res = NULL;
+
     MemoCheckpoint checkpoint = memo_checkpoint(memo);
 
-    PyObject* res = PyObject_CallOneArg(__deepcopy__, (PyObject*)memo);
-
-    /* Adaptive fallback: if __deepcopy__ fails with TypeError or AssertionError,
-     * retry with a dict memo. Some C extensions require dict-type memo. */
-    if (!res &&
-        (PyErr_ExceptionMatches(PyExc_TypeError) || PyErr_ExceptionMatches(PyExc_AssertionError))) {
-        PyErr_Clear();
-
-        /* Rollback memo to state before the failed attempt.
-         * This removes any partial/half-baked objects that were memoized during
-         * the failed __deepcopy__ call. */
-        memo_rollback(memo, checkpoint);
-
-        PyObject* dict_memo = memo_to_dict(memo);
-        if (!dict_memo) {
-            Py_DECREF(__deepcopy__);
-            return NULL;
-        }
-
-        Py_ssize_t dict_size_before = PyDict_Size(dict_memo);
-
-        res = PyObject_CallOneArg(__deepcopy__, dict_memo);
-
-        if (res) {
-            /* Sync any new entries back to native memo */
-            if (memo_sync_from_dict(memo, dict_memo, dict_size_before) < 0) {
-                Py_DECREF(dict_memo);
-                Py_DECREF(__deepcopy__);
-                Py_DECREF(res);
-                return NULL;
-            }
-        }
-
-        Py_DECREF(dict_memo);
-    }
-
-    Py_DECREF(__deepcopy__);
+    res = PyObject_CallOneArg(__deepcopy__, (PyObject*)memo);
 
     if (!res)
-        return NULL;
+        res = _maybe_retry_with_dict_memo(obj, __deepcopy__, memo, checkpoint);
 
-    if (res != obj) {
-        if (memoize(memo, obj, res, id_hash) < 0) {
-            Py_DECREF(res);
-            return NULL;
-        }
-    }
+    if (!res)
+        goto done;
+
+    if (res != obj && memoize(memo, obj, res, id_hash) < 0)
+        goto error;
+
+    goto done;
+
+error:
+    Py_CLEAR(res);
+done:
+    Py_DECREF(__deepcopy__);
     return res;
 }
 
