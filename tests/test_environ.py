@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -10,6 +9,7 @@ import copium
 @pytest.mark.subprocess(environ={})
 def test_memo_fallback_warning():
     import warnings
+    from typing import Any
 
     import copium
 
@@ -31,7 +31,6 @@ def test_memo_fallback_warning():
         message = str(caught_warnings[0].message)
         assert issubclass(caught_warnings[0].category, UserWarning)
 
-        # Core structure
         assert f"'copium.memo' was rejected inside '{__name__}.A.__deepcopy__'" in message, message
         assert 'raise TypeError("memo must be a dict")' in message, message
         assert (
@@ -39,16 +38,13 @@ def test_memo_fallback_warning():
             in message
         ), message
 
-        # Traceback should include call site
-        assert call_site_line in message, f"Call site line not found in message:\n{message}"
+        assert call_site_line in message, f"{call_site_line!r} not found in {message}"
 
-        # Workarounds should use expression (no quotes in explicit workaround)
-        deepcopy_expr_with_memo = deepcopy_expr[:-1] + ", {})"
+        deepcopy_expr_with_memo = deepcopy_expr[:-1].rstrip(",") + ", {})"
         assert f"change {deepcopy_expr} to {deepcopy_expr_with_memo}" in message, (
             f"Expected 'change {deepcopy_expr} to {deepcopy_expr_with_memo}' in message:\n{message}"
         )
 
-        # Environment variable workarounds (these keep quotes)
         assert "export COPIUM_NO_MEMO_FALLBACK_WARNING='TypeError: memo must be a dict'" in message
         assert f"'{deepcopy_expr}' stays slow to deepcopy" in message
         assert f"'{deepcopy_expr}' raises the error above" in message
@@ -58,101 +54,76 @@ def test_memo_fallback_warning():
         on_first_call, on_second_call = _memos
         assert type(on_first_call) is not dict, "First call should use copium.memo"
         assert type(on_second_call) is dict, "Second call should use dict (fallback)"
+        _memos.clear()
 
-    # Case 1: Direct call with assignment
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        copium.deepcopy(A())
+        __result = copium.deepcopy(A())
 
     assert_warning_message_matches(
         w,
         deepcopy_expr="copium.deepcopy(A())",
-        call_site_line="result = copium.deepcopy(A())",
+        call_site_line="__result = copium.deepcopy(A())",
     )
     assert_memo_replaced(memos)
     memos.clear()
 
-    # Case 2: Nested in function call
     def identity(x):
         return x
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        identity(copium.deepcopy(A()))
+        _result = identity(copium.deepcopy(A()))
 
     assert_warning_message_matches(
         w,
         deepcopy_expr="copium.deepcopy(A())",
-        call_site_line="result = identity(copium.deepcopy(A()))",
+        call_site_line="_result = identity(copium.deepcopy(A()))",
     )
     assert_memo_replaced(memos)
-    memos.clear()
-
-    # Case 3: Nested in print (common case from user's example)
-    class B:
-        def __deepcopy__(self, memo):
-            memos.append(memo)
-            if type(memo) is not dict:
-                raise TypeError("memo must be a dict")
-            return B()
-
-        def __repr__(self):
-            return "B()"
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
+        _result = copium.deepcopy(
+            A(),
+        )
 
-    assert len(w) == 1
-    message = str(w[0].message)
-    assert "copium.deepcopy(B())" in message
+    assert_warning_message_matches(
+        w,
+        deepcopy_expr="deepcopy(A())",
+        call_site_line="_result = copium.deepcopy(",
+    )
     assert_memo_replaced(memos)
-    memos.clear()
 
-    # Case 4: Multi-line call
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        copium.deepcopy(A())
-
-    assert len(w) == 1
-    message = str(w[0].message)
-    # For multi-line, we get the first line where deepcopy appears
-    assert "copium.deepcopy(" in message
-    assert_memo_replaced(memos)
-    memos.clear()
-
-    # Case 5: With assertion
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         assert copium.deepcopy(A()) is not None
 
-    assert len(w) == 1
-    message = str(w[0].message)
-    assert "copium.deepcopy(A())" in message
+    assert_warning_message_matches(
+        w,
+        deepcopy_expr="copium.deepcopy(A())",
+        call_site_line="assert copium.deepcopy(A()) is not None",
+    )
     assert_memo_replaced(memos)
-    memos.clear()
 
     # Case 6: Trailing comma (edgy but valid Python)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         # fmt: off
-        copium.deepcopy(A())
+        _result = copium.deepcopy(A(),)  # noqa: COM819
         # fmt: on
 
-    assert len(w) == 1
-    message = str(w[0].message)
-    assert "change copium.deepcopy(A(),) to copium.deepcopy(A(), {})" in message, (
-        f"Bad memo suggestion in:\n{message}"
+    assert_warning_message_matches(
+        w, "copium.deepcopy(A(),)", "_result = copium.deepcopy(A(),)  # noqa: COM819"
     )
-    assert ",, {}" not in message, f"Double comma found in:\n{message}"
-    assert " {})" not in message or ", {})" in message, f"Missing comma before {{}} in:\n{message}"
     assert_memo_replaced(memos)
-    memos.clear()
 
 
 @pytest.mark.subprocess(environ={})
 def test_memo_fallback_warning_aliased_imports():
     """Test with various import styles"""
     import warnings
+    from typing import Any
 
     memos: list[Any] = []
 
@@ -173,7 +144,7 @@ def test_memo_fallback_warning_aliased_imports():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        deepcopy(A())
+        _result = deepcopy(A())
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -186,7 +157,7 @@ def test_memo_fallback_warning_aliased_imports():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        c.deepcopy(A())
+        _result = c.deepcopy(A())
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -199,6 +170,7 @@ def test_memo_fallback_warning_aliased_imports():
 def test_memo_fallback_warning_in_function():
     """Test when deepcopy is called from inside a user function"""
     import warnings
+    from typing import Any
 
     import copium
 
@@ -216,7 +188,7 @@ def test_memo_fallback_warning_in_function():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        do_copy(A())
+        _result = do_copy(A())
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -230,6 +202,7 @@ def test_memo_fallback_warning_in_function():
 def test_memo_fallback_warning_in_method():
     """Test when deepcopy is called from inside a class method"""
     import warnings
+    from typing import Any
 
     import copium
 
@@ -250,7 +223,7 @@ def test_memo_fallback_warning_in_method():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        copier.copy_it(Target())
+        _result = copier.copy_it(Target())
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -279,10 +252,9 @@ def test_no_memo_fallback_warning():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        copium.deepcopy(A())
+        _result = copium.deepcopy(A())
 
     assert not w, f"Expected no warnings, got: {str(w[0].message) if w else ''}"
-    # Fallback still occurs, just silently
     assert len(memos) == 2
     assert type(memos[0]) is not dict
     assert type(memos[1]) is dict
@@ -303,9 +275,8 @@ def test_no_memo_fallback_warning_non_matching():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        copium.deepcopy(A())
+        _result = copium.deepcopy(A())
 
-    # Warning should still appear because error message doesn't match
     assert len(w) == 1
 
 
@@ -326,9 +297,8 @@ def test_no_memo_fallback():
             return A()
 
     with pytest.raises(TypeError, match="memo must be a dict"):
-        copium.deepcopy(A())
+        _result = copium.deepcopy(A())
 
-    # Only one attempt, no retry
     assert len(memos) == 1
     assert type(memos[0]) is not dict
 
@@ -351,11 +321,9 @@ def test_use_dict_memo():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        copium.deepcopy(A())
+        _result = copium.deepcopy(A())
 
-    # No warnings because dict memo used from start
     assert not w
-    # Only one call because it succeeds immediately
     assert len(memos) == 1
     assert type(memos[0]) is dict
 
@@ -403,10 +371,8 @@ def test_explicit_dict_memo_no_warning():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        copium.deepcopy(A(), {})
+        _result = copium.deepcopy(A(), {})
 
-    # No warnings when user explicitly provides dict
     assert not w
-    # Single call with user's dict
     assert len(memos) == 1
     assert type(memos[0]) is dict
