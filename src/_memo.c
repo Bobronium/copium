@@ -1683,7 +1683,7 @@ static ALWAYS_INLINE int memoize(
 
 /* Remove object from memo on error cleanup. Keepalive entry remains (harmless).
    Returns 0 on success, -1 if not found. */
-static ALWAYS_INLINE int forget(PyMemoObject* memo, PyObject* original, Py_ssize_t hash) {
+static int forget(PyMemoObject* memo, PyObject* original, Py_ssize_t hash) {
     return memo_table_remove_h(memo->table, (void*)original, hash);
 }
 
