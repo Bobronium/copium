@@ -209,16 +209,20 @@ static PyObject* _get_caller_frame_info(void) {
     PyObject* result = NULL;
     PyObject* linecache = NULL;
     PyObject* getline = NULL;
-    PyObject* frame_obj = NULL;
+    PyObject* lineno_obj = NULL;
+    PyObject* line = NULL;
+    PyObject* stripped = NULL;
+    PyFrameObject* frame = NULL;
+    PyCodeObject* code = NULL;
 
-    PyFrameObject* frame = PyEval_GetFrame();
+    frame = PyEval_GetFrame();
     if (!frame)
-        return NULL;
+        goto done;
 
     Py_INCREF(frame);
 
     while (frame) {
-        PyCodeObject* code = PyFrame_GetCode(frame);
+        code = PyFrame_GetCode(frame);
         if (!code) {
             PyFrameObject* back = PyFrame_GetBack(frame);
             Py_DECREF(frame);
@@ -235,60 +239,56 @@ static PyObject* _get_caller_frame_info(void) {
             linecache = PyImport_ImportModule("linecache");
             if (!linecache) {
                 PyErr_Clear();
-                Py_DECREF(code);
-                Py_DECREF(frame);
-                return NULL;
+                goto done;
             }
 
             getline = PyObject_GetAttrString(linecache, "getline");
             if (!getline) {
                 PyErr_Clear();
-                Py_DECREF(linecache);
-                Py_DECREF(code);
-                Py_DECREF(frame);
-                return NULL;
+                goto done;
             }
 
-            PyObject* lineno_obj = PyLong_FromLong(lineno);
-            if (!lineno_obj) {
-                Py_DECREF(getline);
-                Py_DECREF(linecache);
-                Py_DECREF(code);
-                Py_DECREF(frame);
-                return NULL;
-            }
+            lineno_obj = PyLong_FromLong(lineno);
+            if (!lineno_obj)
+                goto done;
 
-            PyObject* line = PyObject_CallFunctionObjArgs(getline, filename, lineno_obj, NULL);
-            Py_DECREF(lineno_obj);
-            Py_DECREF(getline);
-            Py_DECREF(linecache);
-
+            line = PyObject_CallFunctionObjArgs(getline, filename, lineno_obj, NULL);
             if (!line) {
                 PyErr_Clear();
                 line = PyUnicode_FromString("");
+                if (!line)
+                    goto done;
             }
 
-            PyObject* stripped = PyObject_CallMethod(line, "strip", NULL);
-            Py_DECREF(line);
+            stripped = PyObject_CallMethod(line, "strip", NULL);
             if (!stripped) {
                 PyErr_Clear();
                 stripped = PyUnicode_FromString("");
+                if (!stripped)
+                    goto done;
             }
 
-            result = PyTuple_Pack(4, filename, PyLong_FromLong(lineno), name, stripped);
-            Py_DECREF(stripped);
-            Py_DECREF(code);
-            Py_DECREF(frame);
-            return result;
+            result = PyTuple_Pack(4, filename, lineno_obj, name, stripped);
+            goto done;
         }
 
         Py_DECREF(code);
+        code = NULL;
+
         PyFrameObject* back = PyFrame_GetBack(frame);
         Py_DECREF(frame);
         frame = back;
     }
 
-    return NULL;
+done:
+    Py_XDECREF(linecache);
+    Py_XDECREF(getline);
+    Py_XDECREF(lineno_obj);
+    Py_XDECREF(line);
+    Py_XDECREF(stripped);
+    Py_XDECREF(code);
+    Py_XDECREF(frame);
+    return result;
 }
 
 static PyObject* _format_combined_traceback(PyObject* caller_info, PyObject* exc_value) {
