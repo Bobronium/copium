@@ -255,7 +255,8 @@ exec(_code, _globals)
     output = proc.stdout + proc.stderr
     if proc.returncode != 0:
         pytest.fail(
-            f"subprocess run failed with non-zero exit code {proc.returncode}, {environ=}:\n\n{output}",
+            f"subprocess run failed with non-zero exit code {proc.returncode}, "
+            f"{environ=}:\n\n{output}",
             pytrace=False,
         )
 

@@ -271,9 +271,7 @@ def test_no_memo_fallback_warning():
     assert type(memos[1]) is dict
 
 
-@pytest.mark.subprocess(
-    environ=env(COPIUM_NO_MEMO_FALLBACK_WARNING="TypeError: different error")
-)
+@pytest.mark.subprocess(environ=env(COPIUM_NO_MEMO_FALLBACK_WARNING="TypeError: different error"))
 def test_no_memo_fallback_warning_non_matching():
     """COPIUM_NO_MEMO_FALLBACK_WARNING only suppresses matching errors"""
     import warnings
