@@ -104,7 +104,6 @@ def _get_function_body_source_and_first_lineno(function: FunctionType) -> tuple[
         body_lines.append(line)
 
     if body_first_lineno is None:
-        # No body (e.g. "pass") – treat as empty.
         body_first_lineno = start_lineno + len(source_lines)
         body_lines = []
 
@@ -134,7 +133,8 @@ def _ensure_subprocess_safe_function(func: FunctionType) -> None:
 
     if code.co_freevars:
         raise RuntimeError(
-            f"@pytest.mark.subprocess function {func.__qualname__} must not close over outer-scope variables "
+            f"@pytest.mark.subprocess function {func.__qualname__} "
+            f"must not close over outer-scope variables "
             f"(freevars={code.co_freevars!r})"
         )
 

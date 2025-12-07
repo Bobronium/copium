@@ -2,14 +2,14 @@ import os
 from pathlib import Path
 from typing import Any
 
-import copium
 import pytest
+
+import copium
 
 
 @pytest.mark.subprocess(environ={})
 def test_memo_fallback_warning():
     import warnings
-    from typing import Any
 
     import copium
 
@@ -62,7 +62,7 @@ def test_memo_fallback_warning():
     # Case 1: Direct call with assignment
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = copium.deepcopy(A())
+        copium.deepcopy(A())
 
     assert_warning_message_matches(
         w,
@@ -78,7 +78,7 @@ def test_memo_fallback_warning():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = identity(copium.deepcopy(A()))
+        identity(copium.deepcopy(A()))
 
     assert_warning_message_matches(
         w,
@@ -101,7 +101,6 @@ def test_memo_fallback_warning():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        print(copium.deepcopy(B()))
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -112,7 +111,7 @@ def test_memo_fallback_warning():
     # Case 4: Multi-line call
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = copium.deepcopy(A())
+        copium.deepcopy(A())
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -136,12 +135,11 @@ def test_memo_fallback_warning():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         # fmt: off
-        result = copium.deepcopy(A(),)
+        copium.deepcopy(A())
         # fmt: on
 
     assert len(w) == 1
     message = str(w[0].message)
-    # Should suggest "copium.deepcopy(A(), {})" not "copium.deepcopy(A(),, {})" or "copium.deepcopy(A() {})"
     assert "change copium.deepcopy(A(),) to copium.deepcopy(A(), {})" in message, (
         f"Bad memo suggestion in:\n{message}"
     )
@@ -155,7 +153,6 @@ def test_memo_fallback_warning():
 def test_memo_fallback_warning_aliased_imports():
     """Test with various import styles"""
     import warnings
-    from typing import Any
 
     memos: list[Any] = []
 
@@ -176,7 +173,7 @@ def test_memo_fallback_warning_aliased_imports():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = deepcopy(A())
+        deepcopy(A())
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -189,7 +186,7 @@ def test_memo_fallback_warning_aliased_imports():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = c.deepcopy(A())
+        c.deepcopy(A())
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -202,7 +199,6 @@ def test_memo_fallback_warning_aliased_imports():
 def test_memo_fallback_warning_in_function():
     """Test when deepcopy is called from inside a user function"""
     import warnings
-    from typing import Any
 
     import copium
 
@@ -220,7 +216,7 @@ def test_memo_fallback_warning_in_function():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = do_copy(A())
+        do_copy(A())
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -234,7 +230,6 @@ def test_memo_fallback_warning_in_function():
 def test_memo_fallback_warning_in_method():
     """Test when deepcopy is called from inside a class method"""
     import warnings
-    from typing import Any
 
     import copium
 
@@ -255,7 +250,7 @@ def test_memo_fallback_warning_in_method():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = copier.copy_it(Target())
+        copier.copy_it(Target())
 
     assert len(w) == 1
     message = str(w[0].message)
@@ -284,7 +279,7 @@ def test_no_memo_fallback_warning():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = copium.deepcopy(A())
+        copium.deepcopy(A())
 
     assert not w, f"Expected no warnings, got: {str(w[0].message) if w else ''}"
     # Fallback still occurs, just silently
@@ -308,7 +303,7 @@ def test_no_memo_fallback_warning_non_matching():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = copium.deepcopy(A())
+        copium.deepcopy(A())
 
     # Warning should still appear because error message doesn't match
     assert len(w) == 1
@@ -356,7 +351,7 @@ def test_use_dict_memo():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = copium.deepcopy(A())
+        copium.deepcopy(A())
 
     # No warnings because dict memo used from start
     assert not w
@@ -364,8 +359,10 @@ def test_use_dict_memo():
     assert len(memos) == 1
     assert type(memos[0]) is dict
 
+
 def copium_is_editable() -> bool:
     return Path(copium.__file__).parent.name == "src"
+
 
 @pytest.mark.subprocess(environ={"COPIUM_PATCH_DEEPCOPY": "1"})
 @pytest.mark.xfail(
@@ -406,7 +403,7 @@ def test_explicit_dict_memo_no_warning():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = copium.deepcopy(A(), {})
+        copium.deepcopy(A(), {})
 
     # No warnings when user explicitly provides dict
     assert not w
