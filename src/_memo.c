@@ -1670,7 +1670,6 @@ static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
     }
 }
 
-/* Combined memo insert + keepalive. Returns 0 on success, -1 on error. */
 static ALWAYS_INLINE int memoize(
     PyMemoObject* memo, PyObject* original, PyObject* copy, Py_ssize_t hash
 ) {
@@ -1681,13 +1680,11 @@ static ALWAYS_INLINE int memoize(
     return 0;
 }
 
-/* Remove object from memo on error cleanup. Keepalive entry remains (harmless).
-   Returns 0 on success, -1 if not found. */
 static int forget(PyMemoObject* memo, PyObject* original, Py_ssize_t hash) {
     return memo_table_remove_h(memo->table, (void*)original, hash);
 }
 
-/* --------------------- Checkpoint/Rollback Support ------------------------- */
+/* -------------------- Adaptive Fallback Helpers ---------------------------- */
 
 typedef Py_ssize_t MemoCheckpoint;
 
@@ -1699,8 +1696,6 @@ static void memo_rollback(PyMemoObject* memo, MemoCheckpoint checkpoint) {
     Py_ssize_t end = memo->undo_log.size;
     for (Py_ssize_t i = checkpoint; i < end; i++) {
         void* key = memo->undo_log.keys[i];
-        /* Remove from memo table. Ignore errors (entry might not exist
-         * if it was already removed or if memoize partially failed). */
         memo_table_remove(memo->table, key);
     }
     memo->undo_log.size = checkpoint;
@@ -1718,8 +1713,6 @@ static ALWAYS_INLINE int memo_insert_logged(
     }
     return 0;
 }
-
-/* -------------------- Adaptive Fallback Helpers ---------------------------- */
 
 static PyObject* memo_to_dict(PyMemoObject* memo) {
     Py_ssize_t size = memo->table ? memo->table->used : 0;
@@ -1765,7 +1758,6 @@ static int memo_sync_from_dict(PyMemoObject* memo, PyObject* dict, Py_ssize_t or
     Py_ssize_t idx = 0;
 
     while (PyDict_Next(dict, &pos, &py_key, &value)) {
-        /* Skip first original_size entries—already in native memo */
         if (idx++ < original_size)
             continue;
 
@@ -1776,7 +1768,6 @@ static int memo_sync_from_dict(PyMemoObject* memo, PyObject* dict, Py_ssize_t or
         if (key == NULL)
             return -1;
 
-        /* Insert directly—no lookup needed, entry is new by construction */
         if (memo_table_insert(&memo->table, key, value) < 0)
             return -1;
     }

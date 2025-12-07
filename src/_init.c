@@ -320,7 +320,6 @@ static PyObject* _parse_ignored_errors(void) {
 }
 
 int _copium_init(PyObject* module) {
-    /* Initialize fallback configuration from environment (before anything else) */
     const char* no_fallback_env = getenv("COPIUM_NO_MEMO_FALLBACK");
     module_state.no_memo_fallback = (no_fallback_env != NULL && no_fallback_env[0] != '\0');
 
@@ -331,7 +330,7 @@ int _copium_init(PyObject* module) {
     if (!module_state.ignored_errors)
         goto error;
 
-    /* Pre-join recoverable errors for warning message construction */
+    /* Pre-join ignored errors for warning message construction */
     if (PyTuple_GET_SIZE(module_state.ignored_errors) > 0) {
         PyObject* sep = PyUnicode_FromString("::");
         if (!sep)

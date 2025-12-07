@@ -98,7 +98,6 @@ static PyObject* _extract_deepcopy_expression(PyObject* line) {
     if (!line_str)
         return NULL;
 
-    /* Find "deepcopy(" in the line */
     const char* deepcopy_start = strstr(line_str, "deepcopy(");
     if (!deepcopy_start)
         return NULL;
@@ -153,7 +152,6 @@ static PyObject* _extract_deepcopy_expression(PyObject* line) {
 
 /**
  * Create the "with memo" version of a deepcopy expression.
- * Handles trailing comma: "deepcopy(x,)" -> "deepcopy(x, {})"
  *
  * Returns new reference or NULL on failure.
  */
@@ -206,25 +204,19 @@ done:
     return result;
 }
 
-/**
- * Get the caller's frame info (filename, lineno, function, source line).
- * Walks up the stack to find the first frame outside copium module.
- * Returns a tuple (filename, lineno, funcname, line) or NULL.
- */
+
 static PyObject* _get_caller_frame_info(void) {
     PyObject* result = NULL;
     PyObject* linecache = NULL;
     PyObject* getline = NULL;
     PyObject* frame_obj = NULL;
 
-    /* Get current frame */
     PyFrameObject* frame = PyEval_GetFrame();
     if (!frame)
         return NULL;
 
     Py_INCREF(frame);
 
-    /* Walk up looking for a frame not in copium */
     while (frame) {
         PyCodeObject* code = PyFrame_GetCode(frame);
         if (!code) {
@@ -240,7 +232,6 @@ static PyObject* _get_caller_frame_info(void) {
         if (filename && name) {
             int lineno = PyFrame_GetLineNumber(frame);
 
-            /* Get source line via linecache */
             linecache = PyImport_ImportModule("linecache");
             if (!linecache) {
                 PyErr_Clear();
@@ -277,7 +268,6 @@ static PyObject* _get_caller_frame_info(void) {
                 line = PyUnicode_FromString("");
             }
 
-            /* Strip the line */
             PyObject* stripped = PyObject_CallMethod(line, "strip", NULL);
             Py_DECREF(line);
             if (!stripped) {
@@ -301,14 +291,6 @@ static PyObject* _get_caller_frame_info(void) {
     return NULL;
 }
 
-/**
- * Format a combined traceback showing:
- * 1. The caller's frame (where deepcopy was called)
- * 2. The exception's traceback (where the error occurred)
- *
- * The caller frame is inserted after "Traceback (most recent call last):"
- * but before the exception's frames.
- */
 static PyObject* _format_combined_traceback(PyObject* caller_info, PyObject* exc_value) {
     PyObject* result = NULL;
     PyObject* parts = NULL;
@@ -338,7 +320,6 @@ static PyObject* _format_combined_traceback(PyObject* caller_info, PyObject* exc
     if (!parts)
         goto done;
 
-    /* Format caller frame if available */
     if (caller_info && PyTuple_Check(caller_info) && PyTuple_GET_SIZE(caller_info) == 4) {
         PyObject* filename = PyTuple_GET_ITEM(caller_info, 0);
         PyObject* lineno = PyTuple_GET_ITEM(caller_info, 1);
@@ -352,14 +333,6 @@ static PyObject* _format_combined_traceback(PyObject* caller_info, PyObject* exc
             PyErr_Clear();
     }
 
-    /* Build combined traceback.
-     * format_exception output varies by Python version:
-     * - 3.11+: First element is "Traceback (most recent call last):\n"
-     * - Earlier: First element might be exception message or file line
-     *
-     * We look for the "Traceback" header to insert our caller frame after it.
-     * If not found (exception has no traceback), we prepend our own header + caller.
-     */
     Py_ssize_t n = PyList_GET_SIZE(tb_lines);
     int found_traceback_header = 0;
     int caller_inserted = 0;
@@ -385,7 +358,6 @@ static PyObject* _format_combined_traceback(PyObject* caller_info, PyObject* exc
         PyList_Append(parts, line);
     }
 
-    /* If no traceback header found and we have a caller, prepend our own traceback */
     if (!found_traceback_header && caller_str && !caller_inserted) {
         PyObject* header = PyUnicode_FromString("Traceback (most recent call last):\n");
         if (header) {
@@ -422,9 +394,7 @@ static int _emit_fallback_warning(PyObject* exc_value, PyObject* obj, PyObject* 
     PyObject* call_site_with_memo = NULL;
 
     caller_info = _get_caller_frame_info();
-    /* caller_info may be NULL, that's OK - we'll format without it */
 
-    /* Format combined traceback */
     tb_str = _format_combined_traceback(caller_info, exc_value);
     if (!tb_str) {
         PyErr_Clear();
@@ -433,7 +403,6 @@ static int _emit_fallback_warning(PyObject* exc_value, PyObject* obj, PyObject* 
             goto done;
     }
 
-    /* Get type info */
     type_obj = (PyObject*)Py_TYPE(obj);
     module_name = PyObject_GetAttrString(type_obj, "__module__");
     if (!module_name) {
@@ -455,31 +424,25 @@ static int _emit_fallback_warning(PyObject* exc_value, PyObject* obj, PyObject* 
     if (!deepcopy_qualname)
         goto done;
 
-    /* Extract deepcopy expression from caller's line */
     if (caller_info && PyTuple_Check(caller_info) && PyTuple_GET_SIZE(caller_info) == 4) {
         PyObject* line = PyTuple_GET_ITEM(caller_info, 3);
         deepcopy_expr = _extract_deepcopy_expression(line);
         call_site_line = Py_NewRef(line);
     }
 
-    /* Build the expression variants for workarounds */
     if (deepcopy_expr) {
-        /* Create "deepcopy(..., {})" version using helper that handles trailing comma */
         deepcopy_expr_with_memo = _make_expr_with_memo(deepcopy_expr);
         if (!deepcopy_expr_with_memo)
             PyErr_Clear();
 
-        /* Create full line with memo version */
         if (call_site_line && deepcopy_expr_with_memo) {
             const char* line_str = PyUnicode_AsUTF8(call_site_line);
             const char* expr_str = PyUnicode_AsUTF8(deepcopy_expr);
             if (line_str && expr_str) {
-                /* Simple string replacement */
                 const char* pos = strstr(line_str, expr_str);
                 if (pos) {
                     Py_ssize_t prefix_len = pos - line_str;
                     Py_ssize_t suffix_start = prefix_len + (Py_ssize_t)strlen(expr_str);
-                    /* Build replacement using valid PyUnicode_FromFormat specifiers */
                     PyObject* prefix_str = PyUnicode_FromStringAndSize(line_str, prefix_len);
                     PyObject* suffix_str = PyUnicode_FromString(line_str + suffix_start);
                     if (prefix_str && suffix_str) {
@@ -494,30 +457,24 @@ static int _emit_fallback_warning(PyObject* exc_value, PyObject* obj, PyObject* 
         }
     }
 
-    /* Fallback expressions if extraction failed (e.g., multiline call) */
     if (!deepcopy_expr) {
-        /* Construct a plausible expression using the type name */
         deepcopy_expr = PyUnicode_FromFormat("deepcopy(%U())", type_name);
         if (!deepcopy_expr)
             goto done;
     }
     if (!deepcopy_expr_with_memo) {
-        /* Use helper on the (possibly fallback) expression */
         deepcopy_expr_with_memo = _make_expr_with_memo(deepcopy_expr);
         if (!deepcopy_expr_with_memo) {
             PyErr_Clear();
-            /* Last resort fallback */
             deepcopy_expr_with_memo = PyUnicode_FromFormat("deepcopy(%U(), {})", type_name);
             if (!deepcopy_expr_with_memo)
                 goto done;
         }
     }
     if (!call_site_line) {
-        /* If no line available, use the expression itself */
         call_site_line = Py_NewRef(deepcopy_expr);
     }
     if (!call_site_with_memo) {
-        /* If we couldn't do line replacement, use expression with memo */
         call_site_with_memo = Py_NewRef(deepcopy_expr_with_memo);
     }
 
