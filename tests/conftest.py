@@ -237,12 +237,18 @@ exec(_code, _globals)
 """
     runner_file.write_text(runner_source)
 
-    env = mark.kwargs.get("environ", os.environ)
+    env = mark.kwargs.get("environ", {})
+    environ = os.environ.copy()
+    for name, value in env.items():
+        if value is None:
+            environ.pop(name, None)
+        else:
+            environ[name] = value
 
     proc = subprocess.run(
         [sys.executable, str(runner_file)],
         cwd=tmp_path,
-        env=env,
+        env=environ,
         capture_output=True,
         text=True,
     )

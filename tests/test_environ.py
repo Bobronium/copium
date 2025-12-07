@@ -6,7 +6,18 @@ import pytest
 import copium
 
 
-@pytest.mark.subprocess(environ={})
+def env(**kwargs):
+    base = {
+        "COPIUM_NO_MEMO_FALLBACK_WARNING": None,
+        "COPIUM_NO_MEMO_FALLBACK": None,
+        "COPIUM_USE_DICT_MEMO": None,
+        "COPIUM_PATCH_DEEPCOPY": None,
+    }
+    base.update(kwargs)
+    return base
+
+
+@pytest.mark.subprocess(environ=env())
 def test_memo_fallback_warning():
     import warnings
     from typing import Any
@@ -119,7 +130,7 @@ def test_memo_fallback_warning():
     assert_memo_replaced(memos)
 
 
-@pytest.mark.subprocess(environ={})
+@pytest.mark.subprocess(environ=env())
 def test_memo_fallback_warning_aliased_imports():
     """Test with various import styles"""
     import warnings
@@ -166,7 +177,7 @@ def test_memo_fallback_warning_aliased_imports():
     memos.clear()
 
 
-@pytest.mark.subprocess(environ={})
+@pytest.mark.subprocess(environ=env())
 def test_memo_fallback_warning_in_function():
     """Test when deepcopy is called from inside a user function"""
     import warnings
@@ -198,7 +209,7 @@ def test_memo_fallback_warning_in_function():
     assert len(memos) == 2
 
 
-@pytest.mark.subprocess(environ={})
+@pytest.mark.subprocess(environ=env())
 def test_memo_fallback_warning_in_method():
     """Test when deepcopy is called from inside a class method"""
     import warnings
@@ -233,7 +244,7 @@ def test_memo_fallback_warning_in_method():
 
 
 @pytest.mark.subprocess(
-    environ={"COPIUM_NO_MEMO_FALLBACK_WARNING": "TypeError: memo must be a dict"}
+    environ=env(COPIUM_NO_MEMO_FALLBACK_WARNING="TypeError: memo must be a dict")
 )
 def test_no_memo_fallback_warning():
     """COPIUM_NO_MEMO_FALLBACK_WARNING suppresses matching warnings"""
@@ -260,7 +271,9 @@ def test_no_memo_fallback_warning():
     assert type(memos[1]) is dict
 
 
-@pytest.mark.subprocess(environ={"COPIUM_NO_MEMO_FALLBACK_WARNING": "TypeError: different error"})
+@pytest.mark.subprocess(
+    environ=env(COPIUM_NO_MEMO_FALLBACK_WARNING="TypeError: different error")
+)
 def test_no_memo_fallback_warning_non_matching():
     """COPIUM_NO_MEMO_FALLBACK_WARNING only suppresses matching errors"""
     import warnings
@@ -280,7 +293,7 @@ def test_no_memo_fallback_warning_non_matching():
     assert len(w) == 1
 
 
-@pytest.mark.subprocess(environ={"COPIUM_NO_MEMO_FALLBACK": "1"})
+@pytest.mark.subprocess(environ=env(COPIUM_NO_MEMO_FALLBACK="1"))
 def test_no_memo_fallback():
     """COPIUM_NO_MEMO_FALLBACK=1 disables fallback entirely"""
     import pytest
@@ -303,7 +316,7 @@ def test_no_memo_fallback():
     assert type(memos[0]) is not dict
 
 
-@pytest.mark.subprocess(environ={"COPIUM_USE_DICT_MEMO": "1"})
+@pytest.mark.subprocess(environ=env(COPIUM_USE_DICT_MEMO="1"))
 def test_use_dict_memo():
     """COPIUM_USE_DICT_MEMO=1 uses dict memo from the start"""
     import warnings
@@ -332,7 +345,7 @@ def copium_is_editable() -> bool:
     return Path(copium.__file__).parent.name == "src"
 
 
-@pytest.mark.subprocess(environ={"COPIUM_PATCH_DEEPCOPY": "1"})
+@pytest.mark.subprocess(environ=env(COPIUM_PATCH_DEEPCOPY="1"))
 @pytest.mark.xfail(
     copium_is_editable() and os.getenv("COPIUM_LOCAL_DEVELOPMENT"),
     reason=".pth files in editable installs are broken at the moment.",
@@ -345,7 +358,7 @@ def test_patch_deepcopy_enabled():
     assert copium.patch.enabled()
 
 
-@pytest.mark.subprocess(environ={})
+@pytest.mark.subprocess(environ=env())
 def test_patch_deepcopy_disabled():
     """Patching is disabled by default"""
     import copium.patch
@@ -353,7 +366,7 @@ def test_patch_deepcopy_disabled():
     assert not copium.patch.enabled()
 
 
-@pytest.mark.subprocess(environ={})
+@pytest.mark.subprocess(environ=env())
 def test_explicit_dict_memo_no_warning():
     """Providing explicit dict memo should not trigger fallback warning"""
     import warnings
