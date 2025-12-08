@@ -5,7 +5,9 @@
 import collections
 import copy as stdlib_copy
 import gc
+import random
 import sys
+import threading
 import time
 import weakref
 from collections.abc import Callable
@@ -266,42 +268,6 @@ def assert_parity_with_stdlib(
         )
 
 
-@pytest.mark.xfail(
-    not getattr(sys, "_is_gil_enabled", lambda: True)(),
-    reason="This test is flaky and sometimes fails on stdlib as well."
-    " A better suite should be designed.",
-)
-@pytest.mark.xfail(reason="WIP")
-def test_duper_deepcopy_parity_threaded_mutating(copy) -> None:
-    from concurrent.futures import ALL_COMPLETED
-    from concurrent.futures import ThreadPoolExecutor
-    from concurrent.futures import wait
-
-    from datamodelzoo.constructed import DeepcopyRuntimeError
-
-    threads = 8
-    repeats = 5
-
-    value: dict[Any, Any] = {}
-    value["trigger"] = DeepcopyRuntimeError(value)
-
-    def assert_runtime_error():
-        try:
-            copy.deepcopy(value)
-        except RuntimeError:
-            return True
-        return False
-
-    with ThreadPoolExecutor(max_workers=threads) as pool:
-        total_runs = threads * repeats
-        futures = [pool.submit(assert_runtime_error) for _ in range(total_runs)]
-
-        done, not_done = wait(futures, return_when=ALL_COMPLETED)
-        assert not not_done
-        correct_runs = sum(1 for f in done if f.result())
-        assert correct_runs == total_runs
-
-
 def make_nested(depth):
     result = []
     for _ in range(depth):
@@ -491,3 +457,135 @@ def test_memo_stolen_ref_cycle_garbage_collected(copy):
     assert thief_id in collected
 
     assert copy.deepcopy([]) == []
+
+
+class DeepcopyRuntimeError:
+    """
+    A value that mutates its host when deep-copied.
+    """
+
+    def __init__(self, mutate) -> None:
+        self._mutate = mutate
+
+    def __deepcopy__(self, memo: dict):
+        self._mutate()
+        return self
+
+
+def test_duper_deepcopy_parity_threaded_mutating() -> None:
+    """
+    This test is kind of flaky on free-threaded builds.
+    """
+    from concurrent.futures import ALL_COMPLETED
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import wait
+
+    threads = 10
+    repeats = 10
+    total_runs = threads * repeats
+
+    def run(copy):
+        value: dict[Any, Any] = {}
+
+        def mutate():
+            value[random.randbytes(100)] = 1
+
+        value["trigger"] = DeepcopyRuntimeError(mutate)
+
+        def assert_runtime_error():
+            try:
+                copy.deepcopy(value)
+            except RuntimeError:
+                return True
+            return False
+
+        with ThreadPoolExecutor(max_workers=threads) as pool:
+            futures = [pool.submit(assert_runtime_error) for _ in range(total_runs)]
+
+            done, not_done = wait(futures, return_when=ALL_COMPLETED)
+            assert not not_done
+            return sum(f.result() for f in done)
+
+    stdlib_runs = [run(stdlib_copy) for _ in range(10)]
+    copium_runs = [run(copium) for _ in range(10)]
+    assert sum(copium_runs) == pytest.approx(sum(stdlib_runs), abs=20)
+
+
+def test_deepcopy_detects_self_mutation(copy) -> None:
+    """Each thread gets its own dict that mutates itself during iteration."""
+    from concurrent.futures import ALL_COMPLETED
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import wait
+
+    threads = 10
+    repeats = 10
+
+    def run_once():
+        local_dict = {}
+
+        def mutate():
+            local_dict[object()] = 1  # guaranteed unique key
+
+        local_dict["a"] = 1
+        local_dict["b"] = 1
+        local_dict["trigger"] = DeepcopyRuntimeError(mutate)
+
+        try:
+            copy.deepcopy(local_dict)
+        except RuntimeError:
+            return True
+        else:
+            return False  # should have raised
+
+    with ThreadPoolExecutor(max_workers=threads) as pool:
+        total_runs = threads * repeats
+        futures = [pool.submit(run_once) for _ in range(total_runs)]
+        done, _ = wait(futures, return_when=ALL_COMPLETED)
+
+        failures = [f for f in done if not f.result()]
+        assert not failures, f"{len(failures)}/{total_runs} runs didn't raise RuntimeError"
+
+
+def test_cross_thread_mutation_detection(copy) -> None:
+    iterator_ready = threading.Event()
+    mutation_done = threading.Event()
+
+    class PausingValue:
+        def __deepcopy__(self, memo):
+            iterator_ready.set()
+            mutation_done.wait(timeout=5)
+            return self
+
+    correctly_handled = 0
+    total_attempts = 20
+    for _ in range(total_attempts):  # repeat to catch races
+        iterator_ready.clear()
+        mutation_done.clear()
+
+        shared_dict = {"a": 1, "pause": PausingValue()}
+        result = {"raised": False}
+
+        def iterate():
+            try:
+                copy.deepcopy(shared_dict)  # noqa: B023  # does not bind loop variable
+            except RuntimeError:
+                result["raised"] = True  # noqa: B023  # does not bind loop variable
+
+        def mutate():
+            iterator_ready.wait(timeout=5)
+            shared_dict["injected"] = 1  # noqa: B023  # does not bind loop variable
+            mutation_done.set()
+
+        t_iter = threading.Thread(target=iterate)
+        t_mutate = threading.Thread(target=mutate)
+
+        t_iter.start()
+        t_mutate.start()
+        t_iter.join(timeout=10)
+        t_mutate.join(timeout=10)
+
+        shared_dict.pop("injected", None)
+
+        correctly_handled += result["raised"]
+
+    assert correctly_handled == total_attempts

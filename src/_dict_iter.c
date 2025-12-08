@@ -10,36 +10,37 @@
 #include "_common.h"
 
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
-static Py_tss_t g_dictiter_tss = Py_tss_NEEDS_INIT;
+#include <stdatomic.h>
+
+static PyMutex g_dictiter_mutex = {0};
 static int g_dict_watcher_id = -1;
 static int g_dict_watcher_registered = 0;
 
 typedef struct DictIterGuard {
     PyObject* dict;
     Py_ssize_t pos;
-    Py_ssize_t size0; /* initial size snapshot (detect transient size changes like pop→add) */
+    Py_ssize_t size0;
     int watching;
-    int mutated;
-    int size_changed; /* set if size ever differed from size0; else keys-only changes */
-    int last_event;   /* PyDict_WatchEvent (for debugging/future use) */
+    atomic_int mutated;
+    int size_changed;
+    int last_event;
     struct DictIterGuard* prev;
+    struct DictIterGuard* next;
 } DictIterGuard;
 
-/* Walk the TLS stack and flag the top-most guard matching `dict`. */
+static DictIterGuard* g_guard_list_head = NULL;
+
 static int _copium_dict_watcher_cb(
     PyDict_WatchEvent event, PyObject* dict, PyObject* key, PyObject* new_value
 ) {
     (void)key;
     (void)new_value;
-    DictIterGuard* g = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
-    for (; g; g = g->prev) {
+
+    PyMutex_Lock(&g_dictiter_mutex);
+    for (DictIterGuard* g = g_guard_list_head; g; g = g->next) {
         if (g->dict == dict) {
-            g->mutated = 1;
             g->last_event = (int)event;
 
-            /* Treat as "changed size" if:
-               - the event is an add/delete/clear, OR
-               - the dict's current size differs from the initial snapshot (transient del→add). */
             if (event == PyDict_EVENT_ADDED || event == PyDict_EVENT_DELETED ||
                 event == PyDict_EVENT_CLEARED || event == PyDict_EVENT_CLONED) {
                 g->size_changed = 1;
@@ -49,29 +50,31 @@ static int _copium_dict_watcher_cb(
                     g->size_changed = 1;
                 }
             }
-            /* Other events (CLONED, MODIFIED, etc.) fall back to "keys changed". */
-            /* DO NOT break: mark all active guards for this dict (handles nested iterations). */
+            atomic_store_explicit(&g->mutated, 1, memory_order_release);
         }
     }
-    return 0; /* never raise; per docs this would become unraisable */
+    PyMutex_Unlock(&g_dictiter_mutex);
+    return 0;
 }
 
 static ALWAYS_INLINE void dict_iter_init(DictIterGuard* iter_guard, PyObject* dict) {
     iter_guard->dict = dict;
     iter_guard->pos = 0;
-    iter_guard->size0 = PyDict_Size(
-        dict
-    ); /* snapshot initial size (errors unlikely; -1 harmless) */
+    iter_guard->size0 = PyDict_Size(dict);
     iter_guard->watching = 0;
-    iter_guard->mutated = 0;
+    atomic_init(&iter_guard->mutated, 0);
     iter_guard->size_changed = 0;
     iter_guard->last_event = 0;
-    iter_guard->prev = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
+    iter_guard->prev = NULL;
+    iter_guard->next = NULL;
 
-    /* Push onto TLS stack first so any same-thread mutation after Watch sees this guard. */
-    if (PyThread_tss_set(&g_dictiter_tss, iter_guard) != 0) {
-        Py_FatalError("copium: unexpected TTS state - failed to set dict iterator guard");
+    PyMutex_Lock(&g_dictiter_mutex);
+    iter_guard->next = g_guard_list_head;
+    if (g_guard_list_head) {
+        g_guard_list_head->prev = iter_guard;
     }
+    g_guard_list_head = iter_guard;
+    PyMutex_Unlock(&g_dictiter_mutex);
 
     if (g_dict_watcher_registered && PyDict_Watch(g_dict_watcher_id, dict) == 0) {
         iter_guard->watching = 1;
@@ -79,37 +82,36 @@ static ALWAYS_INLINE void dict_iter_init(DictIterGuard* iter_guard, PyObject* di
 }
 
 static ALWAYS_INLINE void dict_iter_cleanup(DictIterGuard* iter_guard) {
-    /* Unwatch first, before clearing dict pointer */
     if (iter_guard->watching) {
         PyDict_Unwatch(g_dict_watcher_id, iter_guard->dict);
         iter_guard->watching = 0;
     }
 
-    /* Pop from TLS stack - we're at the top in normal cases */
-    DictIterGuard* top = (DictIterGuard*)PyThread_tss_get(&g_dictiter_tss);
-    if (top == iter_guard) {
-        /* Normal case: we're on top of the stack */
-        if (PyThread_tss_set(&g_dictiter_tss, iter_guard->prev) != 0) {
-            Py_FatalError("copium: unexpected TTS state during dict iterator cleanup");
-        }
+    PyMutex_Lock(&g_dictiter_mutex);
+    if (iter_guard->prev) {
+        iter_guard->prev->next = iter_guard->next;
+    } else {
+        g_guard_list_head = iter_guard->next;
     }
-    /* Note: If we're not on top (defensive unlink case), we just skip TSS cleanup.
-       The stack will correct itself when the actual top guard is cleaned up. */
+    if (iter_guard->next) {
+        iter_guard->next->prev = iter_guard->prev;
+    }
+    PyMutex_Unlock(&g_dictiter_mutex);
 }
 
 static ALWAYS_INLINE int dict_iter_next(
     DictIterGuard* iter_guard, PyObject** key, PyObject** value
 ) {
     if (PyDict_Next(iter_guard->dict, &iter_guard->pos, key, value)) {
-        if (UNLIKELY(iter_guard->mutated)) {
-            /* Decide message based on net size delta from start of iteration. */
+        if (UNLIKELY(atomic_load_explicit(&iter_guard->mutated, memory_order_acquire))) {
             int size_changed_now = 0;
             Py_ssize_t cur = PyDict_Size(iter_guard->dict);
             if (cur >= 0) {
                 size_changed_now = (cur != iter_guard->size0);
             } else {
-                /* Fallback if PyDict_Size errored: use watcher heuristic. */
+                PyMutex_Lock(&g_dictiter_mutex);
                 size_changed_now = iter_guard->size_changed;
+                PyMutex_Unlock(&g_dictiter_mutex);
             }
             PyErr_SetString(
                 PyExc_RuntimeError,
@@ -121,14 +123,16 @@ static ALWAYS_INLINE int dict_iter_next(
         }
         return 1;
     }
-    /* End of iteration. If a mutation happened at any point, surface it now. */
-    if (UNLIKELY(iter_guard->mutated)) {
+
+    if (UNLIKELY(atomic_load_explicit(&iter_guard->mutated, memory_order_acquire))) {
         int size_changed_now = 0;
         Py_ssize_t cur = PyDict_Size(iter_guard->dict);
         if (cur >= 0) {
             size_changed_now = (cur != iter_guard->size0);
         } else {
+            PyMutex_Lock(&g_dictiter_mutex);
             size_changed_now = iter_guard->size_changed;
+            PyMutex_Unlock(&g_dictiter_mutex);
         }
         PyErr_SetString(
             PyExc_RuntimeError,
@@ -142,7 +146,7 @@ static ALWAYS_INLINE int dict_iter_next(
     return 0;
 }
 
-#else /* < 3.14: keep version-tag based guard (uses private fields, but gated) */
+#else
 
 typedef struct {
     PyObject* dict;
@@ -180,8 +184,6 @@ static ALWAYS_INLINE int dict_iter_next(
 
 static int dict_iter_module_init(void) {
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
-    if (PyThread_tss_create(&g_dictiter_tss) != 0)
-        return -1;
     g_dict_watcher_id = PyDict_AddWatcher(_copium_dict_watcher_cb);
     if (g_dict_watcher_id < 0)
         return -1;
@@ -192,9 +194,6 @@ static int dict_iter_module_init(void) {
 
 static void dict_iter_module_cleanup(void) {
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
-    if (PyThread_tss_is_created(&g_dictiter_tss)) {
-        PyThread_tss_delete(&g_dictiter_tss);
-    }
     if (g_dict_watcher_registered) {
         PyDict_ClearWatcher(g_dict_watcher_id);
         g_dict_watcher_registered = 0;
