@@ -322,9 +322,6 @@ def test_peak_memory_comparison_tracemalloc(case: Any, memo: str):
 
     Known issue: 24-byte overhead for dict/mapping memos (cause unknown).
     """
-    if case.name.startswith("deepcopy:memo_type_guard"):
-        pytest.skip("This is an edge case with heavy warning machinery.")
-
     compare_peak_memory(
         measure_peak_memory_tracemalloc,
         case,
@@ -351,9 +348,6 @@ def test_peak_memory_comparison_psutil(case: Any, memo: str):
 
     Known issue: 24-byte overhead for dict/mapping memos (cause unknown).
     """
-    if case.name.startswith("deepcopy:memo_type_guard") and memo in {"absent", "None"}:
-        pytest.skip("This is an edge case with heavy warning machinery.")
-
     compare_peak_memory(
         measure_peak_memory_psutil,
         case.obj,
