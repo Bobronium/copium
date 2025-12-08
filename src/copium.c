@@ -281,6 +281,18 @@ have_args:
         if (is_atomic_immutable(tp)) {
             return Py_NewRef(obj);
         }
+
+        if (UNLIKELY(module_state.use_dict_memo)) {
+            PyObject* memo = PyDict_New();
+            if (!memo)
+                return NULL;
+            PyObject* keep_list = NULL;
+            PyObject* result = deepcopy_legacy(obj, memo, &keep_list);
+            Py_XDECREF(keep_list);
+            Py_DECREF(memo);
+            return result;
+        }
+
         PyMemoObject* memo = get_tss_memo();
         if (!memo)
             return NULL;

@@ -74,7 +74,7 @@ tasks:
     env:
       MYPYPATH: src
     cmd: |
-      bash -euo pipefail -c '
+      bash -euo pipefail << 'PY'
         run_typecheck () {
           local PYV="$1"
           echo "▶ Typechecking Python $PYV"
@@ -85,16 +85,17 @@ tasks:
         if [ "{{.MATRIX}}" != "1" ] && [ -z "{{.VERSIONS}}" ]; then
           run_typecheck "{{ .PY_CURRENT }}"; exit 0; fi
         for v in {{ .SELECTED_PY_VERSIONS }}; do run_typecheck "$v"; done
-      '
+      PY
 
   test:
     desc: Run tests
     cmd: |
-      bash -euo pipefail -c '
+      bash -euo pipefail  << 'PY'
         if [ "{{.MATRIX}}" != "1" ] && [ -z "{{.VERSIONS}}" ]; then
           echo "▶ Tests on current environment"
-          uv sync --inexact --quiet --extra test --reinstall-package copium
-          uv run pytest
+          uv sync --inexact --quiet --extra test --no-install-project
+          uv pip install . --quiet
+          uv run --no-sync pytest
           exit 0
         fi
         for V in {{ .SELECTED_PY_VERSIONS }}; do
@@ -103,11 +104,12 @@ tasks:
           if [ ! -d "$VENV" ]; then uv venv --clear --no-project --python "$V" "$VENV"; fi
           ACT="$VENV/bin/activate"; [ -f "$VENV/Scripts/activate" ] && ACT="$VENV/Scripts/activate"
           . "$ACT"
-          uv sync --active --inexact --quiet --extra test --reinstall-package copium
-          uv run --active pytest tests {{.CLI_ARGS}}
+          uv sync --active --inexact --quiet --extra test --no-install-project
+          uv pip install . --quiet
+          uv run --no-sync --active pytest tests {{.CLI_ARGS}}
           deactivate
         done
-      '
+      PY
 
   build:wheel:
     desc: Regular optimized wheel (LTO + -O3 by default)
