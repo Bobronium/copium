@@ -495,6 +495,7 @@ def _get_c_extensions(
             sources=["src/copium.c"],
             include_dirs=[str(python_include), str(python_include / "internal")],
             define_macros=define_macros,
+            extra_compile_args=["/std:c11"] if sys.platform == "win32" else ["-std=c11"],
         )
     ]
 
