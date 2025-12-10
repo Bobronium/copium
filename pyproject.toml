@@ -23,6 +23,9 @@ test-command = "pytest -vvv"
 test-extras = ["test"]
 test-sources = ["tests", "pyproject.toml"]
 
+[tool.cibuildwheel.windows]
+environment = { CL="/experimental:c11atomics" }
+
 [project]
 name = "copium"
 dynamic = ["version"]
