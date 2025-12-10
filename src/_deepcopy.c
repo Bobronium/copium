@@ -123,7 +123,7 @@ static MAYBE_INLINE PyObject* deepcopy_list(
             return copied;
         }
 
-        PyObject* item = PyList_GET_ITEM(original, i);
+        PyObject* item = Py_NewRef(PyList_GET_ITEM(original, i));
         Py_SETREF(item, deepcopy(item, memo));
 
         if (!item)
