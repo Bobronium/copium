@@ -136,7 +136,7 @@ static MAYBE_INLINE PyObject* deepcopy_list(
 
         PyList_SET_ITEM(copied, i, item);
 #if PY_VERSION_HEX < PY_VERSION_3_12_HEX
-        Py_INCREF(Py_Ellipsis);
+        Py_DECREF(Py_Ellipsis);
 #endif
     }
 
