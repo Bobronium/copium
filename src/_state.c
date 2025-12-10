@@ -10,15 +10,15 @@
 
 typedef struct {
     // Interned strings for attribute lookups
-    PyObject* str_reduce_ex;
-    PyObject* str_reduce;
-    PyObject* str_deepcopy;
-    PyObject* str_setstate;
-    PyObject* str_dict;
-    PyObject* str_append;
-    PyObject* str_update;
-    PyObject* str_new;
-    PyObject* str_get;
+    PyObject* s__reduce_ex__;
+    PyObject* s__reduce__;
+    PyObject* s__deepcopy__;
+    PyObject* s__setstate__;
+    PyObject* s__dict__;
+    PyObject* s_append;
+    PyObject* s_update;
+    PyObject* s__new__;
+    PyObject* s__get__;
 
     // Used for identity comparison
     PyObject* sentinel;
@@ -37,8 +37,8 @@ typedef struct {
     // Stdlib refs
     PyObject* copyreg_dispatch;                  // dict
     PyObject* copy_Error;                        // exception class
-    PyObject* copyreg_newobj;                    // copyreg.__newobj__ (or sentinel)
-    PyObject* copyreg_newobj_ex;                 // copyreg.__newobj_ex__ (or sentinel)
+    PyObject* copyreg___newobj__;                    // copyreg.__newobj__ (or sentinel)
+    PyObject* copyreg___newobj___ex;                 // copyreg.__newobj_ex__ (or sentinel)
     PyObject* create_precompiler_reconstructor;  // duper.snapshots.create_precompiler_reconstructor
 
     // TLS memo allows reuse across deepcopy calls without allocation.

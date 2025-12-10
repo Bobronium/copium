@@ -25,7 +25,7 @@ static PyObject* memo_lookup_legacy(PyObject* memo, void* key_ptr) {
     } else {
         // exact semantics as in Python deepcopy
         res = PyObject_CallMethodObjArgs(
-            memo, module_state.str_get, pykey, module_state.sentinel, NULL
+            memo, module_state.s__get__, pykey, module_state.sentinel, NULL
         );
         Py_DECREF(pykey);
         if (UNLIKELY(!res))

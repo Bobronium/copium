@@ -38,21 +38,21 @@ static PyObject* try_reduce_via_registry(PyObject* obj, PyTypeObject* tp) {
 }
 
 static PyObject* call_reduce_method_preferring_ex(PyObject* obj) {
-    PyObject* reduce_ex = NULL;
-    int has_reduce_ex = PyObject_GetOptionalAttr(obj, module_state.str_reduce_ex, &reduce_ex);
+    PyObject* __reduce_ex__ = NULL;
+    int has_reduce_ex = PyObject_GetOptionalAttr(obj, module_state.s__reduce_ex__, &__reduce_ex__);
     if (has_reduce_ex > 0) {
-        PyObject* res = PyObject_CallFunction(reduce_ex, "i", 4);
-        Py_DECREF(reduce_ex);
+        PyObject* res = PyObject_CallFunction(__reduce_ex__, "i", 4);
+        Py_DECREF(__reduce_ex__);
         return res;
     }
     if (has_reduce_ex < 0)
         return NULL;
 
-    PyObject* reduce = NULL;
-    int has_reduce = PyObject_GetOptionalAttr(obj, module_state.str_reduce, &reduce);
+    PyObject* __reduce__ = NULL;
+    int has_reduce = PyObject_GetOptionalAttr(obj, module_state.s__reduce__, &__reduce__);
     if (has_reduce > 0) {
-        PyObject* res = PyObject_CallNoArgs(reduce);
-        Py_DECREF(reduce);
+        PyObject* res = PyObject_CallNoArgs(__reduce__);
+        Py_DECREF(__reduce__);
         return res;
     }
     if (has_reduce < 0)
