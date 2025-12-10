@@ -106,11 +106,12 @@ static MAYBE_INLINE PyObject* deepcopy_list(
     if (!copied)
         return NULL;
 
-    for (Py_ssize_t i = 0; i < sz; i++)
+    for (Py_ssize_t i = 0; i < sz; i++) {
 #if PY_VERSION_HEX < PY_VERSION_3_12_HEX
         Py_INCREF(Py_Ellipsis);
 #endif
-    PyList_SET_ITEM(copied, i, Py_Ellipsis);
+        PyList_SET_ITEM(copied, i, Py_Ellipsis);
+    }
     if (memoize(memo, original, copied, memo_key_hash) < 0) {
         Py_DECREF(copied);
         return NULL;
