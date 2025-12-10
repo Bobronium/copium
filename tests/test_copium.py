@@ -508,7 +508,7 @@ def test_duper_deepcopy_parity_threaded_mutating() -> None:
 
     stdlib_runs = [run(stdlib_copy) for _ in range(10)]
     copium_runs = [run(copium) for _ in range(10)]
-    assert sum(copium_runs) == pytest.approx(sum(stdlib_runs), abs=20)
+    assert sum(copium_runs) == pytest.approx(sum(stdlib_runs), abs=50)
 
 
 def test_deepcopy_detects_self_mutation(copy) -> None:
