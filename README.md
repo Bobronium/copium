@@ -72,9 +72,7 @@ assert deepcopy(x := []) is not x
 
 `COPIUM_PATCH_DEEPCOPY=1 python example.py`
 
----
-
-To enable the patch manually:
+### To enable the patch manually:
 
 ```py
 import copium.patch
@@ -82,9 +80,7 @@ import copium.patch
 copium.patch.enable()
 ```
 
----
-
-To use manually:
+### To use manually:
 
 ```py
 from copium import deepcopy
