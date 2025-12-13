@@ -93,6 +93,9 @@ static void _copium_cleanup(void) {
         Py_CLEAR(module_state.s__get__);
         _init_state.strings_ready = 0;
     }
+
+    Py_CLEAR(module_state.dict_items_descr);
+    module_state.dict_items_vc = NULL;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -335,9 +338,7 @@ int _copium_init(PyObject* module) {
         PyObject* sep = PyUnicode_FromString("::");
         if (!sep)
             goto error;
-        module_state.ignored_errors_joined = PyUnicode_Join(
-            sep, module_state.ignored_errors
-        );
+        module_state.ignored_errors_joined = PyUnicode_Join(sep, module_state.ignored_errors);
         Py_DECREF(sep);
         if (!module_state.ignored_errors_joined)
             goto error;
@@ -363,6 +364,16 @@ int _copium_init(PyObject* module) {
         goto error;
     }
     _init_state.sentinel_ready = 1;
+
+    module_state.dict_items_descr = PyObject_GetAttrString((PyObject*)&PyDict_Type, "items");
+    if (!module_state.dict_items_descr)
+        goto error;
+
+    module_state.dict_items_vc = PyVectorcall_Function(module_state.dict_items_descr);
+    if (!module_state.dict_items_vc) {
+        PyErr_SetString(PyExc_TypeError, "copium: failed to intern dict.items vectorcall");
+        goto error;
+    }
 
     if (PyThread_tss_create(&module_state.memo_tss) != 0) {
         PyErr_SetString(PyExc_ImportError, "copium: failed to create memo TSS");

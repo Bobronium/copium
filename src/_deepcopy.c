@@ -106,6 +106,9 @@ static MAYBE_INLINE PyObject* deepcopy_list(
     if (!copied)
         return NULL;
 
+    // Once we put list in memo, Python will be able access its items,
+    // which will lead to segfault if we won't override NULL pointers
+    // with valid PyObjects. Still this is much faster than using PyList_Append.
     for (Py_ssize_t i = 0; i < sz; i++) {
 #if PY_VERSION_HEX < PY_VERSION_3_12_HEX
         Py_INCREF(Py_Ellipsis);
@@ -117,27 +120,31 @@ static MAYBE_INLINE PyObject* deepcopy_list(
         return NULL;
     }
 
-    // not handling changed list size in this version
     for (Py_ssize_t i = 0; i < sz; i++) {
-        if (UNLIKELY(i >= PyList_GET_SIZE(original))) {
-            return copied;
+        PyObject* item = COPIUM_PyList_GET_ITEM_REF(original, i);
+        if (UNLIKELY(item == NULL)) {
+            PyErr_SetString(PyExc_RuntimeError, "list changed size during iteration");
+            goto error;
         }
 
-        PyObject* item = Py_NewRef(PyList_GET_ITEM(original, i));
         Py_SETREF(item, deepcopy(item, memo));
 
         if (!item)
             goto error;
 
-        if (UNLIKELY(i >= PyList_GET_SIZE(copied))) {
+        // Though highly unlikely, since we're exposing list in memo, it theoretically could change.
+        COPIUM_Py_BEGIN_CRITICAL_SECTION(copied);
+        if (UNLIKELY(PyList_GET_SIZE(copied) != sz)) {
             Py_DECREF(item);
-            return copied;
+            PyErr_SetString(PyExc_RuntimeError, "list changed size during iteration");
+            goto error;
         }
-
-        PyList_SET_ITEM(copied, i, item);
 #if PY_VERSION_HEX < PY_VERSION_3_12_HEX
-        Py_DECREF(Py_Ellipsis);
+        PyList_SetItem(copied, i, item);  // Have to decref PyEllipsis since it's not immortal
+#else
+        PyList_SET_ITEM(copied, i, item);  // Technically may leak if somebody modified new list
 #endif
+        COPIUM_Py_END_CRITICAL_SECTION();
     }
 
     return copied;
@@ -202,15 +209,15 @@ static MAYBE_INLINE PyObject* deepcopy_dict(
     }
 
     DictIterGuard iter_guard;
-    dict_iter_init(&iter_guard, original);
+    if (dict_iter_init(&iter_guard, original) < 0) {
+        return NULL;
+    }
 
     PyObject *key, *value;
     int iter_flag;
 
+    // Relying on dict_iter_next to INCREF key and value
     while ((iter_flag = dict_iter_next(&iter_guard, &key, &value)) > 0) {
-        Py_INCREF(key);
-        Py_INCREF(value);
-
         Py_SETREF(key, deepcopy(key, memo));
         if (!key) {
             Py_DECREF(value);
@@ -223,11 +230,7 @@ static MAYBE_INLINE PyObject* deepcopy_dict(
             goto error;
         }
 
-        int ret = PyDict_SetItem(copied, key, value);
-        Py_DECREF(key);
-        Py_DECREF(value);
-
-        if (ret < 0)
+        if (COPIUM_PyDict_SetItem_Take2((PyDictObject*)copied, key, value) < 0)
             goto error;
     }
 
@@ -250,21 +253,26 @@ static MAYBE_INLINE PyObject* deepcopy_set(
 ) {
     // Original deepcopy used __reduce__ protocol to copy set, which prevented case
     // when set size could change mid iteration. Preserving this behavior to the best of our ability.
-    // TODO: lock the set on free-threaded builds
-    Py_ssize_t sz = PySet_Size(original);
+    PyObject* snapshot;
+    PyObject* item;
+    Py_ssize_t i;
+
+    COPIUM_Py_BEGIN_CRITICAL_SECTION(original) Py_ssize_t sz = PySet_Size(original);
     if (sz < 0)
         return NULL;
 
-    PyObject* snapshot = PyTuple_New(sz);
+    snapshot = PyTuple_New(sz);
     if (!snapshot)
         return NULL;
 
-    Py_ssize_t pos = 0, i = 0;
-    PyObject* item;
+    Py_ssize_t pos = 0;
+    i = 0;
     Py_hash_t hash;
-    while (_PySet_NextEntry(original, &pos, &item, &hash) && i < sz) {
+    while (_PySet_NextEntry(original, &pos, &item, &hash)) {
         PyTuple_SET_ITEM(snapshot, i++, Py_NewRef(item));
     }
+
+    COPIUM_Py_END_CRITICAL_SECTION();
 
     PyObject* copied = PySet_New(NULL);
     if (!copied) {

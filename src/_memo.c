@@ -1671,11 +1671,11 @@ static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
 }
 
 static ALWAYS_INLINE int memoize(
-    PyMemoObject* memo, PyObject* original, PyObject* copy, Py_ssize_t hash
+    PyMemoObject* memo, void* original, PyObject* copy, Py_ssize_t hash
 ) {
-    if (memo_table_insert_h(&memo->table, (void*)original, copy, hash) < 0)
+    if (memo_table_insert_h(&memo->table, original, copy, hash) < 0)
         return -1;
-    if (keepalive_append(&memo->keepalive, original) < 0)
+    if (keepalive_append(&memo->keepalive, (PyObject*)original) < 0)
         return -1;
     return 0;
 }
@@ -1691,8 +1691,8 @@ static ALWAYS_INLINE PyObject* remember(
     return NULL;
 }
 
-static int forget(PyMemoObject* memo, PyObject* original, Py_ssize_t memo_key_hash) {
-    return memo_table_remove_h(memo->table, (void*)original, memo_key_hash);
+static int forget(PyMemoObject* memo, void* original, Py_ssize_t memo_key_hash) {
+    return memo_table_remove_h(memo->table, original, memo_key_hash);
 }
 
 /* -------------------- Adaptive Fallback Helpers ---------------------------- */
