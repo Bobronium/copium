@@ -16,830 +16,794 @@
 
 #include "object.h"
 
-/* _PySet_NextEntry() */
 #if PY_VERSION_HEX >= PY_VERSION_3_13_HEX
     #include "pycore_setobject.h"
 #endif
 
-static MAYBE_INLINE PyObject* deepcopy_list(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
-static MAYBE_INLINE PyObject* deepcopy_tuple(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
-static MAYBE_INLINE PyObject* deepcopy_dict(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
-static MAYBE_INLINE PyObject* deepcopy_set(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash);
+static ALWAYS_INLINE PyObject* deepcopy(PyObject* original, PyMemoObject* memo);
+
+static MAYBE_INLINE PyObject* deepcopy_list(
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
+);
+static MAYBE_INLINE PyObject* deepcopy_tuple(
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
+);
+static MAYBE_INLINE PyObject* deepcopy_dict(
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
+);
+static MAYBE_INLINE PyObject* deepcopy_set(
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
+);
 static MAYBE_INLINE PyObject* deepcopy_frozenset(
-    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
 );
 static MAYBE_INLINE PyObject* deepcopy_bytearray(
-    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
 );
 static MAYBE_INLINE PyObject* deepcopy_method(
-    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
 );
 static MAYBE_INLINE PyObject* deepcopy_custom(
-    PyObject* obj, PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t memo_key_hash
 );
 static PyObject* deepcopy_object(
-    PyObject* obj, PyTypeObject* tp, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyTypeObject* tp, PyMemoObject* memo, Py_ssize_t memo_key_hash
 );
 
-static ALWAYS_INLINE PyObject* deepcopy(PyObject* obj, PyMemoObject* memo) {
-    assert(memo != NULL && "deepcopy_c: memo must not be NULL");
+static ALWAYS_INLINE PyObject* deepcopy(PyObject* original, PyMemoObject* memo) {
+    assert(memo != NULL && "deepcopy: memo must not be NULL");
 
-    PyTypeObject* tp = Py_TYPE(obj);
-    /* 1) Immortal or literal immutables → fastest return */
-    if (LIKELY(is_literal_immutable(tp))) {
-        return Py_NewRef(obj);
-    }
+    PyTypeObject* type = Py_TYPE(original);
 
-    /* 2) Memo hit */
-    void* id = (void*)obj;
-    Py_ssize_t h = memo_hash_pointer(id);
-    PyObject* hit = memo_table_lookup_h(memo->table, id, h);
-    if (hit)
-        return Py_NewRef(hit);
+    if (LIKELY(is_literal_immutable(type)))
+        return Py_NewRef(original);
 
-    /* 3) Popular containers first (specialized, likely hot) */
-    if (tp == &PyDict_Type)
-        return RECURSION_GUARDED(deepcopy_dict(obj, memo, h));
-    if (tp == &PyList_Type)
-        return RECURSION_GUARDED(deepcopy_list(obj, memo, h));
-    if (tp == &PyTuple_Type)
-        return RECURSION_GUARDED(deepcopy_tuple(obj, memo, h));
-    if (tp == &PySet_Type)
-        return RECURSION_GUARDED(deepcopy_set(obj, memo, h));
+    Py_ssize_t memo_key_hash;
+    PyObject* memoized = remember(memo, original, &memo_key_hash);
+    if (memoized)
+        return memoized;
 
-    /* 4) Other atomic immutables (builtin/class types) */
-    if (is_builtin_immutable(tp) || is_class(tp)) {
-        return Py_NewRef(obj);
-    }
+    if (type == &PyTuple_Type)
+        return RECURSION_GUARDED(deepcopy_tuple(original, memo, memo_key_hash));
+    if (type == &PyDict_Type)
+        return RECURSION_GUARDED(deepcopy_dict(original, memo, memo_key_hash));
+    if (type == &PyList_Type)
+        return RECURSION_GUARDED(deepcopy_list(original, memo, memo_key_hash));
+    if (type == &PySet_Type)
+        return RECURSION_GUARDED(deepcopy_set(original, memo, memo_key_hash));
 
-    if (tp == &PyFrozenSet_Type)
-        return deepcopy_frozenset(obj, memo, h);
+    if (is_builtin_immutable(type) || is_class(type))
+        return Py_NewRef(original);
 
-    if (tp == &PyByteArray_Type)
-        return deepcopy_bytearray(obj, memo, h);
+    if (type == &PyFrozenSet_Type)
+        return RECURSION_GUARDED(deepcopy_frozenset(original, memo, memo_key_hash));
+    if (type == &PyByteArray_Type)
+        return deepcopy_bytearray(original, memo, memo_key_hash);
+    if (type == &PyMethod_Type)
+        return deepcopy_method(original, memo, memo_key_hash);
 
-    if (tp == &PyMethod_Type)
-        return deepcopy_method(obj, memo, h);
+    if (is_stdlib_immutable(type))
+        return Py_NewRef(original);
 
-    if (is_stdlib_immutable(tp))  // touch non-static types last
-        return Py_NewRef(obj);
+    PyObject* __deepcopy__ = NULL;
+    int has_deepcopy = PyObject_GetOptionalAttr(
+        original, module_state.s__deepcopy__, &__deepcopy__
+    );
+    if (has_deepcopy < 0)
+        return NULL;
+    if (has_deepcopy)
+        return deepcopy_custom(original, __deepcopy__, memo, memo_key_hash);
 
-    {
-        PyObject* __deepcopy__ = NULL;
-        int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &__deepcopy__);
-        if (has_deepcopy < 0)
-            return NULL;
-        if (has_deepcopy) {
-            return deepcopy_custom(obj, __deepcopy__, memo, h);
-        }
-    }
-
-    PyObject* res = deepcopy_object(obj, tp, memo, h);
-    return res;
+    return deepcopy_object(original, type, memo, memo_key_hash);
 }
 
-static MAYBE_INLINE PyObject* deepcopy_list(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
-    // Owned refs that need cleanup on error
-    PyObject* copy = NULL;
-    PyObject* copied_item = NULL;
+static MAYBE_INLINE PyObject* deepcopy_list(
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
+) {
+    Py_ssize_t sz = PyList_GET_SIZE(original);
 
-    Py_ssize_t sz = Py_SIZE(obj);
-    copy = PyList_New(sz);
-    if (!copy)
-        goto error;
+    PyObject* copied = PyList_New(sz);
+    if (!copied)
+        return NULL;
 
-    for (Py_ssize_t i = 0; i < sz; ++i) {
-        PyList_SET_ITEM(copy, i, Py_NewRef(Py_None));
+    // Once we put list in memo, Python will be able access its items,
+    // which will lead to segfault if we won't override NULL pointers
+    // with valid PyObjects. Still this is much faster than using PyList_Append.
+    for (Py_ssize_t i = 0; i < sz; i++) {
+#if PY_VERSION_HEX < PY_VERSION_3_12_HEX
+        Py_INCREF(Py_Ellipsis);
+#endif
+        PyList_SET_ITEM(copied, i, Py_Ellipsis);
     }
-    if (memoize(memo, obj, copy, id_hash) < 0)
-        goto error;
-
-    for (Py_ssize_t i = 0; i < sz; ++i) {
-        PyObject* item = PyList_GET_ITEM(obj, i);
-        copied_item = deepcopy(item, memo);
-        if (!copied_item)
-            goto memoized_error;
-        Py_DECREF(Py_None);
-        PyList_SET_ITEM(copy, i, copied_item);
-        copied_item = NULL;  // ownership transferred to list
+    if (memoize(memo, original, copied, memo_key_hash) < 0) {
+        Py_DECREF(copied);
+        return NULL;
     }
 
-    /* If the source list grew during the first pass, append the extra tail items. */
-    Py_ssize_t i2 = sz;
-    while (i2 < Py_SIZE(obj)) {
-        PyObject* item2 = PyList_GET_ITEM(obj, i2);
-        copied_item = deepcopy(item2, memo);
-        if (!copied_item)
-            goto memoized_error;
-        if (PyList_Append(copy, copied_item) < 0)
-            goto memoized_error;
-        Py_DECREF(copied_item);
-        copied_item = NULL;
-        i2++;
-    }
-    return copy;
+    for (Py_ssize_t i = 0; i < sz; i++) {
+        PyObject* item = COPIUM_PyList_GET_ITEM_REF(original, i);
+        if (UNLIKELY(item == NULL)) {
+            PyErr_SetString(PyExc_RuntimeError, "list changed size during iteration");
+            goto error;
+        }
 
-memoized_error:
-    forget(memo, obj, id_hash);
+        Py_SETREF(item, deepcopy(item, memo));
+
+        if (!item)
+            goto error;
+
+        // Though highly unlikely, since we're exposing list in memo, it theoretically could change.
+        COPIUM_Py_BEGIN_CRITICAL_SECTION(copied);
+        if (UNLIKELY(PyList_GET_SIZE(copied) != sz)) {
+            Py_DECREF(item);
+            PyErr_SetString(PyExc_RuntimeError, "list changed size during iteration");
+            goto error;
+        }
+#if PY_VERSION_HEX < PY_VERSION_3_12_HEX
+        PyList_SetItem(copied, i, item);  // Have to decref PyEllipsis since it's not immortal
+#else
+        PyList_SET_ITEM(copied, i, item);  // Technically may leak if somebody modified new list
+#endif
+        COPIUM_Py_END_CRITICAL_SECTION();
+    }
+
+    return copied;
+
 error:
-    Py_XDECREF(copy);
-    Py_XDECREF(copied_item);
+    forget(memo, original, memo_key_hash);
+    Py_DECREF(copied);
     return NULL;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_tuple(
-    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
 ) {
-    // Owned refs that need cleanup on error
-    PyObject* copy = NULL;
-    PyObject* copied = NULL;
+    Py_ssize_t sz = PyTuple_GET_SIZE(original);
 
-    Py_ssize_t sz = Py_SIZE(obj);
-    copy = PyTuple_New(sz);
-    if (!copy)
-        goto error;
+    PyObject* copied = PyTuple_New(sz);
+    if (!copied)
+        return NULL;
 
     int all_same = 1;
-    for (Py_ssize_t i = 0; i < sz; ++i) {
-        PyObject* item = PyTuple_GET_ITEM(obj, i);
-        copied = deepcopy(item, memo);
-        if (!copied)
-            goto error;
-        if (copied != item)
+    for (Py_ssize_t i = 0; i < sz; i++) {
+        PyObject* item = PyTuple_GET_ITEM(original, i);
+        PyObject* copied_item = deepcopy(item, memo);
+        if (!copied_item) {
+            Py_DECREF(copied);
+            return NULL;
+        }
+        if (copied_item != item)
             all_same = 0;
-        PyTuple_SET_ITEM(copy, i, copied);
-        copied = NULL;  // ownership transferred to tuple
-    }
-    if (all_same) {
-        Py_DECREF(copy);
-        return Py_NewRef(obj);
+        PyTuple_SET_ITEM(copied, i, copied_item);
     }
 
-    /* Handle self-referential tuples: if a recursive path already created a copy,
-       prefer that existing copy to maintain identity. */
-    PyObject* existing = memo_table_lookup_h(memo->table, (void*)obj, id_hash);
+    if (all_same) {
+        Py_DECREF(copied);
+        return Py_NewRef(original);
+    }
+
+    PyObject* existing = memo_table_lookup_h(memo->table, (void*)original, memo_key_hash);
     if (existing) {
-        Py_DECREF(copy);
+        Py_DECREF(copied);
         return Py_NewRef(existing);
     }
 
-    if (memoize(memo, obj, copy, id_hash) < 0)
-        goto error;
-    return copy;
+    if (memoize(memo, original, copied, memo_key_hash) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
 
-error:
-    Py_XDECREF(copy);
-    Py_XDECREF(copied);
-    return NULL;
+    return copied;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_dict(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
-    // Owned refs that need cleanup on error
-    PyObject* copy = NULL;
-    PyObject* ckey = NULL;
-    PyObject* cvalue = NULL;
+static MAYBE_INLINE PyObject* deepcopy_dict(
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
+) {
+    PyObject* copied = _PyDict_NewPresized(PyDict_Size(original));
+    if (!copied)
+        return NULL;
 
-    Py_ssize_t sz = Py_SIZE(obj);
-    copy = _PyDict_NewPresized(sz);
-    if (!copy)
-        goto error_no_cleanup;
-    if (memoize(memo, obj, copy, id_hash) < 0)
-        goto error_no_cleanup;
+    if (memoize(memo, original, copied, memo_key_hash) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
 
-    // NOTE: iter_guard is declared here, after early returns.
-    // error_no_cleanup is for paths before iter_guard is initialized or after dict_iter_next
-    // already cleaned up. error is for mid-iteration cleanup (3.14+ only).
     DictIterGuard iter_guard;
-    dict_iter_init(&iter_guard, obj);
+    if (dict_iter_init(&iter_guard, original) < 0) {
+        return NULL;
+    }
 
     PyObject *key, *value;
-    int ret;
-    while ((ret = dict_iter_next(&iter_guard, &key, &value)) > 0) {
-        ckey = deepcopy(key, memo);
-        if (!ckey)
-            goto memoized_error;
-        cvalue = deepcopy(value, memo);
-        if (!cvalue)
-            goto memoized_error;
-        if (PyDict_SetItem(copy, ckey, cvalue) < 0)
-            goto memoized_error;
-        Py_DECREF(ckey);
-        ckey = NULL;
-        Py_DECREF(cvalue);
-        cvalue = NULL;
+    int iter_flag;
+
+    // Relying on dict_iter_next to INCREF key and value
+    while ((iter_flag = dict_iter_next(&iter_guard, &key, &value)) > 0) {
+        Py_SETREF(key, deepcopy(key, memo));
+        if (!key) {
+            Py_DECREF(value);
+            goto error;
+        }
+
+        Py_SETREF(value, deepcopy(value, memo));
+        if (!value) {
+            Py_DECREF(key);
+            goto error;
+        }
+
+        if (COPIUM_PyDict_SetItem_Take2((PyDictObject*)copied, key, value) < 0)
+            goto error;
     }
-    if (ret < 0)
-        goto memoized_error_no_cleanup;  // dict_iter_next already cleaned up on -1
 
-    return copy;
+    if (iter_flag < 0)
+        goto error;
 
-memoized_error:
+    return copied;
+
+error:
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
     dict_iter_cleanup(&iter_guard);
 #endif
-memoized_error_no_cleanup:
-    forget(memo, obj, id_hash);
-    goto error_no_cleanup;
-error_no_cleanup:
-    Py_XDECREF(copy);
-    Py_XDECREF(ckey);
-    Py_XDECREF(cvalue);
+    forget(memo, original, memo_key_hash);
+    Py_DECREF(copied);
     return NULL;
 }
 
-static MAYBE_INLINE PyObject* deepcopy_set(PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash) {
-    // Owned refs that need cleanup on error
-    PyObject* copy = NULL;
-    PyObject* snap = NULL;
-    PyObject* citem = NULL;
+static MAYBE_INLINE PyObject* deepcopy_set(
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
+) {
+    // Original deepcopy used __reduce__ protocol to copy set, which prevented case
+    // when set size could change mid iteration. Preserving this behavior to the best of our ability.
+    PyObject* snapshot;
+    PyObject* item;
+    Py_ssize_t i;
 
-    copy = PySet_New(NULL);
-    if (!copy)
-        goto error;
-    if (memoize(memo, obj, copy, id_hash) < 0)
-        goto error;
+    COPIUM_Py_BEGIN_CRITICAL_SECTION(original) Py_ssize_t sz = PySet_Size(original);
+    if (sz < 0)
+        return NULL;
 
-    /* Snapshot into a pre-sized tuple without invoking user code. */
-    Py_ssize_t n = PySet_Size(obj);
-    if (n == -1)
-        goto memoized_error;
-    snap = PyTuple_New(n);
-    if (!snap)
-        goto memoized_error;
+    snapshot = PyTuple_New(sz);
+    if (!snapshot)
+        return NULL;
 
     Py_ssize_t pos = 0;
-    PyObject* item;
+    i = 0;
     Py_hash_t hash;
-    Py_ssize_t i = 0;
+    while (_PySet_NextEntry(original, &pos, &item, &hash)) {
+        PyTuple_SET_ITEM(snapshot, i++, Py_NewRef(item));
+    }
 
-    while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
-        if (i < n) {
-            /* item is borrowed; store owned ref in the tuple */
-            Py_INCREF(item);
-            PyTuple_SET_ITEM(snap, i, item);
-            i++;
-        } else {
-            /* If the set grows during snapshotting, ignore extras to avoid overflow. */
-        }
+    COPIUM_Py_END_CRITICAL_SECTION();
+
+    PyObject* copied = PySet_New(NULL);
+    if (!copied) {
+        Py_DECREF(snapshot);
+        return NULL;
+    }
+
+    if (memoize(memo, original, copied, memo_key_hash) < 0) {
+        Py_DECREF(snapshot);
+        Py_DECREF(copied);
+        return NULL;
     }
 
     for (Py_ssize_t j = 0; j < i; j++) {
-        PyObject* elem = PyTuple_GET_ITEM(snap, j); /* borrowed from snapshot */
-        citem = deepcopy(elem, memo);
-        if (!citem)
-            goto memoized_error;
-        if (PySet_Add(copy, citem) < 0)
-            goto memoized_error;
-        Py_DECREF(citem);
-        citem = NULL;
+        item = PyTuple_GET_ITEM(snapshot, j);
+        PyObject* copied_item = deepcopy(item, memo);
+        if (!copied_item)
+            goto error;
+
+        int ret = PySet_Add(copied, copied_item);
+        Py_DECREF(copied_item);
+
+        if (ret < 0)
+            goto error;
     }
-    Py_DECREF(snap);
 
-    return copy;
+    Py_DECREF(snapshot);
+    return copied;
 
-memoized_error:
-    forget(memo, obj, id_hash);
 error:
-    Py_XDECREF(copy);
-    Py_XDECREF(snap);
-    Py_XDECREF(citem);
+    Py_DECREF(snapshot);
+    forget(memo, original, memo_key_hash);
+    Py_DECREF(copied);
     return NULL;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_frozenset(
-    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
 ) {
-    // Owned refs that need cleanup on error
-    PyObject* temp = NULL;
-    PyObject* copy = NULL;
-    PyObject* citem = NULL;
+    Py_ssize_t sz = PySet_Size(original);
+    if (sz < 0)
+        return NULL;
 
-    /* Pre-size snapshot: frozenset is immutable, so size won't change mid-loop. */
-    Py_ssize_t n = PySet_Size(obj);
-    if (n == -1)
-        goto error;
-
-    temp = PyTuple_New(n);
-    if (!temp)
-        goto error;
+    PyObject* items = PyTuple_New(sz);
+    if (!items)
+        return NULL;
 
     Py_ssize_t pos = 0, i = 0;
     PyObject* item;
     Py_hash_t hash;
 
-    while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
-        /* item is borrowed; deepcopy_c returns a new reference which tuple will own. */
-        citem = deepcopy(item, memo);
-        if (!citem)
-            goto error;
-        PyTuple_SET_ITEM(temp, i, citem);  // steals reference to citem
-        citem = NULL;                      // ownership transferred
-        i++;
+    while (_PySet_NextEntry(original, &pos, &item, &hash) && i < sz) {
+        PyObject* copied_item = deepcopy(item, memo);
+        if (!copied_item) {
+            Py_DECREF(items);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(items, i++, copied_item);
     }
 
-    copy = PyFrozenSet_New(temp);
-    Py_DECREF(temp);
-    temp = NULL;
-    if (!copy)
-        goto error;
-    if (memoize(memo, obj, copy, id_hash) < 0)
-        goto error;
-    return copy;
+    PyObject* copied = PyFrozenSet_New(items);
+    Py_DECREF(items);
 
-error:
-    Py_XDECREF(temp);
-    Py_XDECREF(copy);
-    Py_XDECREF(citem);
-    return NULL;
+    if (!copied)
+        return NULL;
+
+    if (memoize(memo, original, copied, memo_key_hash) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    return copied;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_bytearray(
-    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
 ) {
-    PyObject* copy = NULL;
+    Py_ssize_t sz = PyByteArray_Size(original);
 
-    Py_ssize_t sz = PyByteArray_Size(obj);
-    copy = PyByteArray_FromStringAndSize(NULL, sz);
-    if (!copy)
-        goto error;
+    PyObject* copied = PyByteArray_FromStringAndSize(NULL, sz);
+    if (!copied)
+        return NULL;
+
     if (sz)
-        memcpy(PyByteArray_AS_STRING(copy), PyByteArray_AS_STRING(obj), (size_t)sz);
-    if (memoize(memo, obj, copy, id_hash) < 0)
-        goto error;
-    return copy;
+        memcpy(PyByteArray_AS_STRING(copied), PyByteArray_AS_STRING(original), (size_t)sz);
 
-error:
-    Py_XDECREF(copy);
-    return NULL;
+    if (memoize(memo, original, copied, memo_key_hash) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    return copied;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_method(
-    PyObject* obj, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
 ) {
-    // Owned refs that need cleanup on error
-    PyObject* func = NULL;
-    PyObject* self = NULL;
-    PyObject* cself = NULL;
-    PyObject* copy = NULL;
+    PyObject* func = PyMethod_GET_FUNCTION(original);
+    PyObject* self = PyMethod_GET_SELF(original);
 
-    func = PyMethod_GET_FUNCTION(obj);
-    self = PyMethod_GET_SELF(obj);
     if (!func || !self)
-        goto error;
+        return NULL;
 
-    Py_INCREF(func);
     Py_INCREF(self);
-    cself = deepcopy(self, memo);
+    PyObject* copied_self = deepcopy(self, memo);
     Py_DECREF(self);
-    self = NULL;
-    if (!cself)
-        goto error;
 
-    copy = PyMethod_New(func, cself);
-    Py_DECREF(func);
-    func = NULL;
-    Py_DECREF(cself);
-    cself = NULL;
-    if (!copy)
-        goto error;
+    if (!copied_self)
+        return NULL;
 
-    if (memoize(memo, obj, copy, id_hash) < 0)
-        goto error;
-    return copy;
+    PyObject* copied = PyMethod_New(func, copied_self);
+    Py_DECREF(copied_self);
 
-error:
-    Py_XDECREF(func);
-    Py_XDECREF(self);
-    Py_XDECREF(cself);
-    Py_XDECREF(copy);
-    return NULL;
+    if (!copied)
+        return NULL;
+
+    if (memoize(memo, original, copied, memo_key_hash) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    return copied;
 }
 
 static PyObject* deepcopy_custom(
-    PyObject* obj, PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t id_hash
+    PyObject* original, PyObject* __deepcopy__, PyMemoObject* memo, Py_ssize_t memo_key_hash
 ) {
-    PyObject* res = NULL;
-
     MemoCheckpoint checkpoint = memo_checkpoint(memo);
 
-    res = PyObject_CallOneArg(__deepcopy__, (PyObject*)memo);
+    PyObject* copied = PyObject_CallOneArg(__deepcopy__, (PyObject*)memo);
+    if (!copied)
+        copied = _maybe_retry_with_dict_memo(original, __deepcopy__, memo, checkpoint);
 
-    if (!res)
-        res = _maybe_retry_with_dict_memo(obj, __deepcopy__, memo, checkpoint);
-
-    if (!res)
-        goto done;
-
-    if (res != obj && memoize(memo, obj, res, id_hash) < 0)
-        goto error;
-
-    goto done;
-
-error:
-    Py_CLEAR(res);
-done:
     Py_DECREF(__deepcopy__);
-    return res;
+
+    if (!copied)
+        return NULL;
+
+    if (copied != original && memoize(memo, original, copied, memo_key_hash) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    return copied;
 }
 
-// Reduce protocol implementation for C-memo path.
-// This is the cold fallback path - not marked ALWAYS_INLINE to avoid code bloat.
-static PyObject* deepcopy_object(
-    PyObject* obj, PyTypeObject* tp, PyMemoObject* memo, Py_ssize_t id_hash
-) {
-    // All owned refs declared at top for cleanup
-    PyObject* reduce_result = NULL;
-    PyObject* inst = NULL;
-    PyObject* setstate = NULL;
-    PyObject* state_copy = NULL;
-    PyObject* result = NULL;
-    PyObject* dict_state_copy = NULL;
-    PyObject* inst_dict = NULL;
-    PyObject* slotstate_copy = NULL;
-    PyObject* append = NULL;
-    PyObject* it = NULL;
-    PyObject* item_copy = NULL;
-    PyObject* key_copy = NULL;
-    PyObject* value_copy = NULL;
+static PyObject* reconstruct_newobj(PyObject* argtup, PyMemoObject* memo) {
+    Py_ssize_t nargs = PyTuple_GET_SIZE(argtup);
+    if (nargs < 1) {
+        PyErr_SetString(PyExc_TypeError, "__newobj__ requires at least 1 argument");
+        return NULL;
+    }
 
-    reduce_result = try_reduce_via_registry(obj, tp);
+    PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
+    if (!PyType_Check(cls)) {
+        PyErr_Format(
+            PyExc_TypeError, "__newobj__ arg 1 must be a type, not %.200s", Py_TYPE(cls)->tp_name
+        );
+        return NULL;
+    }
+
+    PyObject* args = PyTuple_New(nargs - 1);
+    if (!args)
+        return NULL;
+
+    for (Py_ssize_t i = 1; i < nargs; i++) {
+        PyObject* arg = PyTuple_GET_ITEM(argtup, i);
+        PyObject* copied_arg = deepcopy(arg, memo);
+        if (!copied_arg) {
+            Py_DECREF(args);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(args, i - 1, copied_arg);
+    }
+
+    PyObject* instance = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, args, NULL);
+    Py_DECREF(args);
+    return instance;
+}
+
+static PyObject* reconstruct_newobj_ex(PyObject* argtup, PyMemoObject* memo) {
+    if (PyTuple_GET_SIZE(argtup) != 3) {
+        PyErr_Format(
+            PyExc_TypeError, "__newobj_ex__ requires 3 arguments, got %zd", PyTuple_GET_SIZE(argtup)
+        );
+        return NULL;
+    }
+
+    PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
+    PyObject* args = PyTuple_GET_ITEM(argtup, 1);
+    PyObject* kwargs = PyTuple_GET_ITEM(argtup, 2);
+
+    if (!PyType_Check(cls)) {
+        PyErr_Format(
+            PyExc_TypeError, "__newobj_ex__ arg 1 must be a type, not %.200s", Py_TYPE(cls)->tp_name
+        );
+        return NULL;
+    }
+    if (!PyTuple_Check(args)) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "__newobj_ex__ arg 2 must be a tuple, not %.200s",
+            Py_TYPE(args)->tp_name
+        );
+        return NULL;
+    }
+    if (!PyDict_Check(kwargs)) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "__newobj_ex__ arg 3 must be a dict, not %.200s",
+            Py_TYPE(kwargs)->tp_name
+        );
+        return NULL;
+    }
+
+    PyObject* copied_args = deepcopy(args, memo);
+    if (!copied_args)
+        return NULL;
+
+    PyObject* copied_kwargs = deepcopy(kwargs, memo);
+    if (!copied_kwargs) {
+        Py_DECREF(copied_args);
+        return NULL;
+    }
+
+    PyObject* instance = ((PyTypeObject*)cls)
+                             ->tp_new((PyTypeObject*)cls, copied_args, copied_kwargs);
+    Py_DECREF(copied_args);
+    Py_DECREF(copied_kwargs);
+    return instance;
+}
+
+static PyObject* reconstruct_callable(PyObject* callable, PyObject* argtup, PyMemoObject* memo) {
+    Py_ssize_t nargs = PyTuple_GET_SIZE(argtup);
+
+    if (nargs == 0)
+        return PyObject_CallNoArgs(callable);
+
+    PyObject* copied_args = PyTuple_New(nargs);
+    if (!copied_args)
+        return NULL;
+
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        PyObject* arg = PyTuple_GET_ITEM(argtup, i);
+        PyObject* copied_arg = deepcopy(arg, memo);
+        if (!copied_arg) {
+            Py_DECREF(copied_args);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(copied_args, i, copied_arg);
+    }
+
+    PyObject* instance = PyObject_CallObject(callable, copied_args);
+    Py_DECREF(copied_args);
+    return instance;
+}
+
+static int apply_setstate(PyObject* instance, PyObject* state, PyMemoObject* memo) {
+    PyObject* setstate = NULL;
+    if (PyObject_GetOptionalAttr(instance, module_state.s__setstate__, &setstate) < 0)
+        return -1;
+
+    if (!setstate)
+        return 0;
+
+    PyObject* copied_state = deepcopy(state, memo);
+    if (!copied_state) {
+        Py_DECREF(setstate);
+        return -1;
+    }
+
+    PyObject* result = PyObject_CallOneArg(setstate, copied_state);
+    Py_DECREF(copied_state);
+    Py_DECREF(setstate);
+
+    if (!result)
+        return -1;
+
+    Py_DECREF(result);
+    return 1;
+}
+
+static int apply_dict_state(PyObject* instance, PyObject* dict_state, PyMemoObject* memo) {
+    if (!dict_state || dict_state == Py_None)
+        return 0;
+
+    if (!PyDict_Check(dict_state)) {
+        PyErr_SetString(PyExc_TypeError, "state must be a dict");
+        return -1;
+    }
+
+    PyObject* copied = deepcopy(dict_state, memo);
+    if (!copied)
+        return -1;
+
+    PyObject* instance_dict = PyObject_GetAttr(instance, module_state.s__dict__);
+    if (!instance_dict) {
+        Py_DECREF(copied);
+        return -1;
+    }
+
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    int ret = 0;
+
+    while (PyDict_Next(copied, &pos, &key, &value)) {
+        if (PyObject_SetItem(instance_dict, key, value) < 0) {
+            ret = -1;
+            break;
+        }
+    }
+
+    Py_DECREF(instance_dict);
+    Py_DECREF(copied);
+    return ret;
+}
+
+static int apply_slot_state(PyObject* instance, PyObject* slotstate, PyMemoObject* memo) {
+    if (!slotstate || slotstate == Py_None)
+        return 0;
+
+    if (!PyDict_Check(slotstate)) {
+        PyErr_SetString(PyExc_TypeError, "slot state is not a dictionary");
+        return -1;
+    }
+
+    PyObject* copied = deepcopy(slotstate, memo);
+    if (!copied)
+        return -1;
+
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    int ret = 0;
+
+    while (PyDict_Next(copied, &pos, &key, &value)) {
+        if (PyObject_SetAttr(instance, key, value) < 0) {
+            ret = -1;
+            break;
+        }
+    }
+
+    Py_DECREF(copied);
+    return ret;
+}
+
+static int apply_state_tuple(PyObject* instance, PyObject* state, PyMemoObject* memo) {
+    PyObject* dict_state = NULL;
+    PyObject* slotstate = NULL;
+
+    if (PyTuple_Check(state) && PyTuple_GET_SIZE(state) == 2) {
+        dict_state = PyTuple_GET_ITEM(state, 0);
+        slotstate = PyTuple_GET_ITEM(state, 1);
+    } else {
+        dict_state = state;
+    }
+
+    if (apply_dict_state(instance, dict_state, memo) < 0)
+        return -1;
+
+    if (apply_slot_state(instance, slotstate, memo) < 0)
+        return -1;
+
+    return 0;
+}
+
+static int apply_listitems(PyObject* instance, PyObject* listitems, PyMemoObject* memo) {
+    if (!listitems)
+        return 0;
+
+    PyObject* append = PyObject_GetAttr(instance, module_state.s_append);
+    if (!append)
+        return -1;
+
+    PyObject* iterator = PyObject_GetIter(listitems);
+    if (!iterator) {
+        Py_DECREF(append);
+        return -1;
+    }
+
+    int ret = 0;
+    PyObject* item;
+
+    while ((item = PyIter_Next(iterator))) {
+        PyObject* copied_item = deepcopy(item, memo);
+        Py_DECREF(item);
+
+        if (!copied_item) {
+            ret = -1;
+            break;
+        }
+
+        PyObject* result = PyObject_CallOneArg(append, copied_item);
+        Py_DECREF(copied_item);
+
+        if (!result) {
+            ret = -1;
+            break;
+        }
+        Py_DECREF(result);
+    }
+
+    if (ret == 0 && PyErr_Occurred())
+        ret = -1;
+
+    Py_DECREF(iterator);
+    Py_DECREF(append);
+    return ret;
+}
+
+static int apply_dictitems(PyObject* instance, PyObject* dictitems, PyMemoObject* memo) {
+    if (!dictitems)
+        return 0;
+
+    PyObject* iterator = PyObject_GetIter(dictitems);
+    if (!iterator)
+        return -1;
+
+    int ret = 0;
+    PyObject* pair;
+
+    while ((pair = PyIter_Next(iterator))) {
+        if (!PyTuple_Check(pair) || PyTuple_GET_SIZE(pair) != 2) {
+            Py_DECREF(pair);
+            PyErr_SetString(PyExc_ValueError, "dictiter must yield (key, value) pairs");
+            ret = -1;
+            break;
+        }
+
+        PyObject* key = PyTuple_GET_ITEM(pair, 0);
+        PyObject* value = PyTuple_GET_ITEM(pair, 1);
+        Py_INCREF(key);
+        Py_INCREF(value);
+        Py_DECREF(pair);
+
+        Py_SETREF(key, deepcopy(key, memo));
+        if (!key) {
+            Py_DECREF(value);
+            ret = -1;
+            break;
+        }
+
+        Py_SETREF(value, deepcopy(value, memo));
+        if (!value) {
+            Py_DECREF(key);
+            ret = -1;
+            break;
+        }
+
+        int status = PyObject_SetItem(instance, key, value);
+        Py_DECREF(key);
+        Py_DECREF(value);
+
+        if (status < 0) {
+            ret = -1;
+            break;
+        }
+    }
+
+    if (ret == 0 && PyErr_Occurred())
+        ret = -1;
+
+    Py_DECREF(iterator);
+    return ret;
+}
+
+static PyObject* deepcopy_object(
+    PyObject* original, PyTypeObject* tp, PyMemoObject* memo, Py_ssize_t memo_key_hash
+) {
+    PyObject* reduce_result = try_reduce_via_registry(original, tp);
     if (!reduce_result) {
         if (PyErr_Occurred())
-            goto error;
-        reduce_result = call_reduce_method_preferring_ex(obj);
+            return NULL;
+        reduce_result = call_reduce_method_preferring_ex(original);
         if (!reduce_result)
-            goto error;
+            return NULL;
     }
 
     PyObject *callable, *argtup, *state, *listitems, *dictitems;
     int valid = validate_reduce_tuple(
         reduce_result, &callable, &argtup, &state, &listitems, &dictitems
     );
-    if (valid == REDUCE_ERROR)
-        goto error;
+
+    if (valid == REDUCE_ERROR) {
+        Py_DECREF(reduce_result);
+        return NULL;
+    }
+
     if (valid == REDUCE_STRING) {
         Py_DECREF(reduce_result);
-        return Py_NewRef(obj);
+        return Py_NewRef(original);
     }
 
-    // Handle __newobj__
-    if (callable == module_state.copyreg_newobj) {
-        if (PyTuple_GET_SIZE(argtup) < 1) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "__newobj__ expected at least 1 argument, got %zd",
-                PyTuple_GET_SIZE(argtup)
-            );
-            goto error;
-        }
+    PyObject* instance;
+    if (callable == module_state.copyreg___newobj__)
+        instance = reconstruct_newobj(argtup, memo);
+    else if (callable == module_state.copyreg___newobj___ex)
+        instance = reconstruct_newobj_ex(argtup, memo);
+    else
+        instance = reconstruct_callable(callable, argtup, memo);
 
-        PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
-        if (!PyType_Check(cls)) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "first argument to __newobj__() must be a class, not %.200s",
-                Py_TYPE(cls)->tp_name
-            );
-            goto error;
-        }
-
-        Py_ssize_t nargs = PyTuple_GET_SIZE(argtup) - 1;
-        PyObject* newargs = PyTuple_New(nargs);
-        if (!newargs)
-            goto error;
-
-        for (Py_ssize_t i = 0; i < nargs; i++) {
-            PyObject* arg = PyTuple_GET_ITEM(argtup, i + 1);
-            PyObject* arg_copy = deepcopy(arg, memo);
-            if (!arg_copy) {
-                Py_DECREF(newargs);
-                goto error;
-            }
-            PyTuple_SET_ITEM(newargs, i, arg_copy);
-        }
-
-        inst = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, newargs, NULL);
-        Py_DECREF(newargs);
-        if (!inst)
-            goto error;
-    }
-    // Handle __newobj_ex__
-    else if (callable == module_state.copyreg_newobj_ex) {
-        if (PyTuple_GET_SIZE(argtup) != 3) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "__newobj_ex__ expected 3 arguments, got %zd",
-                PyTuple_GET_SIZE(argtup)
-            );
-            goto error;
-        }
-
-        PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
-        PyObject* args = PyTuple_GET_ITEM(argtup, 1);
-        PyObject* kwargs = PyTuple_GET_ITEM(argtup, 2);
-
-        if (!PyType_Check(cls)) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "first argument to __newobj_ex__() must be a class, not %.200s",
-                Py_TYPE(cls)->tp_name
-            );
-            goto error;
-        }
-        if (!PyTuple_Check(args)) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "second argument to __newobj_ex__() must be a tuple, not %.200s",
-                Py_TYPE(args)->tp_name
-            );
-            goto error;
-        }
-        if (!PyDict_Check(kwargs)) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "third argument to __newobj_ex__() must be a dict, not %.200s",
-                Py_TYPE(kwargs)->tp_name
-            );
-            goto error;
-        }
-
-        PyObject* args_copy = deepcopy(args, memo);
-        if (!args_copy)
-            goto error;
-
-        PyObject* kwargs_copy = deepcopy(kwargs, memo);
-        if (!kwargs_copy) {
-            Py_DECREF(args_copy);
-            goto error;
-        }
-
-        inst = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, args_copy, kwargs_copy);
-        Py_DECREF(args_copy);
-        Py_DECREF(kwargs_copy);
-        if (!inst)
-            goto error;
-    }
-    // Generic callable
-    else {
-        Py_ssize_t nargs = PyTuple_GET_SIZE(argtup);
-        if (nargs == 0) {
-            inst = PyObject_CallNoArgs(callable);
-        } else {
-            PyObject* argtup_copy = PyTuple_New(nargs);
-            if (!argtup_copy)
-                goto error;
-
-            for (Py_ssize_t i = 0; i < nargs; i++) {
-                PyObject* arg = PyTuple_GET_ITEM(argtup, i);
-                PyObject* arg_copy = deepcopy(arg, memo);
-                if (!arg_copy) {
-                    Py_DECREF(argtup_copy);
-                    goto error;
-                }
-                PyTuple_SET_ITEM(argtup_copy, i, arg_copy);
-            }
-
-            inst = PyObject_CallObject(callable, argtup_copy);
-            Py_DECREF(argtup_copy);
-        }
-        if (!inst)
-            goto error;
+    if (!instance) {
+        Py_DECREF(reduce_result);
+        return NULL;
     }
 
-    // Memoize early to handle self-referential structures
-    if (memoize(memo, obj, inst, id_hash) < 0)
+    if (memoize(memo, original, instance, memo_key_hash) < 0)
         goto error;
 
-    // Handle state (BUILD semantics)
     if (state) {
-        if (PyObject_GetOptionalAttr(inst, module_state.str_setstate, &setstate) < 0)
+        int applied = apply_setstate(instance, state, memo);
+        if (applied < 0)
             goto memoized_error;
-
-        if (setstate) {
-            // Explicit __setstate__
-            state_copy = deepcopy(state, memo);
-            if (!state_copy) {
-                Py_DECREF(setstate);
-                setstate = NULL;
-                goto memoized_error;
-            }
-
-            result = PyObject_CallOneArg(setstate, state_copy);
-            Py_DECREF(state_copy);
-            state_copy = NULL;
-            Py_DECREF(setstate);
-            setstate = NULL;
-            if (!result)
-                goto memoized_error;
-            Py_DECREF(result);
-            result = NULL;
-        } else {
-            // Default __setstate__: handle inst.__dict__ and slotstate
-            PyObject* dict_state = NULL;
-            PyObject* slotstate = NULL;
-
-            if (PyTuple_Check(state) && PyTuple_GET_SIZE(state) == 2) {
-                dict_state = PyTuple_GET_ITEM(state, 0);
-                slotstate = PyTuple_GET_ITEM(state, 1);
-            } else {
-                dict_state = state;
-            }
-
-            // Set inst.__dict__ from the state dict
-            if (dict_state && dict_state != Py_None) {
-                if (!PyDict_Check(dict_state)) {
-                    PyErr_SetString(PyExc_TypeError, "state is not a dictionary");
-                    goto memoized_error;
-                }
-
-                dict_state_copy = deepcopy(dict_state, memo);
-                if (!dict_state_copy)
-                    goto memoized_error;
-
-                inst_dict = PyObject_GetAttr(inst, module_state.str_dict);
-                if (!inst_dict) {
-                    Py_DECREF(dict_state_copy);
-                    dict_state_copy = NULL;
-                    goto memoized_error;
-                }
-
-                PyObject *d_key, *d_value;
-                Py_ssize_t pos = 0;
-                while (PyDict_Next(dict_state_copy, &pos, &d_key, &d_value)) {
-                    if (PyObject_SetItem(inst_dict, d_key, d_value) < 0) {
-                        Py_DECREF(inst_dict);
-                        inst_dict = NULL;
-                        Py_DECREF(dict_state_copy);
-                        dict_state_copy = NULL;
-                        goto memoized_error;
-                    }
-                }
-
-                Py_DECREF(inst_dict);
-                inst_dict = NULL;
-                Py_DECREF(dict_state_copy);
-                dict_state_copy = NULL;
-            }
-
-            // Also set instance attributes from the slotstate dict
-            if (slotstate && slotstate != Py_None) {
-                if (!PyDict_Check(slotstate)) {
-                    PyErr_SetString(PyExc_TypeError, "slot state is not a dictionary");
-                    goto memoized_error;
-                }
-
-                slotstate_copy = deepcopy(slotstate, memo);
-                if (!slotstate_copy)
-                    goto memoized_error;
-
-                PyObject *d_key, *d_value;
-                Py_ssize_t pos = 0;
-                while (PyDict_Next(slotstate_copy, &pos, &d_key, &d_value)) {
-                    if (PyObject_SetAttr(inst, d_key, d_value) < 0) {
-                        Py_DECREF(slotstate_copy);
-                        slotstate_copy = NULL;
-                        goto memoized_error;
-                    }
-                }
-
-                Py_DECREF(slotstate_copy);
-                slotstate_copy = NULL;
-            }
-        }
+        if (applied == 0 && apply_state_tuple(instance, state, memo) < 0)
+            goto memoized_error;
     }
 
-    // Handle listitems
-    if (listitems) {
-        append = PyObject_GetAttr(inst, module_state.str_append);
-        if (!append)
-            goto memoized_error;
+    if (apply_listitems(instance, listitems, memo) < 0)
+        goto memoized_error;
 
-        it = PyObject_GetIter(listitems);
-        if (!it) {
-            Py_DECREF(append);
-            append = NULL;
-            goto memoized_error;
-        }
-
-        PyObject* loop_item;
-        while ((loop_item = PyIter_Next(it)) != NULL) {
-            item_copy = deepcopy(loop_item, memo);
-            Py_DECREF(loop_item);
-            if (!item_copy) {
-                Py_DECREF(it);
-                it = NULL;
-                Py_DECREF(append);
-                append = NULL;
-                goto memoized_error;
-            }
-
-            result = PyObject_CallOneArg(append, item_copy);
-            Py_DECREF(item_copy);
-            item_copy = NULL;
-            if (!result) {
-                Py_DECREF(it);
-                it = NULL;
-                Py_DECREF(append);
-                append = NULL;
-                goto memoized_error;
-            }
-            Py_DECREF(result);
-            result = NULL;
-        }
-
-        if (PyErr_Occurred()) {
-            Py_DECREF(it);
-            it = NULL;
-            Py_DECREF(append);
-            append = NULL;
-            goto memoized_error;
-        }
-
-        Py_DECREF(it);
-        it = NULL;
-        Py_DECREF(append);
-        append = NULL;
-    }
-
-    // Handle dictitems
-    if (dictitems) {
-        it = PyObject_GetIter(dictitems);
-        if (!it)
-            goto memoized_error;
-
-        PyObject* loop_pair;
-        while ((loop_pair = PyIter_Next(it)) != NULL) {
-            if (!PyTuple_Check(loop_pair) || PyTuple_GET_SIZE(loop_pair) != 2) {
-                Py_DECREF(loop_pair);
-                Py_DECREF(it);
-                it = NULL;
-                PyErr_SetString(PyExc_ValueError, "dictiter must yield (key, value) pairs");
-                goto memoized_error;
-            }
-
-            PyObject* key = PyTuple_GET_ITEM(loop_pair, 0);
-            PyObject* value = PyTuple_GET_ITEM(loop_pair, 1);
-
-            key_copy = deepcopy(key, memo);
-            if (!key_copy) {
-                Py_DECREF(loop_pair);
-                Py_DECREF(it);
-                it = NULL;
-                goto memoized_error;
-            }
-
-            value_copy = deepcopy(value, memo);
-            if (!value_copy) {
-                Py_DECREF(loop_pair);
-                Py_DECREF(it);
-                it = NULL;
-                goto memoized_error;
-            }
-
-            Py_DECREF(loop_pair);
-
-            int status = PyObject_SetItem(inst, key_copy, value_copy);
-            Py_DECREF(key_copy);
-            key_copy = NULL;
-            Py_DECREF(value_copy);
-            value_copy = NULL;
-
-            if (status < 0) {
-                Py_DECREF(it);
-                it = NULL;
-                goto memoized_error;
-            }
-        }
-
-        if (PyErr_Occurred()) {
-            Py_DECREF(it);
-            it = NULL;
-            goto memoized_error;
-        }
-
-        Py_DECREF(it);
-        it = NULL;
-    }
+    if (apply_dictitems(instance, dictitems, memo) < 0)
+        goto memoized_error;
 
     Py_DECREF(reduce_result);
-    return inst;
+    return instance;
 
 memoized_error:
-    forget(memo, obj, id_hash);
+    forget(memo, original, memo_key_hash);
 error:
-    Py_XDECREF(inst);
-    Py_XDECREF(reduce_result);
-    Py_XDECREF(setstate);
-    Py_XDECREF(state_copy);
-    Py_XDECREF(result);
-    Py_XDECREF(dict_state_copy);
-    Py_XDECREF(inst_dict);
-    Py_XDECREF(slotstate_copy);
-    Py_XDECREF(append);
-    Py_XDECREF(it);
-    Py_XDECREF(item_copy);
-    Py_XDECREF(key_copy);
-    Py_XDECREF(value_copy);
+    Py_DECREF(reduce_result);
+    Py_DECREF(instance);
     return NULL;
 }
-#endif  // _COPIUM_DEEPCOPY_C
+
+#endif

@@ -99,7 +99,7 @@ static ALWAYS_INLINE PyObject* deepcopy_legacy(
 
     {
         PyObject* deepcopy_meth = NULL;
-        int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
+        int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.s__deepcopy__, &deepcopy_meth);
         if (has_deepcopy < 0)
             return NULL;
         if (has_deepcopy) {
@@ -475,7 +475,7 @@ static PyObject* deepcopy_object_legacy(
         return Py_NewRef(obj);
     }
 
-    if (callable == module_state.copyreg_newobj) {
+    if (callable == module_state.copyreg___newobj__) {
         if (PyTuple_GET_SIZE(argtup) < 1) {
             PyErr_Format(
                 PyExc_TypeError,
@@ -514,7 +514,7 @@ static PyObject* deepcopy_object_legacy(
         Py_DECREF(newargs);
         if (!inst)
             goto error;
-    } else if (callable == module_state.copyreg_newobj_ex) {
+    } else if (callable == module_state.copyreg___newobj___ex) {
         if (PyTuple_GET_SIZE(argtup) != 3) {
             PyErr_Format(
                 PyExc_TypeError,
@@ -598,7 +598,7 @@ static PyObject* deepcopy_object_legacy(
         goto error;
 
     if (state) {
-        if (PyObject_GetOptionalAttr(inst, module_state.str_setstate, &setstate) < 0)
+        if (PyObject_GetOptionalAttr(inst, module_state.s__setstate__, &setstate) < 0)
             goto error;
 
         if (setstate) {
@@ -639,7 +639,7 @@ static PyObject* deepcopy_object_legacy(
                 if (!dict_state_copy)
                     goto error;
 
-                inst_dict = PyObject_GetAttr(inst, module_state.str_dict);
+                inst_dict = PyObject_GetAttr(inst, module_state.s__dict__);
                 if (!inst_dict) {
                     Py_DECREF(dict_state_copy);
                     dict_state_copy = NULL;
@@ -691,7 +691,7 @@ static PyObject* deepcopy_object_legacy(
     }
 
     if (listitems) {
-        append = PyObject_GetAttr(inst, module_state.str_append);
+        append = PyObject_GetAttr(inst, module_state.s_append);
         if (!append)
             goto error;
 

@@ -1624,7 +1624,7 @@ static ALWAYS_INLINE PyMemoObject* get_tss_memo(void) {
             return NULL;
         if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
             Py_DECREF(memo);
-            Py_FatalError("copium: unexpected TTS state - failed to set memo");
+            Py_FatalError("copium: unexpected TSS state - failed to set memo");
         }
         return memo;
     }
@@ -1641,7 +1641,7 @@ static ALWAYS_INLINE PyMemoObject* get_tss_memo(void) {
 
         if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
             Py_DECREF(memo);
-            Py_FatalError("copium: unexpected TTS state - failed to replace memo");
+            Py_FatalError("copium: unexpected TSS state - failed to replace memo");
         }
         return memo;
     }
@@ -1663,7 +1663,7 @@ static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
         PyObject_GC_Track(memo);
         if (PyThread_tss_set(&module_state.memo_tss, NULL) != 0) {
             Py_DECREF(memo);
-            Py_FatalError("copium: unexpected TTS state during memo cleanup");
+            Py_FatalError("copium: unexpected TSS state during memo cleanup");
         }
         Py_DECREF(memo);
         return 0;
@@ -1671,17 +1671,28 @@ static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
 }
 
 static ALWAYS_INLINE int memoize(
-    PyMemoObject* memo, PyObject* original, PyObject* copy, Py_ssize_t hash
+    PyMemoObject* memo, void* original, PyObject* copy, Py_ssize_t hash
 ) {
-    if (memo_table_insert_h(&memo->table, (void*)original, copy, hash) < 0)
+    if (memo_table_insert_h(&memo->table, original, copy, hash) < 0)
         return -1;
-    if (keepalive_append(&memo->keepalive, original) < 0)
+    if (keepalive_append(&memo->keepalive, (PyObject*)original) < 0)
         return -1;
     return 0;
 }
 
-static int forget(PyMemoObject* memo, PyObject* original, Py_ssize_t hash) {
-    return memo_table_remove_h(memo->table, (void*)original, hash);
+static ALWAYS_INLINE PyObject* remember(
+    PyMemoObject* memo, PyObject* original, Py_ssize_t* memo_key_hash
+) {
+    void* memo_key = (void*)original;
+    *memo_key_hash = memo_hash_pointer(memo_key);
+    PyObject* memoized = memo_table_lookup_h(memo->table, memo_key, (Py_hash_t)*memo_key_hash);
+    if (memoized)
+        return Py_NewRef(memoized);
+    return NULL;
+}
+
+static int forget(PyMemoObject* memo, void* original, Py_ssize_t memo_key_hash) {
+    return memo_table_remove_h(memo->table, original, memo_key_hash);
 }
 
 /* -------------------- Adaptive Fallback Helpers ---------------------------- */
