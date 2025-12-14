@@ -10,15 +10,15 @@
 
 typedef struct {
     // Interned strings for attribute lookups
-    PyObject* str_reduce_ex;
-    PyObject* str_reduce;
-    PyObject* str_deepcopy;
-    PyObject* str_setstate;
-    PyObject* str_dict;
-    PyObject* str_append;
-    PyObject* str_update;
-    PyObject* str_new;
-    PyObject* str_get;
+    PyObject* s__reduce_ex__;
+    PyObject* s__reduce__;
+    PyObject* s__deepcopy__;
+    PyObject* s__setstate__;
+    PyObject* s__dict__;
+    PyObject* s_append;
+    PyObject* s_update;
+    PyObject* s__new__;
+    PyObject* s__get__;
 
     // Used for identity comparison
     PyObject* sentinel;
@@ -37,8 +37,8 @@ typedef struct {
     // Stdlib refs
     PyObject* copyreg_dispatch;                  // dict
     PyObject* copy_Error;                        // exception class
-    PyObject* copyreg_newobj;                    // copyreg.__newobj__ (or sentinel)
-    PyObject* copyreg_newobj_ex;                 // copyreg.__newobj_ex__ (or sentinel)
+    PyObject* copyreg___newobj__;                // copyreg.__newobj__ (or sentinel)
+    PyObject* copyreg___newobj___ex;             // copyreg.__newobj_ex__ (or sentinel)
     PyObject* create_precompiler_reconstructor;  // duper.snapshots.create_precompiler_reconstructor
 
     // TLS memo allows reuse across deepcopy calls without allocation.
@@ -47,12 +47,12 @@ typedef struct {
     Py_tss_t memo_tss;
 
     // Fallback configuration (read from env vars at module init, immutable thereafter)
-    int no_memo_fallback;          // COPIUM_NO_MEMO_FALLBACK - disable fallback entirely
-    int use_dict_memo;             // COPIUM_USE_DICT_MEMO - use dict memo for full compatibility
-    PyObject* ignored_errors;  // Tuple of error suffixes to suppress warnings for
-    PyObject*
-        ignored_errors_joined;  // Pre-joined string for warning message (or NULL if empty)
-
+    int no_memo_fallback;             // COPIUM_NO_MEMO_FALLBACK - disable fallback entirely
+    int use_dict_memo;                // COPIUM_USE_DICT_MEMO - use dict memo for full compatibility
+    PyObject* ignored_errors;         // Tuple of error suffixes to suppress warnings for
+    PyObject* ignored_errors_joined;  // Pre-joined string for warning message (or NULL if empty)
+    PyObject* dict_items_descr;
+    vectorcallfunc dict_items_vc;
 } ModuleState;
 
 static ModuleState module_state = {0};

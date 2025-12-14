@@ -24,7 +24,7 @@ static PyObject* reconstruct_state(
         dictiter = Py_None;
 
     if (state != Py_None) {
-        PyObject* setstate = PyObject_GetAttr(new_obj, module_state.str_setstate);
+        PyObject* setstate = PyObject_GetAttr(new_obj, module_state.s__setstate__);
         if (setstate) {
             PyObject* r = PyObject_CallOneArg(setstate, state);
             Py_DECREF(setstate);
@@ -70,10 +70,10 @@ static PyObject* reconstruct_state(
             }
 
             if (dict_state && dict_state != Py_None) {
-                PyObject* obj_dict = PyObject_GetAttr(new_obj, module_state.str_dict);
+                PyObject* obj_dict = PyObject_GetAttr(new_obj, module_state.s__dict__);
                 if (!obj_dict)
                     return NULL;
-                PyObject* update = PyObject_GetAttr(obj_dict, module_state.str_update);
+                PyObject* update = PyObject_GetAttr(obj_dict, module_state.s_update);
                 Py_DECREF(obj_dict);
                 if (!update)
                     return NULL;
@@ -87,7 +87,7 @@ static PyObject* reconstruct_state(
     }
 
     if (listiter != Py_None) {
-        PyObject* append = PyObject_GetAttr(new_obj, module_state.str_append);
+        PyObject* append = PyObject_GetAttr(new_obj, module_state.s_append);
         if (!append)
             return NULL;
         PyObject* it = PyObject_GetIter(listiter);

@@ -21,808 +21,838 @@
 #endif
 
 static ALWAYS_INLINE PyObject* deepcopy_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 );
 
 static MAYBE_INLINE PyObject* deepcopy_list_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_tuple_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_dict_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_set_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_frozenset_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_bytearray_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 );
 static MAYBE_INLINE PyObject* deepcopy_method_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 );
 static PyObject* deepcopy_object_legacy(
-    PyObject* obj, PyTypeObject* tp, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyTypeObject* tp, PyObject* memo, PyObject** keepalive_pointer
 );
 
 static ALWAYS_INLINE PyObject* deepcopy_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    PyTypeObject* tp = Py_TYPE(obj);
+    PyTypeObject* type = Py_TYPE(original);
 
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
-    if (LIKELY(is_literal_immutable(tp) || is_builtin_immutable(tp) || is_class(tp))) {
-        return Py_NewRef(obj);
-    }
+    if (LIKELY(is_literal_immutable(type) || is_builtin_immutable(type) || is_class(type)))
+        return Py_NewRef(original);
 #endif
 
-    void* id = (void*)obj;
-    PyObject* hit = memo_lookup_legacy(memo, id);
-    if (hit)
-        return hit;
+    void* memo_key = (void*)original;
+    PyObject* memoized = memo_lookup_legacy(memo, memo_key);
+    if (memoized)
+        return memoized;
     if (PyErr_Occurred())
         return NULL;
 
 #if PY_VERSION_HEX < PY_VERSION_3_14_HEX
-    if (LIKELY(is_literal_immutable(tp))) {
-        return Py_NewRef(obj);
-    }
+    if (LIKELY(is_literal_immutable(type)))
+        return Py_NewRef(original);
 #endif
 
-    if (tp == &PyList_Type)
-        return RECURSION_GUARDED(deepcopy_list_legacy(obj, memo, keepalive_pointer));
-    if (tp == &PyTuple_Type)
-        return RECURSION_GUARDED(deepcopy_tuple_legacy(obj, memo, keepalive_pointer));
-    if (tp == &PyDict_Type)
-        return RECURSION_GUARDED(deepcopy_dict_legacy(obj, memo, keepalive_pointer));
-    if (tp == &PySet_Type)
-        return RECURSION_GUARDED(deepcopy_set_legacy(obj, memo, keepalive_pointer));
+    if (type == &PyList_Type)
+        return RECURSION_GUARDED(deepcopy_list_legacy(original, memo, keepalive_pointer));
+    if (type == &PyTuple_Type)
+        return RECURSION_GUARDED(deepcopy_tuple_legacy(original, memo, keepalive_pointer));
+    if (type == &PyDict_Type)
+        return RECURSION_GUARDED(deepcopy_dict_legacy(original, memo, keepalive_pointer));
+    if (type == &PySet_Type)
+        return RECURSION_GUARDED(deepcopy_set_legacy(original, memo, keepalive_pointer));
 
-    if (is_builtin_immutable(tp) || is_class(tp)) {
-        return Py_NewRef(obj);
-    }
+    if (is_builtin_immutable(type) || is_class(type))
+        return Py_NewRef(original);
 
-    if (tp == &PyFrozenSet_Type)
-        return deepcopy_frozenset_legacy(obj, memo, keepalive_pointer);
-    if (tp == &PyByteArray_Type)
-        return deepcopy_bytearray_legacy(obj, memo, keepalive_pointer);
-    if (tp == &PyMethod_Type)
-        return deepcopy_method_legacy(obj, memo, keepalive_pointer);
+    if (type == &PyFrozenSet_Type)
+        return RECURSION_GUARDED(deepcopy_frozenset_legacy(original, memo, keepalive_pointer));
+    if (type == &PyByteArray_Type)
+        return deepcopy_bytearray_legacy(original, memo, keepalive_pointer);
+    if (type == &PyMethod_Type)
+        return deepcopy_method_legacy(original, memo, keepalive_pointer);
 
-    if (is_stdlib_immutable(tp)) {
-        return Py_NewRef(obj);
-    }
+    if (is_stdlib_immutable(type))
+        return Py_NewRef(original);
 
-    {
-        PyObject* deepcopy_meth = NULL;
-        int has_deepcopy = PyObject_GetOptionalAttr(obj, module_state.str_deepcopy, &deepcopy_meth);
-        if (has_deepcopy < 0)
+    PyObject* __deepcopy__ = NULL;
+    int has_deepcopy = PyObject_GetOptionalAttr(original, module_state.s__deepcopy__, &__deepcopy__);
+    if (has_deepcopy < 0)
+        return NULL;
+    if (has_deepcopy) {
+        PyObject* copied = PyObject_CallOneArg(__deepcopy__, memo);
+        Py_DECREF(__deepcopy__);
+
+        if (!copied)
             return NULL;
-        if (has_deepcopy) {
-            PyObject* res = PyObject_CallOneArg(deepcopy_meth, memo);
-            Py_DECREF(deepcopy_meth);
-            if (!res)
+
+        if (copied != original) {
+            if (memoize_legacy(memo, memo_key, copied) < 0) {
+                Py_DECREF(copied);
                 return NULL;
-            if (res != obj) {
-                if (memoize_legacy(memo, (void*)obj, res) < 0) {
-                    Py_DECREF(res);
-                    return NULL;
-                }
-                if (keepalive_legacy(memo, keepalive_pointer, obj) < 0) {
-                    Py_DECREF(res);
-                    return NULL;
-                }
             }
-            return res;
+            if (keepalive_legacy(memo, keepalive_pointer, original) < 0) {
+                Py_DECREF(copied);
+                return NULL;
+            }
         }
+        return copied;
     }
 
-    return deepcopy_object_legacy(obj, tp, memo, keepalive_pointer);
+    return deepcopy_object_legacy(original, type, memo, keepalive_pointer);
 }
 
 static MAYBE_INLINE PyObject* deepcopy_list_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    PyObject* copy = NULL;
-    PyObject* copied_item = NULL;
+    Py_ssize_t sz = PyList_GET_SIZE(original);
 
-    Py_ssize_t sz = Py_SIZE(obj);
-    copy = PyList_New(sz);
-    if (!copy)
-        goto error;
+    PyObject* copied = PyList_New(sz);
+    if (!copied)
+        return NULL;
 
-    for (Py_ssize_t i = 0; i < sz; ++i)
-        PyList_SET_ITEM(copy, i, Py_NewRef(Py_None));
-
-    if (memoize_legacy(memo, (void*)obj, copy) < 0)
-        goto error;
-
-    for (Py_ssize_t i = 0; i < sz; ++i) {
-        PyObject* item = PyList_GET_ITEM(obj, i);
-        copied_item = deepcopy_legacy(item, memo, keepalive_pointer);
-        if (!copied_item)
-            goto error;
-        Py_DECREF(Py_None);
-        PyList_SET_ITEM(copy, i, copied_item);
-        copied_item = NULL;
+    for (Py_ssize_t i = 0; i < sz; i++) {
+#if PY_VERSION_HEX < PY_VERSION_3_12_HEX
+        Py_INCREF(Py_Ellipsis);
+#endif
+        PyList_SET_ITEM(copied, i, Py_Ellipsis);
     }
 
-    Py_ssize_t i2 = sz;
-    while (i2 < Py_SIZE(obj)) {
-        PyObject* item2 = PyList_GET_ITEM(obj, i2);
-        copied_item = deepcopy_legacy(item2, memo, keepalive_pointer);
-        if (!copied_item)
-            goto error;
-        if (PyList_Append(copy, copied_item) < 0)
-            goto error;
-        Py_DECREF(copied_item);
-        copied_item = NULL;
-        i2++;
+    if (memoize_legacy(memo, (void*)original, copied) < 0) {
+        Py_DECREF(copied);
+        return NULL;
     }
-    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
+
+    for (Py_ssize_t i = 0; i < sz; i++) {
+        PyObject* item = COPIUM_PyList_GET_ITEM_REF(original, i);
+        if (UNLIKELY(item == NULL)) {
+            PyErr_SetString(PyExc_RuntimeError, "list changed size during iteration");
+            goto error;
+        }
+
+        Py_SETREF(item, deepcopy_legacy(item, memo, keepalive_pointer));
+
+        if (!item)
+            goto error;
+
+        COPIUM_Py_BEGIN_CRITICAL_SECTION(copied);
+        if (UNLIKELY(PyList_GET_SIZE(copied) != sz)) {
+            Py_DECREF(item);
+            PyErr_SetString(PyExc_RuntimeError, "list changed size during iteration");
+            goto error;
+        }
+#if PY_VERSION_HEX < PY_VERSION_3_12_HEX
+        PyList_SetItem(copied, i, item);
+#else
+        PyList_SET_ITEM(copied, i, item);
+#endif
+        COPIUM_Py_END_CRITICAL_SECTION();
+    }
+
+    if (keepalive_legacy(memo, keepalive_pointer, original) < 0)
         goto error;
-    return copy;
+
+    return copied;
 
 error:
-    Py_XDECREF(copy);
-    Py_XDECREF(copied_item);
+    Py_DECREF(copied);
     return NULL;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_tuple_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    PyObject* copy = NULL;
-    PyObject* copied = NULL;
+    Py_ssize_t sz = PyTuple_GET_SIZE(original);
 
-    Py_ssize_t sz = Py_SIZE(obj);
-    copy = PyTuple_New(sz);
-    if (!copy)
-        goto error;
+    PyObject* copied = PyTuple_New(sz);
+    if (!copied)
+        return NULL;
 
     int all_same = 1;
-    for (Py_ssize_t i = 0; i < sz; ++i) {
-        PyObject* item = PyTuple_GET_ITEM(obj, i);
-        copied = deepcopy_legacy(item, memo, keepalive_pointer);
-        if (!copied)
-            goto error;
-        if (copied != item)
+    for (Py_ssize_t i = 0; i < sz; i++) {
+        PyObject* item = PyTuple_GET_ITEM(original, i);
+        PyObject* copied_item = deepcopy_legacy(item, memo, keepalive_pointer);
+        if (!copied_item) {
+            Py_DECREF(copied);
+            return NULL;
+        }
+        if (copied_item != item)
             all_same = 0;
-        PyTuple_SET_ITEM(copy, i, copied);
-        copied = NULL;
-    }
-    if (all_same) {
-        Py_DECREF(copy);
-        return Py_NewRef(obj);
+        PyTuple_SET_ITEM(copied, i, copied_item);
     }
 
-    PyObject* existing = memo_lookup_legacy(memo, (void*)obj);
+    if (all_same) {
+        Py_DECREF(copied);
+        return Py_NewRef(original);
+    }
+
+    PyObject* existing = memo_lookup_legacy(memo, (void*)original);
     if (existing) {
-        Py_DECREF(copy);
+        Py_DECREF(copied);
         return existing;
     }
-    if (PyErr_Occurred())
-        goto error;
+    if (PyErr_Occurred()) {
+        Py_DECREF(copied);
+        return NULL;
+    }
 
-    if (memoize_legacy(memo, (void*)obj, copy) < 0)
-        goto error;
-    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
-        goto error;
-    return copy;
+    if (memoize_legacy(memo, (void*)original, copied) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
 
-error:
-    Py_XDECREF(copy);
-    Py_XDECREF(copied);
-    return NULL;
+    if (keepalive_legacy(memo, keepalive_pointer, original) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    return copied;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_dict_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    PyObject* copy = NULL;
-    PyObject* ckey = NULL;
-    PyObject* cvalue = NULL;
+    PyObject* copied = _PyDict_NewPresized(PyDict_Size(original));
+    if (!copied)
+        return NULL;
 
-    Py_ssize_t sz = Py_SIZE(obj);
-    copy = _PyDict_NewPresized(sz);
-    if (!copy)
-        goto error_no_cleanup;
-    if (memoize_legacy(memo, (void*)obj, copy) < 0)
-        goto error_no_cleanup;
+    if (memoize_legacy(memo, (void*)original, copied) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
 
     DictIterGuard iter_guard;
-    dict_iter_init(&iter_guard, obj);
+    if (dict_iter_init(&iter_guard, original) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
 
     PyObject *key, *value;
-    int ret;
-    while ((ret = dict_iter_next(&iter_guard, &key, &value)) > 0) {
-        ckey = deepcopy_legacy(key, memo, keepalive_pointer);
-        if (!ckey)
-            goto error;
-        cvalue = deepcopy_legacy(value, memo, keepalive_pointer);
-        if (!cvalue)
-            goto error;
-        if (PyDict_SetItem(copy, ckey, cvalue) < 0)
-            goto error;
-        Py_DECREF(ckey);
-        ckey = NULL;
-        Py_DECREF(cvalue);
-        cvalue = NULL;
-    }
-    if (ret < 0)
-        goto error_no_cleanup;
+    int iter_flag;
 
-    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
-        goto error_no_cleanup;
-    return copy;
+    while ((iter_flag = dict_iter_next(&iter_guard, &key, &value)) > 0) {
+        Py_SETREF(key, deepcopy_legacy(key, memo, keepalive_pointer));
+        if (!key) {
+            Py_DECREF(value);
+            goto error;
+        }
+
+        Py_SETREF(value, deepcopy_legacy(value, memo, keepalive_pointer));
+        if (!value) {
+            Py_DECREF(key);
+            goto error;
+        }
+
+        if (COPIUM_PyDict_SetItem_Take2((PyDictObject*)copied, key, value) < 0)
+            goto error;
+    }
+
+    if (iter_flag < 0)
+        goto error;
+
+    if (keepalive_legacy(memo, keepalive_pointer, original) < 0)
+        goto error;
+
+    return copied;
 
 error:
 #if PY_VERSION_HEX >= PY_VERSION_3_14_HEX
     dict_iter_cleanup(&iter_guard);
 #endif
-error_no_cleanup:
-    Py_XDECREF(copy);
-    Py_XDECREF(ckey);
-    Py_XDECREF(cvalue);
+    Py_DECREF(copied);
     return NULL;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_set_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    PyObject* copy = NULL;
-    PyObject* snap = NULL;
-    PyObject* citem = NULL;
+    PyObject* snapshot;
+    PyObject* item;
+    Py_ssize_t i;
 
-    copy = PySet_New(NULL);
-    if (!copy)
-        goto error;
-    if (memoize_legacy(memo, (void*)obj, copy) < 0)
-        goto error;
+    COPIUM_Py_BEGIN_CRITICAL_SECTION(original) Py_ssize_t sz = PySet_Size(original);
+    if (sz < 0)
+        return NULL;
 
-    Py_ssize_t n = PySet_Size(obj);
-    if (n == -1)
-        goto error;
-    snap = PyTuple_New(n);
-    if (!snap)
-        goto error;
+    snapshot = PyTuple_New(sz);
+    if (!snapshot)
+        return NULL;
 
     Py_ssize_t pos = 0;
-    PyObject* item;
+    i = 0;
     Py_hash_t hash;
-    Py_ssize_t i = 0;
+    while (_PySet_NextEntry(original, &pos, &item, &hash)) {
+        PyTuple_SET_ITEM(snapshot, i++, Py_NewRef(item));
+    }
 
-    while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
-        if (i < n) {
-            Py_INCREF(item);
-            PyTuple_SET_ITEM(snap, i, item);
-            i++;
-        }
+    COPIUM_Py_END_CRITICAL_SECTION();
+
+    PyObject* copied = PySet_New(NULL);
+    if (!copied) {
+        Py_DECREF(snapshot);
+        return NULL;
+    }
+
+    if (memoize_legacy(memo, (void*)original, copied) < 0) {
+        Py_DECREF(snapshot);
+        Py_DECREF(copied);
+        return NULL;
     }
 
     for (Py_ssize_t j = 0; j < i; j++) {
-        PyObject* elem = PyTuple_GET_ITEM(snap, j);
-        citem = deepcopy_legacy(elem, memo, keepalive_pointer);
-        if (!citem)
+        item = PyTuple_GET_ITEM(snapshot, j);
+        PyObject* copied_item = deepcopy_legacy(item, memo, keepalive_pointer);
+        if (!copied_item)
             goto error;
-        if (PySet_Add(copy, citem) < 0)
-            goto error;
-        Py_DECREF(citem);
-        citem = NULL;
-    }
-    Py_DECREF(snap);
 
-    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
-        goto error;
-    return copy;
+        int ret = PySet_Add(copied, copied_item);
+        Py_DECREF(copied_item);
+
+        if (ret < 0)
+            goto error;
+    }
+
+    Py_DECREF(snapshot);
+
+    if (keepalive_legacy(memo, keepalive_pointer, original) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    return copied;
 
 error:
-    Py_XDECREF(copy);
-    Py_XDECREF(snap);
-    Py_XDECREF(citem);
+    Py_DECREF(snapshot);
+    Py_DECREF(copied);
     return NULL;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_frozenset_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    PyObject* temp = NULL;
-    PyObject* copy = NULL;
-    PyObject* citem = NULL;
+    Py_ssize_t sz = PySet_Size(original);
+    if (sz < 0)
+        return NULL;
 
-    Py_ssize_t n = PySet_Size(obj);
-    if (n == -1)
-        goto error;
-
-    temp = PyTuple_New(n);
-    if (!temp)
-        goto error;
+    PyObject* items = PyTuple_New(sz);
+    if (!items)
+        return NULL;
 
     Py_ssize_t pos = 0, i = 0;
     PyObject* item;
     Py_hash_t hash;
 
-    while (_PySet_NextEntry(obj, &pos, &item, &hash)) {
-        citem = deepcopy_legacy(item, memo, keepalive_pointer);
-        if (!citem)
-            goto error;
-        PyTuple_SET_ITEM(temp, i, citem);
-        citem = NULL;
-        i++;
+    while (_PySet_NextEntry(original, &pos, &item, &hash) && i < sz) {
+        PyObject* copied_item = deepcopy_legacy(item, memo, keepalive_pointer);
+        if (!copied_item) {
+            Py_DECREF(items);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(items, i++, copied_item);
     }
 
-    copy = PyFrozenSet_New(temp);
-    Py_DECREF(temp);
-    temp = NULL;
-    if (!copy)
-        goto error;
-    if (memoize_legacy(memo, (void*)obj, copy) < 0)
-        goto error;
-    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
-        goto error;
-    return copy;
+    PyObject* copied = PyFrozenSet_New(items);
+    Py_DECREF(items);
 
-error:
-    Py_XDECREF(temp);
-    Py_XDECREF(copy);
-    Py_XDECREF(citem);
-    return NULL;
+    if (!copied)
+        return NULL;
+
+    if (memoize_legacy(memo, (void*)original, copied) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    if (keepalive_legacy(memo, keepalive_pointer, original) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    return copied;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_bytearray_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    PyObject* copy = NULL;
+    Py_ssize_t sz = PyByteArray_Size(original);
 
-    Py_ssize_t sz = PyByteArray_Size(obj);
-    copy = PyByteArray_FromStringAndSize(NULL, sz);
-    if (!copy)
-        goto error;
+    PyObject* copied = PyByteArray_FromStringAndSize(NULL, sz);
+    if (!copied)
+        return NULL;
+
     if (sz)
-        memcpy(PyByteArray_AS_STRING(copy), PyByteArray_AS_STRING(obj), (size_t)sz);
-    if (memoize_legacy(memo, (void*)obj, copy) < 0)
-        goto error;
-    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
-        goto error;
-    return copy;
+        memcpy(PyByteArray_AS_STRING(copied), PyByteArray_AS_STRING(original), (size_t)sz);
 
-error:
-    Py_XDECREF(copy);
-    return NULL;
+    if (memoize_legacy(memo, (void*)original, copied) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    if (keepalive_legacy(memo, keepalive_pointer, original) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    return copied;
 }
 
 static MAYBE_INLINE PyObject* deepcopy_method_legacy(
-    PyObject* obj, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    PyObject* func = NULL;
-    PyObject* self = NULL;
-    PyObject* cself = NULL;
-    PyObject* copy = NULL;
+    PyObject* func = PyMethod_GET_FUNCTION(original);
+    PyObject* self = PyMethod_GET_SELF(original);
 
-    func = PyMethod_GET_FUNCTION(obj);
-    self = PyMethod_GET_SELF(obj);
     if (!func || !self)
-        goto error;
+        return NULL;
 
-    Py_INCREF(func);
     Py_INCREF(self);
-    cself = deepcopy_legacy(self, memo, keepalive_pointer);
+    PyObject* copied_self = deepcopy_legacy(self, memo, keepalive_pointer);
     Py_DECREF(self);
-    self = NULL;
-    if (!cself)
-        goto error;
 
-    copy = PyMethod_New(func, cself);
-    Py_DECREF(func);
-    func = NULL;
-    Py_DECREF(cself);
-    cself = NULL;
-    if (!copy)
-        goto error;
+    if (!copied_self)
+        return NULL;
 
-    if (memoize_legacy(memo, (void*)obj, copy) < 0)
-        goto error;
-    if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
-        goto error;
-    return copy;
+    PyObject* copied = PyMethod_New(func, copied_self);
+    Py_DECREF(copied_self);
 
-error:
-    Py_XDECREF(func);
-    Py_XDECREF(self);
-    Py_XDECREF(cself);
-    Py_XDECREF(copy);
-    return NULL;
+    if (!copied)
+        return NULL;
+
+    if (memoize_legacy(memo, (void*)original, copied) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    if (keepalive_legacy(memo, keepalive_pointer, original) < 0) {
+        Py_DECREF(copied);
+        return NULL;
+    }
+
+    return copied;
+}
+
+static PyObject* reconstruct_newobj_legacy(
+    PyObject* argtup, PyObject* memo, PyObject** keepalive_pointer
+) {
+    Py_ssize_t nargs = PyTuple_GET_SIZE(argtup);
+    if (nargs < 1) {
+        PyErr_SetString(PyExc_TypeError, "__newobj__ requires at least 1 argument");
+        return NULL;
+    }
+
+    PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
+    if (!PyType_Check(cls)) {
+        PyErr_Format(
+            PyExc_TypeError, "__newobj__ arg 1 must be a type, not %.200s", Py_TYPE(cls)->tp_name
+        );
+        return NULL;
+    }
+
+    PyObject* args = PyTuple_New(nargs - 1);
+    if (!args)
+        return NULL;
+
+    for (Py_ssize_t i = 1; i < nargs; i++) {
+        PyObject* arg = PyTuple_GET_ITEM(argtup, i);
+        PyObject* copied_arg = deepcopy_legacy(arg, memo, keepalive_pointer);
+        if (!copied_arg) {
+            Py_DECREF(args);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(args, i - 1, copied_arg);
+    }
+
+    PyObject* instance = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, args, NULL);
+    Py_DECREF(args);
+    return instance;
+}
+
+static PyObject* reconstruct_newobj_ex_legacy(
+    PyObject* argtup, PyObject* memo, PyObject** keepalive_pointer
+) {
+    if (PyTuple_GET_SIZE(argtup) != 3) {
+        PyErr_Format(
+            PyExc_TypeError, "__newobj_ex__ requires 3 arguments, got %zd", PyTuple_GET_SIZE(argtup)
+        );
+        return NULL;
+    }
+
+    PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
+    PyObject* args = PyTuple_GET_ITEM(argtup, 1);
+    PyObject* kwargs = PyTuple_GET_ITEM(argtup, 2);
+
+    if (!PyType_Check(cls)) {
+        PyErr_Format(
+            PyExc_TypeError, "__newobj_ex__ arg 1 must be a type, not %.200s", Py_TYPE(cls)->tp_name
+        );
+        return NULL;
+    }
+    if (!PyTuple_Check(args)) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "__newobj_ex__ arg 2 must be a tuple, not %.200s",
+            Py_TYPE(args)->tp_name
+        );
+        return NULL;
+    }
+    if (!PyDict_Check(kwargs)) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "__newobj_ex__ arg 3 must be a dict, not %.200s",
+            Py_TYPE(kwargs)->tp_name
+        );
+        return NULL;
+    }
+
+    PyObject* copied_args = deepcopy_legacy(args, memo, keepalive_pointer);
+    if (!copied_args)
+        return NULL;
+
+    PyObject* copied_kwargs = deepcopy_legacy(kwargs, memo, keepalive_pointer);
+    if (!copied_kwargs) {
+        Py_DECREF(copied_args);
+        return NULL;
+    }
+
+    PyObject* instance = ((PyTypeObject*)cls)
+                             ->tp_new((PyTypeObject*)cls, copied_args, copied_kwargs);
+    Py_DECREF(copied_args);
+    Py_DECREF(copied_kwargs);
+    return instance;
+}
+
+static PyObject* reconstruct_callable_legacy(
+    PyObject* callable, PyObject* argtup, PyObject* memo, PyObject** keepalive_pointer
+) {
+    Py_ssize_t nargs = PyTuple_GET_SIZE(argtup);
+
+    if (nargs == 0)
+        return PyObject_CallNoArgs(callable);
+
+    PyObject* copied_args = PyTuple_New(nargs);
+    if (!copied_args)
+        return NULL;
+
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        PyObject* arg = PyTuple_GET_ITEM(argtup, i);
+        PyObject* copied_arg = deepcopy_legacy(arg, memo, keepalive_pointer);
+        if (!copied_arg) {
+            Py_DECREF(copied_args);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(copied_args, i, copied_arg);
+    }
+
+    PyObject* instance = PyObject_CallObject(callable, copied_args);
+    Py_DECREF(copied_args);
+    return instance;
+}
+
+static int apply_setstate_legacy(
+    PyObject* instance, PyObject* state, PyObject* memo, PyObject** keepalive_pointer
+) {
+    PyObject* setstate = NULL;
+    if (PyObject_GetOptionalAttr(instance, module_state.s__setstate__, &setstate) < 0)
+        return -1;
+
+    if (!setstate)
+        return 0;
+
+    PyObject* copied_state = deepcopy_legacy(state, memo, keepalive_pointer);
+    if (!copied_state) {
+        Py_DECREF(setstate);
+        return -1;
+    }
+
+    PyObject* result = PyObject_CallOneArg(setstate, copied_state);
+    Py_DECREF(copied_state);
+    Py_DECREF(setstate);
+
+    if (!result)
+        return -1;
+
+    Py_DECREF(result);
+    return 1;
+}
+
+static int apply_dict_state_legacy(
+    PyObject* instance, PyObject* dict_state, PyObject* memo, PyObject** keepalive_pointer
+) {
+    if (!dict_state || dict_state == Py_None)
+        return 0;
+
+    if (!PyDict_Check(dict_state)) {
+        PyErr_SetString(PyExc_TypeError, "state must be a dict");
+        return -1;
+    }
+
+    PyObject* copied = deepcopy_legacy(dict_state, memo, keepalive_pointer);
+    if (!copied)
+        return -1;
+
+    PyObject* instance_dict = PyObject_GetAttr(instance, module_state.s__dict__);
+    if (!instance_dict) {
+        Py_DECREF(copied);
+        return -1;
+    }
+
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    int ret = 0;
+
+    while (PyDict_Next(copied, &pos, &key, &value)) {
+        if (PyObject_SetItem(instance_dict, key, value) < 0) {
+            ret = -1;
+            break;
+        }
+    }
+
+    Py_DECREF(instance_dict);
+    Py_DECREF(copied);
+    return ret;
+}
+
+static int apply_slot_state_legacy(
+    PyObject* instance, PyObject* slotstate, PyObject* memo, PyObject** keepalive_pointer
+) {
+    if (!slotstate || slotstate == Py_None)
+        return 0;
+
+    if (!PyDict_Check(slotstate)) {
+        PyErr_SetString(PyExc_TypeError, "slot state is not a dictionary");
+        return -1;
+    }
+
+    PyObject* copied = deepcopy_legacy(slotstate, memo, keepalive_pointer);
+    if (!copied)
+        return -1;
+
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    int ret = 0;
+
+    while (PyDict_Next(copied, &pos, &key, &value)) {
+        if (PyObject_SetAttr(instance, key, value) < 0) {
+            ret = -1;
+            break;
+        }
+    }
+
+    Py_DECREF(copied);
+    return ret;
+}
+
+static int apply_state_tuple_legacy(
+    PyObject* instance, PyObject* state, PyObject* memo, PyObject** keepalive_pointer
+) {
+    PyObject* dict_state = NULL;
+    PyObject* slotstate = NULL;
+
+    if (PyTuple_Check(state) && PyTuple_GET_SIZE(state) == 2) {
+        dict_state = PyTuple_GET_ITEM(state, 0);
+        slotstate = PyTuple_GET_ITEM(state, 1);
+    } else {
+        dict_state = state;
+    }
+
+    if (apply_dict_state_legacy(instance, dict_state, memo, keepalive_pointer) < 0)
+        return -1;
+
+    if (apply_slot_state_legacy(instance, slotstate, memo, keepalive_pointer) < 0)
+        return -1;
+
+    return 0;
+}
+
+static int apply_listitems_legacy(
+    PyObject* instance, PyObject* listitems, PyObject* memo, PyObject** keepalive_pointer
+) {
+    if (!listitems)
+        return 0;
+
+    PyObject* append = PyObject_GetAttr(instance, module_state.s_append);
+    if (!append)
+        return -1;
+
+    PyObject* iterator = PyObject_GetIter(listitems);
+    if (!iterator) {
+        Py_DECREF(append);
+        return -1;
+    }
+
+    int ret = 0;
+    PyObject* item;
+
+    while ((item = PyIter_Next(iterator))) {
+        PyObject* copied_item = deepcopy_legacy(item, memo, keepalive_pointer);
+        Py_DECREF(item);
+
+        if (!copied_item) {
+            ret = -1;
+            break;
+        }
+
+        PyObject* result = PyObject_CallOneArg(append, copied_item);
+        Py_DECREF(copied_item);
+
+        if (!result) {
+            ret = -1;
+            break;
+        }
+        Py_DECREF(result);
+    }
+
+    if (ret == 0 && PyErr_Occurred())
+        ret = -1;
+
+    Py_DECREF(iterator);
+    Py_DECREF(append);
+    return ret;
+}
+
+static int apply_dictitems_legacy(
+    PyObject* instance, PyObject* dictitems, PyObject* memo, PyObject** keepalive_pointer
+) {
+    if (!dictitems)
+        return 0;
+
+    PyObject* iterator = PyObject_GetIter(dictitems);
+    if (!iterator)
+        return -1;
+
+    int ret = 0;
+    PyObject* pair;
+
+    while ((pair = PyIter_Next(iterator))) {
+        if (!PyTuple_Check(pair) || PyTuple_GET_SIZE(pair) != 2) {
+            Py_DECREF(pair);
+            PyErr_SetString(PyExc_ValueError, "dictiter must yield (key, value) pairs");
+            ret = -1;
+            break;
+        }
+
+        PyObject* key = PyTuple_GET_ITEM(pair, 0);
+        PyObject* value = PyTuple_GET_ITEM(pair, 1);
+        Py_INCREF(key);
+        Py_INCREF(value);
+        Py_DECREF(pair);
+
+        Py_SETREF(key, deepcopy_legacy(key, memo, keepalive_pointer));
+        if (!key) {
+            Py_DECREF(value);
+            ret = -1;
+            break;
+        }
+
+        Py_SETREF(value, deepcopy_legacy(value, memo, keepalive_pointer));
+        if (!value) {
+            Py_DECREF(key);
+            ret = -1;
+            break;
+        }
+
+        int status = PyObject_SetItem(instance, key, value);
+        Py_DECREF(key);
+        Py_DECREF(value);
+
+        if (status < 0) {
+            ret = -1;
+            break;
+        }
+    }
+
+    if (ret == 0 && PyErr_Occurred())
+        ret = -1;
+
+    Py_DECREF(iterator);
+    return ret;
 }
 
 static PyObject* deepcopy_object_legacy(
-    PyObject* obj, PyTypeObject* tp, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* original, PyTypeObject* tp, PyObject* memo, PyObject** keepalive_pointer
 ) {
-    PyObject* reduce_result = NULL;
-    PyObject* inst = NULL;
-    PyObject* setstate = NULL;
-    PyObject* state_copy = NULL;
-    PyObject* result = NULL;
-    PyObject* dict_state_copy = NULL;
-    PyObject* inst_dict = NULL;
-    PyObject* slotstate_copy = NULL;
-    PyObject* append = NULL;
-    PyObject* it = NULL;
-    PyObject* item_copy = NULL;
-    PyObject* key_copy = NULL;
-    PyObject* value_copy = NULL;
-
-    reduce_result = try_reduce_via_registry(obj, tp);
+    PyObject* reduce_result = try_reduce_via_registry(original, tp);
     if (!reduce_result) {
         if (PyErr_Occurred())
-            goto error;
-        reduce_result = call_reduce_method_preferring_ex(obj);
+            return NULL;
+        reduce_result = call_reduce_method_preferring_ex(original);
         if (!reduce_result)
-            goto error;
+            return NULL;
     }
 
     PyObject *callable, *argtup, *state, *listitems, *dictitems;
     int valid = validate_reduce_tuple(
         reduce_result, &callable, &argtup, &state, &listitems, &dictitems
     );
-    if (valid == REDUCE_ERROR)
-        goto error;
+
+    if (valid == REDUCE_ERROR) {
+        Py_DECREF(reduce_result);
+        return NULL;
+    }
+
     if (valid == REDUCE_STRING) {
         Py_DECREF(reduce_result);
-        return Py_NewRef(obj);
+        return Py_NewRef(original);
     }
 
-    if (callable == module_state.copyreg_newobj) {
-        if (PyTuple_GET_SIZE(argtup) < 1) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "__newobj__ expected at least 1 argument, got %zd",
-                PyTuple_GET_SIZE(argtup)
-            );
-            goto error;
-        }
+    PyObject* instance;
+    if (callable == module_state.copyreg___newobj__)
+        instance = reconstruct_newobj_legacy(argtup, memo, keepalive_pointer);
+    else if (callable == module_state.copyreg___newobj___ex)
+        instance = reconstruct_newobj_ex_legacy(argtup, memo, keepalive_pointer);
+    else
+        instance = reconstruct_callable_legacy(callable, argtup, memo, keepalive_pointer);
 
-        PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
-        if (!PyType_Check(cls)) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "first argument to __newobj__() must be a class, not %.200s",
-                Py_TYPE(cls)->tp_name
-            );
-            goto error;
-        }
-
-        Py_ssize_t nargs = PyTuple_GET_SIZE(argtup) - 1;
-        PyObject* newargs = PyTuple_New(nargs);
-        if (!newargs)
-            goto error;
-
-        for (Py_ssize_t i = 0; i < nargs; i++) {
-            PyObject* arg = PyTuple_GET_ITEM(argtup, i + 1);
-            PyObject* arg_copy = deepcopy_legacy(arg, memo, keepalive_pointer);
-            if (!arg_copy) {
-                Py_DECREF(newargs);
-                goto error;
-            }
-            PyTuple_SET_ITEM(newargs, i, arg_copy);
-        }
-
-        inst = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, newargs, NULL);
-        Py_DECREF(newargs);
-        if (!inst)
-            goto error;
-    } else if (callable == module_state.copyreg_newobj_ex) {
-        if (PyTuple_GET_SIZE(argtup) != 3) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "__newobj_ex__ expected 3 arguments, got %zd",
-                PyTuple_GET_SIZE(argtup)
-            );
-            goto error;
-        }
-
-        PyObject* cls = PyTuple_GET_ITEM(argtup, 0);
-        PyObject* args = PyTuple_GET_ITEM(argtup, 1);
-        PyObject* kwargs = PyTuple_GET_ITEM(argtup, 2);
-
-        if (!PyType_Check(cls)) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "first argument to __newobj_ex__() must be a class, not %.200s",
-                Py_TYPE(cls)->tp_name
-            );
-            goto error;
-        }
-        if (!PyTuple_Check(args)) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "second argument to __newobj_ex__() must be a tuple, not %.200s",
-                Py_TYPE(args)->tp_name
-            );
-            goto error;
-        }
-        if (!PyDict_Check(kwargs)) {
-            PyErr_Format(
-                PyExc_TypeError,
-                "third argument to __newobj_ex__() must be a dict, not %.200s",
-                Py_TYPE(kwargs)->tp_name
-            );
-            goto error;
-        }
-
-        PyObject* args_copy = deepcopy_legacy(args, memo, keepalive_pointer);
-        if (!args_copy)
-            goto error;
-
-        PyObject* kwargs_copy = deepcopy_legacy(kwargs, memo, keepalive_pointer);
-        if (!kwargs_copy) {
-            Py_DECREF(args_copy);
-            goto error;
-        }
-
-        inst = ((PyTypeObject*)cls)->tp_new((PyTypeObject*)cls, args_copy, kwargs_copy);
-        Py_DECREF(args_copy);
-        Py_DECREF(kwargs_copy);
-        if (!inst)
-            goto error;
-    } else {
-        Py_ssize_t nargs = PyTuple_GET_SIZE(argtup);
-        if (nargs == 0) {
-            inst = PyObject_CallNoArgs(callable);
-        } else {
-            PyObject* argtup_copy = PyTuple_New(nargs);
-            if (!argtup_copy)
-                goto error;
-
-            for (Py_ssize_t i = 0; i < nargs; i++) {
-                PyObject* arg = PyTuple_GET_ITEM(argtup, i);
-                PyObject* arg_copy = deepcopy_legacy(arg, memo, keepalive_pointer);
-                if (!arg_copy) {
-                    Py_DECREF(argtup_copy);
-                    goto error;
-                }
-                PyTuple_SET_ITEM(argtup_copy, i, arg_copy);
-            }
-
-            inst = PyObject_CallObject(callable, argtup_copy);
-            Py_DECREF(argtup_copy);
-        }
-        if (!inst)
-            goto error;
+    if (!instance) {
+        Py_DECREF(reduce_result);
+        return NULL;
     }
 
-    if (memoize_legacy(memo, (void*)obj, inst) < 0)
+    if (memoize_legacy(memo, (void*)original, instance) < 0)
         goto error;
 
     if (state) {
-        if (PyObject_GetOptionalAttr(inst, module_state.str_setstate, &setstate) < 0)
+        int applied = apply_setstate_legacy(instance, state, memo, keepalive_pointer);
+        if (applied < 0)
             goto error;
-
-        if (setstate) {
-            state_copy = deepcopy_legacy(state, memo, keepalive_pointer);
-            if (!state_copy) {
-                Py_DECREF(setstate);
-                setstate = NULL;
-                goto error;
-            }
-
-            result = PyObject_CallOneArg(setstate, state_copy);
-            Py_DECREF(state_copy);
-            state_copy = NULL;
-            Py_DECREF(setstate);
-            setstate = NULL;
-            if (!result)
-                goto error;
-            Py_DECREF(result);
-            result = NULL;
-        } else {
-            PyObject* dict_state = NULL;
-            PyObject* slotstate = NULL;
-
-            if (PyTuple_Check(state) && PyTuple_GET_SIZE(state) == 2) {
-                dict_state = PyTuple_GET_ITEM(state, 0);
-                slotstate = PyTuple_GET_ITEM(state, 1);
-            } else {
-                dict_state = state;
-            }
-
-            if (dict_state && dict_state != Py_None) {
-                if (!PyDict_Check(dict_state)) {
-                    PyErr_SetString(PyExc_TypeError, "state is not a dictionary");
-                    goto error;
-                }
-
-                dict_state_copy = deepcopy_legacy(dict_state, memo, keepalive_pointer);
-                if (!dict_state_copy)
-                    goto error;
-
-                inst_dict = PyObject_GetAttr(inst, module_state.str_dict);
-                if (!inst_dict) {
-                    Py_DECREF(dict_state_copy);
-                    dict_state_copy = NULL;
-                    goto error;
-                }
-
-                PyObject *d_key, *d_value;
-                Py_ssize_t pos = 0;
-                while (PyDict_Next(dict_state_copy, &pos, &d_key, &d_value)) {
-                    if (PyObject_SetItem(inst_dict, d_key, d_value) < 0) {
-                        Py_DECREF(inst_dict);
-                        inst_dict = NULL;
-                        Py_DECREF(dict_state_copy);
-                        dict_state_copy = NULL;
-                        goto error;
-                    }
-                }
-
-                Py_DECREF(inst_dict);
-                inst_dict = NULL;
-                Py_DECREF(dict_state_copy);
-                dict_state_copy = NULL;
-            }
-
-            if (slotstate && slotstate != Py_None) {
-                if (!PyDict_Check(slotstate)) {
-                    PyErr_SetString(PyExc_TypeError, "slot state is not a dictionary");
-                    goto error;
-                }
-
-                slotstate_copy = deepcopy_legacy(slotstate, memo, keepalive_pointer);
-                if (!slotstate_copy)
-                    goto error;
-
-                PyObject *d_key, *d_value;
-                Py_ssize_t pos = 0;
-                while (PyDict_Next(slotstate_copy, &pos, &d_key, &d_value)) {
-                    if (PyObject_SetAttr(inst, d_key, d_value) < 0) {
-                        Py_DECREF(slotstate_copy);
-                        slotstate_copy = NULL;
-                        goto error;
-                    }
-                }
-
-                Py_DECREF(slotstate_copy);
-                slotstate_copy = NULL;
-            }
-        }
+        if (applied == 0 && apply_state_tuple_legacy(instance, state, memo, keepalive_pointer) < 0)
+            goto error;
     }
 
-    if (listitems) {
-        append = PyObject_GetAttr(inst, module_state.str_append);
-        if (!append)
-            goto error;
+    if (apply_listitems_legacy(instance, listitems, memo, keepalive_pointer) < 0)
+        goto error;
 
-        it = PyObject_GetIter(listitems);
-        if (!it) {
-            Py_DECREF(append);
-            append = NULL;
-            goto error;
-        }
+    if (apply_dictitems_legacy(instance, dictitems, memo, keepalive_pointer) < 0)
+        goto error;
 
-        PyObject* loop_item;
-        while ((loop_item = PyIter_Next(it)) != NULL) {
-            item_copy = deepcopy_legacy(loop_item, memo, keepalive_pointer);
-            Py_DECREF(loop_item);
-            if (!item_copy) {
-                Py_DECREF(it);
-                it = NULL;
-                Py_DECREF(append);
-                append = NULL;
-                goto error;
-            }
-
-            result = PyObject_CallOneArg(append, item_copy);
-            Py_DECREF(item_copy);
-            item_copy = NULL;
-            if (!result) {
-                Py_DECREF(it);
-                it = NULL;
-                Py_DECREF(append);
-                append = NULL;
-                goto error;
-            }
-            Py_DECREF(result);
-            result = NULL;
-        }
-
-        if (PyErr_Occurred()) {
-            Py_DECREF(it);
-            it = NULL;
-            Py_DECREF(append);
-            append = NULL;
-            goto error;
-        }
-
-        Py_DECREF(it);
-        it = NULL;
-        Py_DECREF(append);
-        append = NULL;
-    }
-
-    if (dictitems) {
-        it = PyObject_GetIter(dictitems);
-        if (!it)
-            goto error;
-
-        PyObject* loop_pair;
-        while ((loop_pair = PyIter_Next(it)) != NULL) {
-            if (!PyTuple_Check(loop_pair) || PyTuple_GET_SIZE(loop_pair) != 2) {
-                Py_DECREF(loop_pair);
-                Py_DECREF(it);
-                it = NULL;
-                PyErr_SetString(PyExc_ValueError, "dictiter must yield (key, value) pairs");
-                goto error;
-            }
-
-            PyObject* key = PyTuple_GET_ITEM(loop_pair, 0);
-            PyObject* value = PyTuple_GET_ITEM(loop_pair, 1);
-
-            key_copy = deepcopy_legacy(key, memo, keepalive_pointer);
-            if (!key_copy) {
-                Py_DECREF(loop_pair);
-                Py_DECREF(it);
-                it = NULL;
-                goto error;
-            }
-
-            value_copy = deepcopy_legacy(value, memo, keepalive_pointer);
-            if (!value_copy) {
-                Py_DECREF(loop_pair);
-                Py_DECREF(it);
-                it = NULL;
-                goto error;
-            }
-
-            Py_DECREF(loop_pair);
-
-            int status = PyObject_SetItem(inst, key_copy, value_copy);
-            Py_DECREF(key_copy);
-            key_copy = NULL;
-            Py_DECREF(value_copy);
-            value_copy = NULL;
-
-            if (status < 0) {
-                Py_DECREF(it);
-                it = NULL;
-                goto error;
-            }
-        }
-
-        if (PyErr_Occurred()) {
-            Py_DECREF(it);
-            it = NULL;
-            goto error;
-        }
-
-        Py_DECREF(it);
-        it = NULL;
-    }
-
-    if (inst != obj) {
-        if (keepalive_legacy(memo, keepalive_pointer, obj) < 0)
+    if (instance != original) {
+        if (keepalive_legacy(memo, keepalive_pointer, original) < 0)
             goto error;
     }
 
     Py_DECREF(reduce_result);
-    return inst;
+    return instance;
 
 error:
-    Py_XDECREF(inst);
-    Py_XDECREF(reduce_result);
-    Py_XDECREF(setstate);
-    Py_XDECREF(state_copy);
-    Py_XDECREF(result);
-    Py_XDECREF(dict_state_copy);
-    Py_XDECREF(inst_dict);
-    Py_XDECREF(slotstate_copy);
-    Py_XDECREF(append);
-    Py_XDECREF(it);
-    Py_XDECREF(item_copy);
-    Py_XDECREF(key_copy);
-    Py_XDECREF(value_copy);
+    Py_DECREF(reduce_result);
+    Py_DECREF(instance);
     return NULL;
 }
 

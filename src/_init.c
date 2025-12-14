@@ -62,8 +62,8 @@ static void _copium_cleanup(void) {
     if (_init_state.copyreg_ready) {
         Py_CLEAR(module_state.copyreg_dispatch);
         Py_CLEAR(module_state.copy_Error);
-        Py_CLEAR(module_state.copyreg_newobj);
-        Py_CLEAR(module_state.copyreg_newobj_ex);
+        Py_CLEAR(module_state.copyreg___newobj__);
+        Py_CLEAR(module_state.copyreg___newobj___ex);
         Py_CLEAR(module_state.create_precompiler_reconstructor);
         _init_state.copyreg_ready = 0;
     }
@@ -82,17 +82,20 @@ static void _copium_cleanup(void) {
     }
 
     if (_init_state.strings_ready) {
-        Py_CLEAR(module_state.str_reduce_ex);
-        Py_CLEAR(module_state.str_reduce);
-        Py_CLEAR(module_state.str_deepcopy);
-        Py_CLEAR(module_state.str_setstate);
-        Py_CLEAR(module_state.str_dict);
-        Py_CLEAR(module_state.str_append);
-        Py_CLEAR(module_state.str_update);
-        Py_CLEAR(module_state.str_new);
-        Py_CLEAR(module_state.str_get);
+        Py_CLEAR(module_state.s__reduce_ex__);
+        Py_CLEAR(module_state.s__reduce__);
+        Py_CLEAR(module_state.s__deepcopy__);
+        Py_CLEAR(module_state.s__setstate__);
+        Py_CLEAR(module_state.s__dict__);
+        Py_CLEAR(module_state.s_append);
+        Py_CLEAR(module_state.s_update);
+        Py_CLEAR(module_state.s__new__);
+        Py_CLEAR(module_state.s__get__);
         _init_state.strings_ready = 0;
     }
+
+    Py_CLEAR(module_state.dict_items_descr);
+    module_state.dict_items_vc = NULL;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -114,19 +117,19 @@ static void _copium_cleanup(void) {
     } while (0)
 
 static int _init_strings(void) {
-    module_state.str_reduce_ex = PyUnicode_InternFromString("__reduce_ex__");
-    module_state.str_reduce = PyUnicode_InternFromString("__reduce__");
-    module_state.str_deepcopy = PyUnicode_InternFromString("__deepcopy__");
-    module_state.str_setstate = PyUnicode_InternFromString("__setstate__");
-    module_state.str_dict = PyUnicode_InternFromString("__dict__");
-    module_state.str_append = PyUnicode_InternFromString("append");
-    module_state.str_update = PyUnicode_InternFromString("update");
-    module_state.str_new = PyUnicode_InternFromString("__new__");
-    module_state.str_get = PyUnicode_InternFromString("get");
+    module_state.s__reduce_ex__ = PyUnicode_InternFromString("__reduce_ex__");
+    module_state.s__reduce__ = PyUnicode_InternFromString("__reduce__");
+    module_state.s__deepcopy__ = PyUnicode_InternFromString("__deepcopy__");
+    module_state.s__setstate__ = PyUnicode_InternFromString("__setstate__");
+    module_state.s__dict__ = PyUnicode_InternFromString("__dict__");
+    module_state.s_append = PyUnicode_InternFromString("append");
+    module_state.s_update = PyUnicode_InternFromString("update");
+    module_state.s__new__ = PyUnicode_InternFromString("__new__");
+    module_state.s__get__ = PyUnicode_InternFromString("get");
 
-    if (!module_state.str_reduce_ex || !module_state.str_reduce || !module_state.str_deepcopy ||
-        !module_state.str_setstate || !module_state.str_dict || !module_state.str_append ||
-        !module_state.str_update || !module_state.str_new || !module_state.str_get) {
+    if (!module_state.s__reduce_ex__ || !module_state.s__reduce__ || !module_state.s__deepcopy__ ||
+        !module_state.s__setstate__ || !module_state.s__dict__ || !module_state.s_append ||
+        !module_state.s_update || !module_state.s__new__ || !module_state.s__get__) {
         PyErr_SetString(PyExc_ImportError, "copium: failed to intern required names");
         return -1;
     }
@@ -207,19 +210,19 @@ static int _init_copy_and_copyreg(void) {
         goto done;
     }
 
-    module_state.copyreg_newobj = PyObject_GetAttrString(mod_copyreg, "__newobj__");
-    if (!module_state.copyreg_newobj) {
+    module_state.copyreg___newobj__ = PyObject_GetAttrString(mod_copyreg, "__newobj__");
+    if (!module_state.copyreg___newobj__) {
         PyErr_Clear();
-        module_state.copyreg_newobj = PyObject_CallNoArgs((PyObject*)&PyBaseObject_Type);
-        if (!module_state.copyreg_newobj)
+        module_state.copyreg___newobj__ = PyObject_CallNoArgs((PyObject*)&PyBaseObject_Type);
+        if (!module_state.copyreg___newobj__)
             goto done;
     }
 
-    module_state.copyreg_newobj_ex = PyObject_GetAttrString(mod_copyreg, "__newobj_ex__");
-    if (!module_state.copyreg_newobj_ex) {
+    module_state.copyreg___newobj___ex = PyObject_GetAttrString(mod_copyreg, "__newobj_ex__");
+    if (!module_state.copyreg___newobj___ex) {
         PyErr_Clear();
-        module_state.copyreg_newobj_ex = PyObject_CallNoArgs((PyObject*)&PyBaseObject_Type);
-        if (!module_state.copyreg_newobj_ex)
+        module_state.copyreg___newobj___ex = PyObject_CallNoArgs((PyObject*)&PyBaseObject_Type);
+        if (!module_state.copyreg___newobj___ex)
             goto done;
     }
 
@@ -335,9 +338,7 @@ int _copium_init(PyObject* module) {
         PyObject* sep = PyUnicode_FromString("::");
         if (!sep)
             goto error;
-        module_state.ignored_errors_joined = PyUnicode_Join(
-            sep, module_state.ignored_errors
-        );
+        module_state.ignored_errors_joined = PyUnicode_Join(sep, module_state.ignored_errors);
         Py_DECREF(sep);
         if (!module_state.ignored_errors_joined)
             goto error;
@@ -363,6 +364,16 @@ int _copium_init(PyObject* module) {
         goto error;
     }
     _init_state.sentinel_ready = 1;
+
+    module_state.dict_items_descr = PyObject_GetAttrString((PyObject*)&PyDict_Type, "items");
+    if (!module_state.dict_items_descr)
+        goto error;
+
+    module_state.dict_items_vc = PyVectorcall_Function(module_state.dict_items_descr);
+    if (!module_state.dict_items_vc) {
+        PyErr_SetString(PyExc_TypeError, "copium: failed to intern dict.items vectorcall");
+        goto error;
+    }
 
     if (PyThread_tss_create(&module_state.memo_tss) != 0) {
         PyErr_SetString(PyExc_ImportError, "copium: failed to create memo TSS");
