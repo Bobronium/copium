@@ -501,6 +501,23 @@ def _get_c_extensions(
 
 
 # ============================================================================
+# Setuptools Build Directory Cleanup
+# ============================================================================
+
+
+def _clean_setuptools_build() -> None:
+    """Remove PROJECT_ROOT/build to force setuptools to recompile.
+    
+    Setuptools maintains its own incremental build cache in build/ which
+    doesn't respect our fingerprint-based invalidation.
+    """
+    build_dir = PROJECT_ROOT / "build"
+    if build_dir.exists():
+        echo(f"Cleaning setuptools build directory: {build_dir}")
+        shutil.rmtree(build_dir, ignore_errors=True)
+
+
+# ============================================================================
 # Extension Injection
 # ============================================================================
 
@@ -911,6 +928,7 @@ def build_wheel(
 
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
+        _clean_setuptools_build()
         original = _inject_extensions(build_type="wheel", config_settings=config_settings)
         try:
             return setuptools_build_meta.build_wheel(
@@ -939,6 +957,7 @@ def build_wheel(
 
     # Build
     echo("Building wheel...")
+    _clean_setuptools_build()
     original = _inject_extensions(build_type="wheel", config_settings=config_settings)
     try:
         result = setuptools_build_meta.build_wheel(
@@ -980,6 +999,8 @@ def build_editable(
 
     if os.environ.get("COPIUM_DISABLE_WHEEL_CACHE") == "1":
         echo("Wheel caching disabled")
+        _clean_setuptools_build()
+
         original = _inject_extensions(build_type="editable", config_settings=config_settings)
         try:
             return setuptools_build_meta.build_editable(
@@ -1008,6 +1029,7 @@ def build_editable(
 
     # Build
     echo("Building editable wheel...")
+    _clean_setuptools_build()
     original = _inject_extensions(build_type="editable", config_settings=config_settings)
     try:
         result = setuptools_build_meta.build_editable(
