@@ -2,15 +2,19 @@ __all__ = ["enable", "disable", "enabled"]
 
 def enable() -> bool:
     """
-    :return: True if copium was enabled, False if it was already enabled.
+    Patch copy.deepcopy to use copium. Idempotent.
+
+    :return: True if state changed, False otherwise.
     """
 
 def disable() -> bool:
     """
-    :return: True if copium was disabled, False if it was already disabled.
+    Restore original copy.deepcopy. Idempotent.
+
+    :return: True if state changed, False otherwise.
     """
 
 def enabled() -> bool:
     """
-    :return: Whether copium is currently enabled.
+    :return: Whether copy.deepcopy is patched.
     """

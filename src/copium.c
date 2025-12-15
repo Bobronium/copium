@@ -529,10 +529,6 @@ static int copium_exec(PyObject* module) {
     if (_add_submodule(module, "patch", patch_module) < 0)
         return -1;
 
-    /* Add low-level patching API to patch module */
-    if (_copium_patching_add_api(patch_module) < 0)
-        return -1;
-
     /* Conditionally create experimental submodule */
     if (_copium_duper_available()) {
         PyObject* experimental_module = PyModule_Create(&experimental_module_def);
