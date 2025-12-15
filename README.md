@@ -28,13 +28,13 @@ Fast drop-in replacement for `copy.deepcopy()`.
 
 <div align="center">
   <picture>
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/3e7d0d65b4ecd2fb93ebf51e31c89e5a6cbc192d/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/3e7d0d65b4ecd2fb93ebf51e31c89e5a6cbc192d/assets/chart_light.svg" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/3e7d0d65b4ecd2fb93ebf51e31c89e5a6cbc192d/assets/chart_light.svg" alt="Benchmark results bar chart" width="600">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/8d0ad6832d9059857aefab896cc3d2345ec5b88a/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/8d0ad6832d9059857aefab896cc3d2345ec5b88a/assets/chart_light.svg" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/8d0ad6832d9059857aefab896cc3d2345ec5b88a/assets/chart_light.svg" alt="Benchmark results bar chart" width="600">
   </picture>
 </div>
 <div align="center">
-  <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/7ece1acf626a232d2223d8a7f3dcc2edadc79689/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/7ece1acf626a232d2223d8a7f3dcc2edadc79689/tools/generate_chart.py">tools/generate_chart.py</a></i>
+  <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/a142188cfb1b4ae28e43b0f81cb030c8a19ae5da/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/a142188cfb1b4ae28e43b0f81cb030c8a19ae5da/tools/generate_chart.py">tools/generate_chart.py</a></i>
 </div>
 
 ## Highlights
