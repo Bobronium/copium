@@ -70,7 +70,7 @@ COMBINED_CASES_PARAMS = pytest.mark.parametrize(
 
 BASE_CASES_PARAMS = pytest.mark.parametrize(
     "case",
-    (pytest.param(case, id=case.name) for case in chain(BASE_CASES, GUARD_CASES)),
+    [pytest.param(case, id=case.name) for case in chain(BASE_CASES, GUARD_CASES)],
 )
 
 
