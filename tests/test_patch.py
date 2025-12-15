@@ -1,110 +1,89 @@
-# SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
-#
-# SPDX-License-Identifier: MIT
+import copy
+import sys
 
-from __future__ import annotations
-
-import copy as stdlib_deepcopy
-
+import copy as stdlib_copy
 import copium.patch
 
 
-def test_patch_copy_deepcopy() -> None:
-    """:
-    - apply(copy.deepcopy, target) forwards all calls to `target`
-    - applied(...) reflects True during the patch
-    - unpatch(...) restores the original function behavior
-    """
-    calls: list[tuple[object, object | None]] = []
+COPIED = {"a": [1, 2]}
 
-    def probe_deepcopy(x, memo=None):
-        calls.append((x, memo))
-        # Return a distinct marker so we know this path executed
-        return "__copium_probe__", x
 
-    # Sanity: original deepcopy should not return our marker
-    assert stdlib_deepcopy.deepcopy(1) == 1
+def trace_calls():
+    """Returns (result, list of (module, qualname) tuples)."""
+    calls = []
 
+    def tracer(frame, event, arg):
+        if event == "call":
+            code = frame.f_code
+            module = frame.f_globals.get("__name__", "")
+            calls.append((module, code.co_name))
+        return tracer
+
+    old = sys.gettrace()
+    sys.settrace(tracer)
     try:
-        copium.patch.apply(stdlib_deepcopy.deepcopy, probe_deepcopy)
-        assert copium.patch.applied(stdlib_deepcopy.deepcopy)
-
-        res = stdlib_deepcopy.deepcopy({"k": 7})
-        assert res == ("__copium_probe__", {"k": 7})
-        assert calls and isinstance(calls[-1], tuple)
-        assert calls[-1][0] == {"k": 7}
-
-        assert getattr(stdlib_deepcopy.deepcopy, "__wrapped__", None) is probe_deepcopy
+        stdlib_copy.deepcopy(COPIED)
     finally:
-        copium.patch.unapply(stdlib_deepcopy.deepcopy)
-
-    assert not copium.patch.applied(stdlib_deepcopy.deepcopy)
-    assert not hasattr(stdlib_deepcopy.deepcopy, "__wrapped__")
-    assert stdlib_deepcopy.deepcopy(1) == 1
+        sys.settrace(old)
+    return calls
 
 
-def test_public_patch_api() -> None:
-    """Test the public enable/disable/enabled API for patching copy.deepcopy."""
-    # Ensure we start in a clean state
-    if copium.patch.enabled():
-        copium.patch.disable()
-
-    assert not copium.patch.enabled(), "Should start unpatched"
-
-    # Test enable()
-    result = copium.patch.enable()
-    assert result is True, "First enable() should return True"
-    assert copium.patch.enabled(), "enabled() should return True after enable()"
-
-    # Test that copy.deepcopy now uses copium
-    test_obj = {"nested": [1, 2, 3], "key": "value"}
-    copied = stdlib_deepcopy.deepcopy(test_obj)
-    assert copied == test_obj
-    assert copied is not test_obj
-
-    # Test idempotent enable()
-    result = copium.patch.enable()
-    assert result is False, "Second enable() should return False (already patched)"
-    assert copium.patch.enabled()
-
-    # Test disable()
-    result = copium.patch.disable()
-    assert result is True, "First disable() should return True"
-    assert not copium.patch.enabled(), "enabled() should return False after disable()"
-
-    # Verify copy.deepcopy works normally after disable
-    copied_after = stdlib_deepcopy.deepcopy(test_obj)
-    assert copied_after == test_obj
-    assert copied_after is not test_obj
-
-    # Test idempotent disable()
-    result = copium.patch.disable()
-    assert result is False, "Second disable() should return False (already unpatched)"
-    assert not copium.patch.enabled()
+STDLIB_EXCLUSIVE_CALLS = {
+    ("copy", "_deepcopy_list"),
+    ("copy", "_deepcopy_dict"),
+}
+if sys.version_info >= (3, 12):
+    # on <3.12, there will be one frame with copy.deepcopy on stack
+    STDLIB_EXCLUSIVE_CALLS.add(("copy", "deepcopy"))
 
 
-def test_public_patch_forwarding() -> None:
-    """Verify that enabled patch actually forwards to copium.patch.deepcopy."""
-    if copium.patch.enabled():
-        copium.patch.disable()
+def test_unpatched_has_stdlib_internals():
+    copium.patch.disable()
+    calls = trace_calls()
+    assert set(calls) & STDLIB_EXCLUSIVE_CALLS
 
-    try:
-        copium.patch.enable()
 
-        # Create a custom class to verify copium's behavior
-        class CustomClass:
-            def __init__(self, value):
-                self.value = value
+def test_patched_no_stdlib_internals():
+    copium.patch.enable()
+    calls = trace_calls()
+    assert not (set(calls) & STDLIB_EXCLUSIVE_CALLS)
+    copium.patch.disable()
 
-            def __eq__(self, other):
-                return isinstance(other, CustomClass) and self.value == other.value
 
-        original = CustomClass(42)
-        copied = stdlib_deepcopy.deepcopy(original)
+def test_disable_restores_stdlib_internals():
+    copium.patch.disable()
+    before_enabled = trace_calls()
 
-        assert copied == original
-        assert copied is not original
-        assert isinstance(copied, CustomClass)
+    copium.patch.enable()
+    when_enabled = trace_calls()
 
-    finally:
-        copium.patch.disable()
+    copium.patch.disable()
+    after_disabled = trace_calls()
+
+    assert set(before_enabled) & STDLIB_EXCLUSIVE_CALLS
+    assert not (set(when_enabled) & STDLIB_EXCLUSIVE_CALLS)
+    assert set(after_disabled) & STDLIB_EXCLUSIVE_CALLS
+
+
+def test_no_copium_attributes_after_disable():
+    copium.patch.enable()
+    copium.patch.disable()
+
+    fn = copy.deepcopy
+    assert not hasattr(fn, "__copium_original__")
+    assert not hasattr(fn, "__wrapped__")
+
+
+def test_idempotent_enable():
+    copium.patch.disable()
+    assert copium.patch.enable() == True
+    assert copium.patch.enable() == False
+    assert copium.patch.enabled() == True
+    copium.patch.disable()
+
+
+def test_idempotent_disable():
+    copium.patch.enable()
+    assert copium.patch.disable() == True
+    assert copium.patch.disable() == False
+    assert copium.patch.enabled() == False
