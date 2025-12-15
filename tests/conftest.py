@@ -18,6 +18,7 @@ import pytest
 from _pytest.assertion.rewrite import rewrite_asserts
 
 import copium
+import copium.patch
 from datamodelzoo import CASES
 from datamodelzoo import EVIL_CASES
 
@@ -76,6 +77,13 @@ class CopyModule:  # just for typing
 )
 def copy(request) -> CopyModule:
     return request.param
+
+
+@pytest.fixture
+def copium_patch_enabled():
+    was_disabled = copium.patch.enable()
+    yield
+    was_disabled and copium.patch.disable()
 
 
 def _get_function_body_source_and_first_lineno(function: FunctionType) -> tuple[str, int]:

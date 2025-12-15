@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 
+import copy as stdlib_copy
 import platform
 import random
 import sys
@@ -10,6 +11,8 @@ from typing import Any
 
 import pytest
 
+import copium
+import copium.patch
 from datamodelzoo import CASES
 from datamodelzoo import Case
 
@@ -58,56 +61,64 @@ if not getattr(sys, "_is_gil_enabled", lambda: True)():
     python_version += "t"
 python_version += f"-{platform.machine()}"
 
+PYTHON_VERSION_PARAM = pytest.mark.parametrize("_python", [python_version])
 
-@pytest.mark.parametrize(
+COMBINED_CASES_PARAMS = pytest.mark.parametrize(
+    "case",
+    [pytest.param(case, id=case.name) for case in COMBINED_CASES],
+)
+
+BASE_CASES_PARAMS = pytest.mark.parametrize(
     "case",
     (pytest.param(case, id=case.name) for case in chain(BASE_CASES, GUARD_CASES)),
 )
-@pytest.mark.parametrize("_python", [python_version])
-def test_individual_cases_warmup(case: Any, copy, _python, benchmark) -> None:  # noqa: ARG001
+
+
+@BASE_CASES_PARAMS
+@PYTHON_VERSION_PARAM
+def test_individual_cases_warmup(case: Any, copy, _python, benchmark) -> None:
     copy.deepcopy(case.obj)
 
 
-@pytest.mark.parametrize(
-    "case",
-    (pytest.param(case, id=case.name) for case in COMBINED_CASES),
-)
-@pytest.mark.parametrize("_python", [python_version])
-def test_combined_cases_warmup(case: Any, copy, _python, benchmark) -> None:  # noqa: ARG001
+@COMBINED_CASES_PARAMS
+@PYTHON_VERSION_PARAM
+def test_combined_cases_warmup(case: Any, copy, _python, benchmark) -> None:
     copy.deepcopy(case.obj)
 
 
+# Initially tests were only running on 3.13 x86_64
 if python_version == "3.13-x86_64":
     # backwards compatibility with previous benchmarks runs
 
-    @pytest.mark.parametrize(
-        "case",
-        (pytest.param(case, id=case.name) for case in chain(BASE_CASES, GUARD_CASES)),
-    )
+    @BASE_CASES_PARAMS
     def test_individual_cases(case: Any, copy, benchmark) -> None:
         benchmark(copy.deepcopy, case.obj)
 
-    @pytest.mark.parametrize(
-        "case",
-        (pytest.param(case, id=case.name) for case in COMBINED_CASES),
-    )
+    @COMBINED_CASES_PARAMS
     def test_combined_cases(case: Any, copy, benchmark) -> None:
         benchmark(copy.deepcopy, case.obj)
 
 else:
+    assert sys.version_info >= (3, 14), "This block assumed to have newer versions only."
 
-    @pytest.mark.parametrize(
-        "case",
-        (pytest.param(case, id=case.name) for case in chain(BASE_CASES, GUARD_CASES)),
-    )
-    @pytest.mark.parametrize("_python", [python_version])
+    @BASE_CASES_PARAMS
+    @PYTHON_VERSION_PARAM
     def test_individual_cases(case: Any, copy, benchmark, _python) -> None:
         benchmark(copy.deepcopy, case.obj)
 
-    @pytest.mark.parametrize(
-        "case",
-        (pytest.param(case, id=case.name) for case in COMBINED_CASES),
-    )
-    @pytest.mark.parametrize("_python", [python_version])
+    @COMBINED_CASES_PARAMS
+    @PYTHON_VERSION_PARAM
     def test_combined_cases(case: Any, copy, benchmark, _python) -> None:
         benchmark(copy.deepcopy, case.obj)
+
+    @COMBINED_CASES_PARAMS
+    @PYTHON_VERSION_PARAM
+    def test_combined_cases_copium_dict_memo(case: Any, benchmark, _python) -> None:
+        benchmark(copium.deepcopy, case.obj, {})
+
+    @COMBINED_CASES_PARAMS
+    @PYTHON_VERSION_PARAM
+    def test_combined_cases_stdlib_patched(
+        case: Any, benchmark, _python, copium_patch_enabled
+    ) -> None:
+        benchmark(stdlib_copy.deepcopy, case.obj)
