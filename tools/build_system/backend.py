@@ -29,7 +29,7 @@ Build hash / fingerprint strategy:
     * All src/** files with extensions: py, pyi, c, cc, cpp, cxx, h, hh, hpp, hxx
     * pyproject.toml
     * This backend file
-    * _copium_autopatch.pth (if present)
+    * _copium.pth (if present)
     * Selected environment details and build command (config_settings)
 - Used as:
     * Cache key for wheels and metadata
@@ -359,7 +359,7 @@ def _sources_fingerprint() -> str:
     - Walks PROJECT_ROOT / "src"
     - Considers only suffixes in _SOURCE_SUFFIXES
     - Hashes (relative path, contents) of each file
-    - Also folds in pyproject.toml, backend, and _copium_autopatch.pth
+    - Also folds in pyproject.toml, backend, and _copium.pth
     """
     h = hashlib.sha256()
     count = 0
@@ -402,14 +402,14 @@ def _sources_fingerprint() -> str:
         h.update(b"ERROR:backend")
 
     # .pth file
-    pth = PROJECT_ROOT / "src" / "_copium_autopatch.pth"
+    pth = PROJECT_ROOT / "src" / "_copium.pth"
     if pth.exists():
         try:
-            h.update(b"_copium_autopatch.pth")
+            h.update(b"_copium.pth")
             h.update(pth.read_bytes())
         except OSError as e:
-            error(f"Failed to read _copium_autopatch.pth for fingerprint: {e!r}")
-            h.update(b"ERROR:_copium_autopatch.pth")
+            error(f"Failed to read _copium.pth for fingerprint: {e!r}")
+            h.update(b"ERROR:_copium.pth")
 
     digest = h.hexdigest()
     echo(f"Computed sources fingerprint: {digest[:12]}... from {count} source files")

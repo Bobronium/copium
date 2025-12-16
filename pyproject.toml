@@ -7,7 +7,7 @@ backend-path = ["."]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"copium" = ["../_copium_autopatch.pth"]
+"copium" = ["../_copium.pth"]
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "universal2", "arm64"]
