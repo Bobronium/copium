@@ -56,6 +56,9 @@ Source = "https://github.com/Bobronium/copium"
 Issues = "https://github.com/Bobronium/copium/issues"
 
 [project.optional-dependencies]
+autopatch = [
+    "copium-autopatch==0.1.0"
+]
 dev = [
     "copium[lint]",
     "copium[typecheck]",
