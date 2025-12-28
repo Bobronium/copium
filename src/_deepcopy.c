@@ -133,18 +133,24 @@ static MAYBE_INLINE PyObject* deepcopy_list(
             goto error;
 
         // Though highly unlikely, since we're exposing list in memo, it theoretically could change.
+        int size_changed = 0;
         COPIUM_Py_BEGIN_CRITICAL_SECTION(copied);
         if (UNLIKELY(PyList_GET_SIZE(copied) != sz)) {
+            size_changed = 1;
+        } else {
+#if PY_VERSION_HEX < PY_VERSION_3_12_HEX
+            PyList_SetItem(copied, i, item);
+#else
+            PyList_SET_ITEM(copied, i, item);
+#endif
+        }
+        COPIUM_Py_END_CRITICAL_SECTION();
+
+        if (UNLIKELY(size_changed)) {
             Py_DECREF(item);
             PyErr_SetString(PyExc_RuntimeError, "list changed size during iteration");
             goto error;
         }
-#if PY_VERSION_HEX < PY_VERSION_3_12_HEX
-        PyList_SetItem(copied, i, item);  // Have to decref PyEllipsis since it's not immortal
-#else
-        PyList_SET_ITEM(copied, i, item);  // Technically may leak if somebody modified new list
-#endif
-        COPIUM_Py_END_CRITICAL_SECTION();
     }
 
     return copied;
@@ -251,28 +257,32 @@ error:
 static MAYBE_INLINE PyObject* deepcopy_set(
     PyObject* original, PyMemoObject* memo, Py_ssize_t memo_key_hash
 ) {
-    // Original deepcopy used __reduce__ protocol to copy set, which prevented case
-    // when set size could change mid iteration. Preserving this behavior to the best of our ability.
-    PyObject* snapshot;
+    PyObject* snapshot = NULL;
     PyObject* item;
-    Py_ssize_t i;
+    Py_ssize_t i = 0;
+    Py_ssize_t sz;
+    int init_failed = 0;
 
-    COPIUM_Py_BEGIN_CRITICAL_SECTION(original) Py_ssize_t sz = PySet_Size(original);
-    if (sz < 0)
-        return NULL;
-
-    snapshot = PyTuple_New(sz);
-    if (!snapshot)
-        return NULL;
-
-    Py_ssize_t pos = 0;
-    i = 0;
-    Py_hash_t hash;
-    while (_PySet_NextEntry(original, &pos, &item, &hash)) {
-        PyTuple_SET_ITEM(snapshot, i++, Py_NewRef(item));
+    COPIUM_Py_BEGIN_CRITICAL_SECTION(original);
+    sz = PySet_Size(original);
+    if (sz < 0) {
+        init_failed = 1;
+    } else {
+        snapshot = PyTuple_New(sz);
+        if (!snapshot) {
+            init_failed = 1;
+        } else {
+            Py_ssize_t pos = 0;
+            Py_hash_t hash;
+            while (_PySet_NextEntry(original, &pos, &item, &hash)) {
+                PyTuple_SET_ITEM(snapshot, i++, Py_NewRef(item));
+            }
+        }
     }
-
     COPIUM_Py_END_CRITICAL_SECTION();
+
+    if (UNLIKELY(init_failed))
+        return NULL;
 
     PyObject* copied = PySet_New(NULL);
     if (!copied) {
