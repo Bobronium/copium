@@ -50,7 +50,7 @@ Fast drop-in replacement for `copy.deepcopy()`.
 ## Installation
 
 > [!WARNING]
-> This is an alpha version. Run your test suite with `COPIUM_PATCH_DEEPCOPY=1` to verify compatibility in your environment.
+> This is an alpha version.
  
 ```bash
 pip install copium
