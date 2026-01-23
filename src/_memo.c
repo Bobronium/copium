@@ -1616,58 +1616,50 @@ int memo_register_abcs(void) {
     return 0;
 }
 
-static ALWAYS_INLINE PyMemoObject* get_tss_memo(void) {
-    void* val = PyThread_tss_get(&module_state.memo_tss);
-    if (val == NULL) {
-        PyMemoObject* memo = Memo_New();
-        if (memo == NULL)
+static ALWAYS_INLINE PyMemoObject* get_memo(int* out_is_tss) {
+    PyMemoObject* tss_memo = (PyMemoObject*)PyThread_tss_get(&module_state.memo_tss);
+
+    if (UNLIKELY(tss_memo == NULL)) {
+        // first time deepcopy called on this thread
+        tss_memo = Memo_New();
+        if (!tss_memo)
             return NULL;
-        if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
-            Py_DECREF(memo);
-            Py_FatalError("copium: unexpected TSS state - failed to set memo");
-        }
-        return memo;
+        PyThread_tss_set(&module_state.memo_tss, tss_memo);
+        *out_is_tss = 1;
+        return tss_memo;
     }
 
-    PyMemoObject* existing = (PyMemoObject*)val;
-    if (Py_REFCNT(existing) > 1) {
-        // Memo got stolen in between runs somehow.
-        // Highly unlikely, but we'll detach it anyway and enable gc tracking for it.
-        PyObject_GC_Track(existing);
-
-        PyMemoObject* memo = Memo_New();
-        if (memo == NULL)
-            return NULL;
-
-        if (PyThread_tss_set(&module_state.memo_tss, (void*)memo) != 0) {
-            Py_DECREF(memo);
-            Py_FatalError("copium: unexpected TSS state - failed to replace memo");
-        }
-        return memo;
+    if (LIKELY(Py_REFCNT(tss_memo) == 1)) {
+        // no unfinished deepcopy operations in this thread
+        *out_is_tss = 1;
+        return tss_memo;
     }
-
-    return existing;
+    // looks like we need new memo for a nested deepcopy
+    *out_is_tss = 0;
+    return Memo_New();
 }
 
-static ALWAYS_INLINE int cleanup_tss_memo(PyMemoObject* memo) {
-    Py_ssize_t refcount = Py_REFCNT(memo);
-
-    if (refcount == 1) {
+static ALWAYS_INLINE int cleanup_memo(PyMemoObject* memo, int is_tss) {
+    if (LIKELY(is_tss && Py_REFCNT(memo) == 1)) {
+        // we're still the only owner, cleanup references and keep it in TSS
         keepalive_clear(&memo->keepalive);
         keepalive_shrink_if_large(&memo->keepalive);
         undo_log_clear(&memo->undo_log);
         undo_log_shrink_if_large(&memo->undo_log);
         memo_table_reset(&memo->table);
         return 1;
-    } else {
-        PyObject_GC_Track(memo);
-        if (PyThread_tss_set(&module_state.memo_tss, NULL) != 0) {
-            Py_DECREF(memo);
-            Py_FatalError("copium: unexpected TSS state during memo cleanup");
-        }
-        Py_DECREF(memo);
-        return 0;
     }
+    if (is_tss) {
+        // Refcount > 1: memo was stolen from TSS, we'll need a replacement
+        PyMemoObject* fresh_memo = Memo_New();
+        if (!fresh_memo) {
+            Py_FatalError("copium: error while replacing stolen TSS memo");
+        }
+        PyThread_tss_set(&module_state.memo_tss, fresh_memo);
+    }
+    PyObject_GC_Track(memo);  // this is required to break possible cycles
+    Py_DECREF(memo);
+    return 0;
 }
 
 static ALWAYS_INLINE int memoize(
