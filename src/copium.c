@@ -292,13 +292,13 @@ have_args:
             Py_DECREF(memo);
             return result;
         }
-
-        PyMemoObject* memo = get_tss_memo();
-        if (!memo)
+        int is_tss;
+        PyMemoObject* memo = get_memo(&is_tss);
+        if (UNLIKELY(!memo))
             return NULL;
 
         PyObject* result = deepcopy(obj, memo);
-        cleanup_tss_memo(memo);
+        cleanup_memo(memo, is_tss);
         return result;
     }
 

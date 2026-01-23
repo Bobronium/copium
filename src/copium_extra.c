@@ -118,7 +118,8 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
         if (!out)
             return NULL;
 
-        PyMemoObject* memo = get_tss_memo();
+        int is_tss;
+        PyMemoObject* memo = get_memo(&is_tss);
         if (!memo) {
             Py_DECREF(out);
             return NULL;
@@ -126,8 +127,8 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
 
         for (Py_ssize_t i = 0; i < n; i++) {
             PyObject* copy_i = deepcopy(obj, memo);
-            if (!cleanup_tss_memo(memo)) {
-                memo = get_tss_memo();
+            if (!cleanup_memo(memo, is_tss)) {
+                memo = get_memo(&is_tss);
                 if (!memo) {
                     Py_DECREF(out);
                     return NULL;

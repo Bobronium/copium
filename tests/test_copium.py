@@ -14,6 +14,7 @@ from collections.abc import Callable
 from collections.abc import Generator
 from collections.abc import MutableMapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 from typing import Literal
@@ -457,6 +458,33 @@ def test_memo_stolen_ref_cycle_garbage_collected(copy):
     assert thief_id in collected
 
     assert copy.deepcopy([]) == []
+
+
+def test_memo_released_mid_usage(copy):
+    @dataclass
+    class SeparateCopier:
+        separate: Any
+
+        def __deepcopy__(self, memo):
+            return SeparateCopier(copy.deepcopy(self.separate))
+
+    copied = copy.deepcopy([by_ref := [], SeparateCopier(by_ref)])
+    assert copied[0] is not copied[1].separate
+
+
+def test_memo_stolen_and_released_mid_usage(copy):
+    @dataclass
+    class SeparateCopier:
+        separate: Any
+        memo: Any = None
+
+        def __deepcopy__(self, memo):
+            self.memo = memo
+            return SeparateCopier(copy.deepcopy(self.separate))
+
+    copied = copy.deepcopy([by_ref := [], copier := SeparateCopier(by_ref)])
+    assert copied[0] is not copied[1].separate
+    assert type(copier.memo).__name__ == "memo" if copy.__name__ == "copium" else "dict"
 
 
 class DeepcopyRuntimeError:
