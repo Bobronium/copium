@@ -49,7 +49,7 @@ jobs:
           BENCHMARK_FOR_CHART: 1
         run: |
           .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --copy-env --fast
-          COPIUM_PATCH_DEEPCOPY=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
+          COPIUM_PATCH_ENABLE=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
           .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
 
       # Generate charts

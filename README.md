@@ -59,7 +59,7 @@ pip install copium
 
 ## Usage
 
-Simply export `COPIUM_PATCH_DEEPCOPY=1` before running your application. You
+Simply export `COPIUM_PATCH_ENABLE=1` before running your application. You
 don't have to change a single line of code:
 
 `cat example.py`
@@ -70,7 +70,7 @@ from copy import deepcopy
 assert deepcopy(x := []) is not x
 ```
 
-`COPIUM_PATCH_DEEPCOPY=1 python example.py`
+`COPIUM_PATCH_ENABLE=1 python example.py`
 
 ### To enable the patch manually:
 
