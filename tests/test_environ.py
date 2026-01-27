@@ -11,7 +11,7 @@ def env(**kwargs):
         "COPIUM_NO_MEMO_FALLBACK_WARNING": None,
         "COPIUM_NO_MEMO_FALLBACK": None,
         "COPIUM_USE_DICT_MEMO": None,
-        "COPIUM_PATCH_DEEPCOPY": None,
+        "COPIUM_PATCH_ENABLE": None,
     }
     base.update(kwargs)
     return base
@@ -343,14 +343,14 @@ def copium_is_editable() -> bool:
     return Path(copium.__file__).parent.name == "src"
 
 
-@pytest.mark.subprocess(environ=env(COPIUM_PATCH_DEEPCOPY="1"))
+@pytest.mark.subprocess(environ=env(COPIUM_PATCH_ENABLE="1"))
 @pytest.mark.xfail(
     copium_is_editable() and os.getenv("COPIUM_LOCAL_DEVELOPMENT"),
     reason=".pth files in editable installs are broken at the moment.",
     strict=True,
 )
 def test_patch_deepcopy_enabled():
-    """COPIUM_PATCH_DEEPCOPY=1 enables patching"""
+    """COPIUM_PATCH_ENABLE=1 enables patching"""
     import copium.patch
 
     assert copium.patch.enabled()
