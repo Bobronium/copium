@@ -40,57 +40,196 @@ Fast drop-in replacement for `copy.deepcopy()`.
 ## Highlights
 
 - ⚡ 4-28x faster than `copy.deepcopy()` on builtin types
-- 🧠 uses ~44% less memory than `copy.deepcopy()` on average
+- 🧠 uses ~30% less memory per copy than `copy.deepcopy()`
 - 🧪 passes all tests in `CPython/Lib/test/test_copy.py`
-- 🎯 behaves exactly the same as `copy.deepcopy()` for all [`datamodelzoo.CASES`](https://github.com/Bobronium/datamodelzoo/blob/00ec1632b4037670628c865a0db2c8bc259abb75/src/datamodelzoo/__init__.py#L18)
+- 🎯 behaves exactly the same as `copy.deepcopy()` for all [
+  `datamodelzoo.CASES`](https://github.com/Bobronium/datamodelzoo/blob/00ec1632b4037670628c865a0db2c8bc259abb75/src/datamodelzoo/__init__.py#L18)
 - 🛡️ tested for refcount, recursion, threading and memo edge cases
 - 🐍 pre-built wheels for Python 3.10-3.14 on Linux/macOS/Windows (x64/ARM64)
-- 🔓 passes all tesee-frts on threaded Pyth buildons
+- 🔓 passes all tests on free-threaded Python builds
 
 ## Installation
 
 > [!WARNING]
-> This is an alpha version.
- 
+> `copium` hasn't seen wide production use yet. Expect bugs.
+
+```bash
+pip install 'copium[autopatch]'
+```
+
+This will effortlessly make `copy.deepcopy()` fast at Python startup.
+
+### For manual usage
 ```bash
 pip install copium
 ```
 
+## Manual usage
 
-## Usage
-
-Simply export `COPIUM_PATCH_ENABLE=1` before running your application. You
-don't have to change a single line of code:
-
-`cat example.py`
-
-```python
-from copy import deepcopy
-
-assert deepcopy(x := []) is not x
-```
-
-`COPIUM_PATCH_ENABLE=1 python example.py`
-
-### To enable the patch manually:
+> [!TIP]
+> You can skip this section if you depend on `copium[autopatch]`.
 
 ```py
-import copium.patch
+import copium
 
-copium.patch.enable()
+assert copium.deepcopy(x := []) is not x
 ```
 
-### To use manually:
-
-```py
-from copium import deepcopy
-
-assert deepcopy(x := []) is not x
-```
-
-The `copium` module includes all public declarations of stdlib `copy` module, so it's generally safe to:
+The `copium` module includes all public declarations of stdlib `copy` module, so it's generally safe
+to:
 
 ```diff
 - from copy import copy, deepcopy, Error
 + from copium import copy, deepcopy, Error
 ```
+
+---
+
+> [!TIP]
+> Next sections will likely make more sense if you read CPython docs on
+> deepcopy: https://docs.python.org/3/library/copy.html
+
+## How is it so fast?
+
+- #### Zero interpreter overhead for built-in containers and atomic types
+  ##### If your data consist only of the types below, `deepcopy` operation won't touch the interpreter:
+    - natively supported containers: `tuple`, `dict`, `list`, `set`, `frozenset`, `bytearray` and
+      `types.MethodType`
+    - natively supported atomics: `type(None)`, `int`, `str`, `bytes`, `float`, `bool`, `complex`,
+      `types.EllipsisType`, `types.NotImplementedType`, `range`, `property`, `weakref.ref`,
+      `re.Pattern`, `decimal.Decimal`, `fractions.Fraction`, `types.CodeType`, `types.FunctionType`,
+      `types.BuiltinFunctionType`, `types.ModuleType`
+- #### Native memo
+    - no time spent on creating extra `int` object for `id(x)`
+    - hash is computed once for lookup and reused to store the copy
+    - keepalive is a lightweight vector of pointers instead of a `list`
+    - memo object is not tracked in GC, unless stolen in custom `__deepcopy__`
+- #### Cached memo
+  Rather than creating a new memo object for each `deepcopy` and discarding it after, copium stores
+  one per thread and reuses it. Referenced objects are cleared, but some amount of memory stays
+  reserved, avoiding malloc/free overhead for typical workloads. 
+- #### Zero overhead patch on Python 3.12+
+  `deepcopy` function object stays the same after patch, only its [
+  `vectorcall`](https://peps.python.org/pep-0590/) is changed.
+
+
+## Compatibility notes
+
+`copium.deepcopy()` designed to be drop-in replacement for `copy.deepcopy()`,
+still there are minor deviations from stdlib you should be aware of.
+
+### Pickle protocol
+
+`copium` fully supports pickle protocol as it is defined in the [Python docs](https://docs.python.org/3/library/pickle.html).
+
+However, stdlib's `copy` tolerates some deviations from the pickle protocol that pickle itself (and copium) reject (see https://github.com/python/cpython/issues/141757).
+
+<details>
+<summary>Example</summary>
+
+```python-repl
+>>> import copy
+... import pickle
+... 
+... import copium
+... 
+... class BadReduce:
+...     def __reduce__(self):
+...         return BadReduce, []
+... 
+>>> copy.deepcopy(BadReduce())  # copy doesn't require exact types in __reduce__
+<__main__.BadReduce object at 0x1026d7b10>
+>>> copium.deepcopy(BadReduce())  # copium is stricter
+Traceback (most recent call last):
+  File "<python-input-2>", line 1, in <module>
+    copium.deepcopy(BadReduce())
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: second item of the tuple returned by __reduce__ must be a tuple, not list
+>>> pickle.dumps(BadReduce())  # so is pickle
+Traceback (most recent call last):
+  File "<python-input-3>", line 1, in <module>
+    pickle.dumps(BadReduce())
+    ~~~~~~~~~~~~^^^^^^^^^^^^^
+_pickle.PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not list
+when serializing BadReduce object
+```
+
+</details>
+
+If `copium` raises `TypeError` while `copy` does not, see if `pickle.dumps(obj)` works. 
+If it doesn't, the fix is easy: make your object comply with pickle protocol.
+If you think copium should not deviate 
+
+### Memo handling
+
+With native memo, custom `__deepcopy__` receives a `copium.memo`,
+which is fully compatible with how `copy.deepcopy()` uses it internally.
+
+Per [Python docs](https://docs.python.org/3/library/copy.html#object.__deepcopy__), custom `__deepcopy__` methods should treat memo as an opaque object and just pass
+it through in any subsequent `deepcopy` calls. 
+
+However, some native extensions that implement `__deepcopy__` on their objects 
+may require exact `dict` object to be passed as `memo` argument. 
+Typically, in this case, they raise `TypeError` or `AssertionError`. 
+
+copium will attempt to recover by calling `__deepcopy__` again with `dict` memo. If that second call
+succeeds, a warning with clear suggestions will be emitted, otherwise the error will be raised as
+is.
+
+<details>
+<summary>Example</summary>
+
+```python-repl
+>>> import copium
+>>> class CustomType:
+...     def __deepcopy__(self, memo):
+...         if not isinstance(memo, dict):
+...             raise TypeError("I'm enforcing memo to be a dict")
+...         return self
+... 
+>>> print("Copied successfully: ", copium.deepcopy(CustomType()))
+<python-input-2>:1: UserWarning: 
+
+Seems like 'copium.memo' was rejected inside '__main__.CustomType.__deepcopy__':
+
+Traceback (most recent call last):
+  File "<python-input-2>", line 1, in <module>
+    
+  File "<python-input-1>", line 4, in __deepcopy__
+    raise TypeError("I'm enforcing memo to be a dict")
+TypeError: I'm enforcing memo to be a dict
+
+copium was able to recover from this error, but this is slow and unreliable.
+
+Fix:
+
+  Per Python docs, '__main__.CustomType.__deepcopy__' should treat memo as an opaque object.
+  See: https://docs.python.org/3/library/copy.html#object.__deepcopy__
+
+Workarounds:
+
+    local  change deepcopy(CustomType()) to deepcopy(CustomType(), {})
+           -> copium uses dict memo in this call (recommended)
+
+   global  export COPIUM_USE_DICT_MEMO=1
+           -> copium uses dict memo everywhere (~1.3-2x slowdown, still faster than stdlib)
+
+   silent  export COPIUM_NO_MEMO_FALLBACK_WARNING='TypeError: I'm enforcing memo to be a dict'
+           -> 'deepcopy(CustomType())' stays slow to deepcopy
+
+explosive  export COPIUM_NO_MEMO_FALLBACK=1
+           -> 'deepcopy(CustomType())' raises the error above
+
+Copied successfully:  <__main__.CustomType object at 0x104d1cad0>
+```
+
+</details>
+
+## Credits
+
+- @eendebakpt for attempting to implement parts of deepcopy in C in
+  CPython https://github.com/python/cpython/pull/91610 — I've used this as a reference at early
+  stages of development.
+- @sobolevn for constructive feedback on C code / tests quality
+- Anthropic/OpenAI/xAI for translating my ideas to compilable C code and educating me on the subject
+- One special lizard 🦎
