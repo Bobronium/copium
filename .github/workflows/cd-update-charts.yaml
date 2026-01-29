@@ -62,7 +62,7 @@ jobs:
           PARENT_SHA="${{ github.sha }}"
           PARENT_SHORT_SHA="${PARENT_SHA:0:7}"
 
-          git add assets/*.svg .bench/chart_results.json showcase.ipynb
+          git add assets/*.svg showcase.ipynb
 
           if git diff --staged --quiet; then
             echo "No changes"
