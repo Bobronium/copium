@@ -141,6 +141,7 @@ def main() -> None:
             print(f"Saved notebook to {args.save_notebook}")
         
         if args.save_results:
+            args.save_results.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(best.results_path, args.save_results)
             print(f"Saved results to {args.save_results}")
 
