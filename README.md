@@ -20,14 +20,14 @@ copium
 
 <div align="center">
   <picture>
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/4ca9135187020f75fa4b3373d2272f2efd060b2c/assets/copium_logo_512.png" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/4ca9135187020f75fa4b3373d2272f2efd060b2c/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/4ca9135187020f75fa4b3373d2272f2efd060b2c/assets/copium_logo_512.png" alt="Copium Logo" width="250" align="left">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" alt="Copium Logo" width="250" align="left">
   </picture>  
   <picture>
-    <source srcset="assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
-    <source srcset="assets/chart_light.svg" media="(prefers-color-scheme: light)">
-    <img src="assets/chart_light.svg" alt="Self-contained IPython showcase" width="500">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/chart_light.svg" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/chart_light.svg" alt="Self-contained IPython showcase" width="500">
   </picture>
   <div align="center"><p>Make Python <code>copy.deepcopy()</code> go brrrr.</p></div>
 </div>
