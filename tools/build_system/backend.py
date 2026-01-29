@@ -340,15 +340,20 @@ def _build_command_fingerprint(
         else:
             normalized_cfg[key] = value
 
-    # Capture env vars that realistically affect compilation
     interesting_env: dict[str, str] = {}
     for k in sorted(os.environ):
         if k.startswith(("COPIUM_", "CFLAGS", "CPPFLAGS", "LDFLAGS")):
             interesting_env[k] = os.environ[k]
 
+    pgo_config: dict[str, str | None] = {
+        "pgo_generate": os.environ.get("COPIUM_PGO_GENERATE"),
+        "pgo_use": os.environ.get("COPIUM_PGO_USE"),
+    }
+
     return {
         "config_settings": normalized_cfg,
         "env_overrides": interesting_env,
+        "pgo": pgo_config,
     }
 
 
@@ -468,6 +473,52 @@ def _deserialize_ext(d: dict[str, Any]) -> Extension:
 # ============================================================================
 
 
+def _get_pgo_flags() -> tuple[list[str], list[str]]:
+    """
+    Get PGO-related compiler and linker flags based on environment.
+    
+    Environment variables:
+        COPIUM_PGO_GENERATE: Set to "1" to build instrumented binary for profiling
+        COPIUM_PGO_USE: Path to merged .profdata file for optimized build
+    
+    Returns:
+        (compile_args, link_args) tuple
+    """
+    compile_args: list[str] = []
+    link_args: list[str] = []
+    
+    pgo_generate = os.environ.get("COPIUM_PGO_GENERATE") == "1"
+    pgo_use = os.environ.get("COPIUM_PGO_USE")
+    
+    if pgo_generate and pgo_use:
+        error("COPIUM_PGO_GENERATE and COPIUM_PGO_USE are mutually exclusive")
+        return compile_args, link_args
+    
+    if sys.platform == "win32":
+        if pgo_generate:
+            compile_args.append("/GL")
+            link_args.append("/LTCG:PGI")
+            echo("PGO: Instrumentation build (MSVC)")
+        elif pgo_use:
+            compile_args.append("/GL")
+            link_args.extend(["/LTCG:PGO", f"/USEPROFILE:PGD={pgo_use}"])
+            echo(f"PGO: Optimized build using {pgo_use} (MSVC)")
+    else:
+        if pgo_generate:
+            compile_args.append("-fprofile-instr-generate")
+            link_args.append("-fprofile-instr-generate")
+            echo("PGO: Instrumentation build (Clang)")
+        elif pgo_use:
+            if not Path(pgo_use).exists():
+                error(f"PGO profile not found: {pgo_use}")
+            else:
+                compile_args.append(f"-fprofile-instr-use={pgo_use}")
+                link_args.append(f"-fprofile-instr-use={pgo_use}")
+                echo(f"PGO: Optimized build using {pgo_use}")
+    
+    return compile_args, link_args
+
+
 def _get_c_extensions(
     version_info: dict[str, Any] | None = None,
     build_hash: str | None = None,
@@ -486,8 +537,10 @@ def _get_c_extensions(
 
     # Thread the build fingerprint into the native extension when available
     if build_hash is not None:
-        # String-literal for the C preprocessor: "abcd1234..."
         define_macros.append(("COPIUM_BUILD_HASH", f'"{build_hash}"'))
+
+    base_compile_args = ["/std:c11"] if sys.platform == "win32" else ["-std=c11"]
+    pgo_compile_args, pgo_link_args = _get_pgo_flags()
 
     return [
         Extension(
@@ -495,7 +548,8 @@ def _get_c_extensions(
             sources=["src/copium.c"],
             include_dirs=[str(python_include), str(python_include / "internal")],
             define_macros=define_macros,
-            extra_compile_args=["/std:c11"] if sys.platform == "win32" else ["-std=c11"],
+            extra_compile_args=base_compile_args + pgo_compile_args,
+            extra_link_args=pgo_link_args,
         )
     ]
 

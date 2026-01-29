@@ -40,3 +40,4 @@ htmlcov/
 .pgo
 *.so
 compile_commands.json
+.bench
