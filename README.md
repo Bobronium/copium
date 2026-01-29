@@ -17,12 +17,13 @@ copium
 </a>
 </h1>
 
+<div align="center"><h4>Make Python <code>copy.deepcopy()</code> fast.</h4></div>
 
 <div align="left">
   <picture>
     <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" media="(prefers-color-scheme: dark)">
     <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" alt="Copium Logo" width="250" align="left">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" alt="Copium Logo" width="200" align="left">
   </picture>
   <a href="https://github.com/Bobronium/copium/blob/b177d428dbb172fa9e22831d32db04c88b04ece1/showcase.ipynb">
     <picture>
@@ -31,8 +32,9 @@ copium
       <img src="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/chart_light.svg" alt="Self-contained IPython showcase" width="500">
     </picture>
   </a>
-  <div align="left"><p>Make Python <code>copy.deepcopy()</code> fast.</p></div>
+
 </div>
+
 
 ## Highlights
 
