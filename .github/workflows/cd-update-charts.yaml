@@ -78,9 +78,8 @@ jobs:
           # Update chart URLs in README
           sed -i "s|https://raw.githubusercontent.com/Bobronium/copium/[^/]*/assets/chart_|https://raw.githubusercontent.com/Bobronium/copium/${CHARTS_SHA}/assets/chart_|g" README.md
 
-          # Update tools script URLs in README to point to parent commit
-          sed -i "s|https://github.com/Bobronium/copium/blob/[^/]*/tools/run_benchmark.py|https://github.com/Bobronium/copium/blob/${PARENT_SHA}/tools/run_benchmark.py|g" README.md
-          sed -i "s|https://github.com/Bobronium/copium/blob/[^/]*/tools/generate_chart.py|https://github.com/Bobronium/copium/blob/${PARENT_SHA}/tools/generate_chart.py|g" README.md
+          # Update showcase.ipynb link to charts commit (notebook is updated with charts)
+          sed -i "s|https://github.com/Bobronium/copium/blob/[^/]*/showcase.ipynb|https://github.com/Bobronium/copium/blob/${CHARTS_SHA}/showcase.ipynb|g" README.md
 
           git add README.md
 
