@@ -18,23 +18,18 @@ copium
 </h1>
 
 
-Fast drop-in replacement for `copy.deepcopy()`.
-
-<picture>
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/4ca9135187020f75fa4b3373d2272f2efd060b2c/assets/copium_logo_512.png" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/4ca9135187020f75fa4b3373d2272f2efd060b2c/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/4ca9135187020f75fa4b3373d2272f2efd060b2c/assets/copium_logo_512.png" alt="Copium Logo" width="200" align="left">
-</picture>
-
 <div align="center">
   <picture>
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/22f69215bc275fde267162c0c6c3aaf42985c25e/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/22f69215bc275fde267162c0c6c3aaf42985c25e/assets/chart_light.svg" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/22f69215bc275fde267162c0c6c3aaf42985c25e/assets/chart_light.svg" alt="Benchmark results bar chart" width="600">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/4ca9135187020f75fa4b3373d2272f2efd060b2c/assets/copium_logo_512.png" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/4ca9135187020f75fa4b3373d2272f2efd060b2c/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/4ca9135187020f75fa4b3373d2272f2efd060b2c/assets/copium_logo_512.png" alt="Copium Logo" width="250" align="left">
+  </picture>  
+  <picture>
+    <source srcset="assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="assets/chart_light.svg" media="(prefers-color-scheme: light)">
+    <img src="assets/chart_light.svg" alt="Self-contained IPython showcase" width="500">
   </picture>
-</div>
-<div align="center">
-  <i>Benchmarked on <a href="https://github.com/Bobronium/copium/actions/workflows/build.yaml">GitHub Actions</a> using <a href="https://github.com/Bobronium/copium/blob/ba3b7d6aa68d1cccbee0f3dd701e9b2ddb526ebf/tools/run_benchmark.py">tools/run_benchmark.py</a>, charted with <a href="https://github.com/Bobronium/copium/blob/ba3b7d6aa68d1cccbee0f3dd701e9b2ddb526ebf/tools/generate_chart.py">tools/generate_chart.py</a></i>
+  <div align="center"><p>Make Python <code>copy.deepcopy()</code> go brrrr.</p></div>
 </div>
 
 ## Highlights

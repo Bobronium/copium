@@ -1,22 +1,13 @@
 # SPDX-FileCopyrightText: 2025-present Arseny Boykov (Bobronium) <hi@bobronium.me>
 #
 # SPDX-License-Identifier: MIT
-
 import copy
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import pyperf
-
-
-if os.getenv("BENCHMARK_FOR_CHART"):
-    # raise absolute case time up to perceivable value
-    ITERATIONS_MULTIPLIER = 22000
-else:
-    ITERATIONS_MULTIPLIER = 1
 
 
 @dataclass
@@ -38,7 +29,6 @@ class CacheEntry:
 
 
 def get_data(new_datetime, new_user, new_cache_entry) -> dict[str, Any]:
-    # shared refs
     common_tags = ("premium", "verified", "active")
     default_settings = {"theme": "dark", "notifications": True, "language": "en"}
 
@@ -122,13 +112,10 @@ def get_data(new_datetime, new_user, new_cache_entry) -> dict[str, Any]:
 
 
 def benchmark_mixed(n):
-    """
-    Run benchmark on types present in builtins,
-    as well as dataclasses and datetime to account for reduce protocol.
-    """
+    """Benchmark with builtins, dataclasses and datetime (reduce protocol)."""
     total = 0
     value = get_data(lambda: datetime.fromtimestamp(123456789), User, CacheEntry)
-    for ii in range(n * ITERATIONS_MULTIPLIER):
+    for _ in range(n):
         t0 = pyperf.perf_counter()
         copy.deepcopy(value)
         total += pyperf.perf_counter() - t0
@@ -136,12 +123,10 @@ def benchmark_mixed(n):
 
 
 def benchmark_builtins(n):
-    """
-    Run benchmark on types present in builtins.
-    """
+    """Benchmark with builtin types only."""
     value = get_data(lambda: 123456789, dict, lambda *args: tuple(args))
     total = 0
-    for _ in range(n * ITERATIONS_MULTIPLIER):
+    for _ in range(n):
         t0 = pyperf.perf_counter()
         copy.deepcopy(value)
         total += pyperf.perf_counter() - t0
@@ -150,6 +135,6 @@ def benchmark_builtins(n):
 
 if __name__ == "__main__":
     runner = pyperf.Runner()
-    runner.metadata["implementation"] = "copium" if os.getenv("COPIUM_PATCH_DEEPCOPY") else "copy"
+    runner.metadata["implementation"] = "copium" if os.getenv("COPIUM_PATCH_ENABLE") else "copy"
     runner.bench_time_func("mixed", benchmark_mixed, metadata={"name": "mixed"})
     runner.bench_time_func("builtin", benchmark_builtins)

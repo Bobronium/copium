@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  benchmarks-and-assets:
+  generate-charts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -44,40 +44,17 @@ jobs:
           uv sync --extra benchmark --no-install-project
           uv pip install ${{ steps.wheel.outputs.path }}
 
-      - name: Run readme benchmark
-        env:
-          BENCHMARK_FOR_CHART: 1
+      - name: Run benchmarks and generate charts
         run: |
-          .venv/bin/python tools/run_benchmark.py -o readme_stdlib.json --copy-env --fast
-          COPIUM_PATCH_ENABLE=1 .venv/bin/python tools/run_benchmark.py -o readme_copium.json --copy-env --fast
-          .venv/bin/pyperf compare_to readme_stdlib.json readme_copium.json --table
+          .venv/bin/python -m tools.benchmark_chart \
+            --notebook showcase.ipynb \
+            --runs 5 \
+            --output-dir assets \
+            --save-results .bench/chart_results.json \
+            --save-notebook showcase.ipynb
 
-      # Generate charts
-      - name: Install JetBrains Mono
-        run: sudo apt-get install -y fonts-jetbrains-mono
-
-      - name: Generate charts
-        run: |
-          set -euo pipefail
-          mkdir -p assets
-          for theme in light dark; do
-            uv run --with matplotlib tools/generate_chart.py \
-              --name "readme_copium.json:copium.deepcopy({benchname})" \
-              --name "readme_stdlib.json:copy.deepcopy({benchname})" \
-              --aggregate geomean \
-              --group-sort min --group-order asc --within-order asc \
-              --save-svg assets/chart_$theme.svg \
-              --theme $theme \
-              --monospace \
-              --strict
-          done
-          test -s assets/chart_light.svg
-          test -s assets/chart_dark.svg
-
-      # Commit assets and update README
       - name: Commit and push assets, then update README
         run: |
-          set -euo pipefail
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
@@ -85,12 +62,13 @@ jobs:
           PARENT_SHA="${{ github.sha }}"
           PARENT_SHORT_SHA="${PARENT_SHA:0:7}"
 
-          git add assets/*.svg
+          git add assets/*.svg .bench/chart_results.json showcase.ipynb
 
           if git diff --staged --quiet; then
-            echo "No chart changes to commit"
+            echo "No changes"
           else
-            git commit -m "Update benchmark assets from CI (${PARENT_SHORT_SHA})"
+            SPEEDUP=$(python -c "import json; d=json.load(open('.bench/chart_results.json')); print(f\"{d['stdlib']['average']/d['copium']['average']:.0f}\")")
+            git commit -m "Update benchmark charts for (${PARENT_SHORT_SHA} – ${SPEEDUP}x faster)"
             git push
           fi
 
