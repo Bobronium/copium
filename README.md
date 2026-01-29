@@ -36,14 +36,12 @@ copium
 
 ## Highlights
 
-- ⚡ 4-28x faster than `copy.deepcopy()` on builtin types
-- 🧠 uses ~30% less memory per copy than `copy.deepcopy()`
-- 🧪 passes all tests in `CPython/Lib/test/test_copy.py`
-- 🎯 behaves exactly the same as `copy.deepcopy()` for all [
-  `datamodelzoo.CASES`](https://github.com/Bobronium/datamodelzoo/blob/00ec1632b4037670628c865a0db2c8bc259abb75/src/datamodelzoo/__init__.py#L18)
-- 🛡️ tested for refcount, recursion, threading and memo edge cases
-- 🐍 pre-built wheels for Python 3.10-3.14 on Linux/macOS/Windows (x64/ARM64)
-- 🔓 passes all tests on free-threaded Python builds
+- ⚡ **4-28x faster** on built-in types
+- 🧠 **~30% less memory** per copy
+- ✨ requires **zero code changes**
+- 🧪 passes [`CPython/Lib/test/test_copy.py`](https://github.com/python/cpython/blob/41b9ad5b38e913194a5cc88f0e7cfc096787b664/Lib/test/test_copy.py)
+- 📦 pre-built wheels for Python 3.10–3.14 on Linux/macOS/Windows (x64/ARM64)
+- 🔓 passes all tests on **free-threaded** Python builds
 
 ## Installation
 
@@ -54,7 +52,7 @@ copium
 pip install 'copium[autopatch]'
 ```
 
-This will effortlessly make `copy.deepcopy()` fast at Python startup.
+This will effortlessly make `copy.deepcopy()` fast in current environment.
 
 ### For manual usage
 ```bash
@@ -117,10 +115,10 @@ still there are minor deviations from stdlib you should be aware of.
 
 ### Pickle protocol
 
-`copium` fully supports pickle protocol as it is defined in the [Python docs](https://docs.python.org/3/library/pickle.html).
+`copium` is stricter than `copy` for some malformed `__reduce__` implementations.
 
-However, stdlib's `copy` tolerates some deviations from the pickle protocol that pickle itself (and copium) reject (see https://github.com/python/cpython/issues/141757).
-
+stdlib's `copy` tolerates some deviations from the pickle protocol that `pickle` (and `copium`) reject (see https://github.com/python/cpython/issues/141757).
+ 
 <details>
 <summary>Example</summary>
 
@@ -142,6 +140,7 @@ Traceback (most recent call last):
     copium.deepcopy(BadReduce())
     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
 TypeError: second item of the tuple returned by __reduce__ must be a tuple, not list
+
 >>> pickle.dumps(BadReduce())  # so is pickle
 Traceback (most recent call last):
   File "<python-input-3>", line 1, in <module>
@@ -154,8 +153,10 @@ when serializing BadReduce object
 </details>
 
 If `copium` raises `TypeError` while `copy` does not, see if `pickle.dumps(obj)` works. 
-If it doesn't, the fix is easy: make your object comply with pickle protocol.
-If you think copium should not deviate 
+If it doesn't, the fix is easy: make your object comply with pickle protocol. 
+
+> [!NOTE]
+> If this becomes a real blocker for adoption, `copium` might mimic stdlib's behavior in the future releases while still being fast.
 
 ### Memo handling
 
@@ -223,10 +224,10 @@ Copied successfully:  <__main__.CustomType object at 0x104d1cad0>
 </details>
 
 ## Credits
-
-- @eendebakpt for attempting to implement parts of deepcopy in C in
-  CPython https://github.com/python/cpython/pull/91610 — I've used this as a reference at early
-  stages of development.
-- @sobolevn for constructive feedback on C code / tests quality
+ 
+- [@sobolevn](https://github.com/sobolevn) for constructive feedback on C code / tests quality
+- [@eendebakpt](https://github.com/eendebakpt) for C implementation of parts of `copy.deepcopy` in https://github.com/python/cpython/pull/91610 — used as early reference
+- [@orsinium](https://github.com/orsinium) for [svg.py](https://github.com/orsinium-labs/svg.py) — used to generate main chart
+- [@provencher](https://github.com/provencher) for repoprompt.com — used it to build context for LLMs/editing
 - Anthropic/OpenAI/xAI for translating my ideas to compilable C code and educating me on the subject
 - One special lizard 🦎
