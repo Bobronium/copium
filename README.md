@@ -45,14 +45,14 @@ copium
 
 ## Installation
 
-> [!WARNING]
-> `copium` hasn't seen wide production use yet. Expect bugs.
-
 ```bash
 pip install 'copium[autopatch]'
 ```
 
 This will effortlessly make `copy.deepcopy()` fast in current environment.
+
+> [!WARNING]
+> `copium` hasn't seen wide production use yet. Expect bugs.
 
 ### For manual usage
 ```bash
