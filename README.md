@@ -17,7 +17,7 @@ copium
 </a>
 </h1>
 
-<div align="center"><h4>Make Python <code>copy.deepcopy()</code> fast.</h4></div>
+<div align="center"><h3>Makes Python <code>deepcopy()</code> fast.</h3></div>
 
 <div align="left">
   <picture>
