@@ -120,7 +120,7 @@ still there are minor deviations from stdlib you should be aware of.
 `copium` is stricter than `copy` for some malformed `__reduce__` implementations.
 
 stdlib's `copy` tolerates some deviations from the pickle protocol that `pickle` (and `copium`) reject (see https://github.com/python/cpython/issues/141757).
- 
+
 <details>
 <summary>Example</summary>
 
@@ -157,6 +157,8 @@ when serializing BadReduce object
 If `copium` raises `TypeError` while `copy` does not, see if `pickle.dumps(obj)` works. 
 If it doesn't, the fix is easy: make your object comply with pickle protocol. 
 
+[Tracking issue](https://github.com/Bobronium/copium/issues/32)
+
 > [!NOTE]
 > If this becomes a real blocker for adoption, `copium` might mimic stdlib's behavior in the future releases while still being fast.
 
@@ -175,6 +177,8 @@ Typically, in this case, they raise `TypeError` or `AssertionError`.
 copium will attempt to recover by calling `__deepcopy__` again with `dict` memo. If that second call
 succeeds, a warning with clear suggestions will be emitted, otherwise the error will be raised as
 is.
+
+[Tracking issue](https://github.com/Bobronium/copium/issues/31)
 
 <details>
 <summary>Example</summary>
