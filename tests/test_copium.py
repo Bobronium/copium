@@ -47,12 +47,15 @@ def memo_kwargs(memo: AllMemoOption) -> dict[str, Any]:
         kwargs = {"memo": {}}
     elif memo == "None":
         kwargs = {"memo": None}
-    elif memo == "memo_mappingproxy":
-        kwargs = {"memo": MappingProxyType({})}  # expected to throw
     elif memo == "mutable_mapping":
+        # expected to succeed
         kwargs = {"memo": collections.UserDict()}
     elif memo == "invalid":
+        # expected to fail on first lookup
         kwargs = {"memo": "not a memo"}
+    elif memo == "mappingproxy":
+        # expected to fail on first memoization
+        kwargs = {"memo": MappingProxyType({})}
     else:
         kwargs = {}
     return kwargs

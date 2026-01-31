@@ -364,6 +364,12 @@ static MAYBE_INLINE PyObject* deepcopy_frozenset_legacy(
     if (sz < 0)
         return NULL;
 
+    // Keep exact memo usage semantics: stdlib uses __reduce__ protocol to reconstruct frozenset
+    // this prompts it to deepcopy intermediate list of its members and use memo early.
+    // This basically ensures that memo is usable (only matters if memo is malformed object).
+    if (maybe_initialize_keepalive_legacy(memo, keepalive_pointer) < 0)
+        return NULL;
+
     PyObject* items = PyTuple_New(sz);
     if (!items)
         return NULL;
