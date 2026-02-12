@@ -102,6 +102,11 @@ to:
     - hash is computed once for lookup and reused to store the copy
     - keepalive is a lightweight vector of pointers instead of a `list`
     - memo object is not tracked in GC, unless stolen in custom `__deepcopy__`
+- #### Native __reduce__ handling
+  When type's `__reduce__` strictly follows the protocol, `copium` handles returned values natively,
+  without interpreter overhead, the same way CPython pickle implementation does.
+  
+  [What if there's type mismatch?](#pickle-protocol)
 - #### Cached memo
   Rather than creating a new memo object for each `deepcopy` and discarding it after, copium stores
   one per thread and reuses it. Referenced objects are cleared, but some amount of memory stays
@@ -118,50 +123,14 @@ still there are minor deviations from stdlib you should be aware of.
 
 ### Pickle protocol
 
-`copium` is stricter than `copy` for some malformed `__reduce__` implementations.
+stdlib's `copy` tolerates some deviations from the pickle protocol that `pickle` itself reject 
+(see https://github.com/python/cpython/issues/141757).
 
-stdlib's `copy` tolerates some deviations from the pickle protocol that `pickle` (and `copium`) reject (see https://github.com/python/cpython/issues/141757).
-
-<details>
-<summary>Example</summary>
-
-```python-repl
->>> import copy
-... import pickle
-... 
-... import copium
-... 
-... class BadReduce:
-...     def __reduce__(self):
-...         return BadReduce, []
-... 
->>> copy.deepcopy(BadReduce())  # copy doesn't require exact types in __reduce__
-<__main__.BadReduce object at 0x1026d7b10>
->>> copium.deepcopy(BadReduce())  # copium is stricter
-Traceback (most recent call last):
-  File "<python-input-2>", line 1, in <module>
-    copium.deepcopy(BadReduce())
-    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-TypeError: second item of the tuple returned by __reduce__ must be a tuple, not list
-
->>> pickle.dumps(BadReduce())  # so is pickle
-Traceback (most recent call last):
-  File "<python-input-3>", line 1, in <module>
-    pickle.dumps(BadReduce())
-    ~~~~~~~~~~~~^^^^^^^^^^^^^
-_pickle.PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not list
-when serializing BadReduce object
-```
-
-</details>
-
-If `copium` raises `TypeError` while `copy` does not, see if `pickle.dumps(obj)` works. 
-If it doesn't, the fix is easy: make your object comply with pickle protocol. 
-
-[Tracking issue](https://github.com/Bobronium/copium/issues/32)
-
-> [!NOTE]
-> If this becomes a real blocker for adoption, `copium` might mimic stdlib's behavior in the future releases while still being fast.
+`copium` strictly follows stdlib semantics: if `__reduce__` 
+returns a list instead of a tuple for args, or a mapping instead of a dict for kwargs, 
+`copium` will coerce them the same way stdlib would 
+(via `*args` unpacking, `**kwargs` merging, `.items()` iteration, etc.). 
+Errors from malformed `__reduce__` results match what `copy.deepcopy` produces.
 
 ### Memo handling
 

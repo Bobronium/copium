@@ -72,21 +72,12 @@ class ContainerThatUsesDifferentCopy:
 
 
 EXPECTED_ERROR_DIVERGENCES = {
-    repr(TypeError("EvilReduceArgs() takes no arguments")): repr(
-        TypeError("second item of the tuple returned by __reduce__ must be a tuple, not str")
-    ),
-    repr(TypeError("'int' object is not callable")): repr(
-        TypeError("first item of the tuple returned by __reduce__ must be callable, not int")
-    ),
+    # Recreating this error seems unnecessary.
+    # It's highly unlikely that anyone would depend on it being this exact message
+    # the type of exception is preserved and that's enough
     repr(TypeError("_reconstruct() missing 1 required positional argument: 'args'")): repr(
         TypeError("tuple returned by __reduce__ must contain 2 through 5 elements")
-    ),
-    repr(AttributeError("'EvilStateSlotsMapping' object has no attribute 'items'")): repr(
-        TypeError("slot state is not a dictionary")
-    ),
-    repr(ValueError("not enough values to unpack (expected 2, got 1)")): repr(
-        ValueError("dictiter must yield (key, value) pairs")
-    ),
+    )
 }
 
 

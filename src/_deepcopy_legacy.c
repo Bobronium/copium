@@ -522,28 +522,39 @@ static PyObject* reconstruct_newobj_ex_legacy(
         );
         return NULL;
     }
+
+    PyObject* coerced_args = NULL;
+    PyObject* coerced_kwargs = NULL;
+
     if (!PyTuple_Check(args)) {
-        PyErr_Format(
-            PyExc_TypeError,
-            "__newobj_ex__ arg 2 must be a tuple, not %.200s",
-            Py_TYPE(args)->tp_name
-        );
-        return NULL;
+        coerced_args = PySequence_Tuple(args);
+        if (!coerced_args)
+            return NULL;
+        args = coerced_args;
     }
     if (!PyDict_Check(kwargs)) {
-        PyErr_Format(
-            PyExc_TypeError,
-            "__newobj_ex__ arg 3 must be a dict, not %.200s",
-            Py_TYPE(kwargs)->tp_name
-        );
-        return NULL;
+        coerced_kwargs = PyDict_New();
+        if (!coerced_kwargs) {
+            Py_XDECREF(coerced_args);
+            return NULL;
+        }
+        if (PyDict_Merge(coerced_kwargs, kwargs, 1) < 0) {
+            Py_XDECREF(coerced_args);
+            Py_DECREF(coerced_kwargs);
+            return NULL;
+        }
+        kwargs = coerced_kwargs;
     }
 
     PyObject* copied_args = deepcopy_legacy(args, memo, keepalive_pointer);
-    if (!copied_args)
+    Py_XDECREF(coerced_args);
+    if (!copied_args) {
+        Py_XDECREF(coerced_kwargs);
         return NULL;
+    }
 
     PyObject* copied_kwargs = deepcopy_legacy(kwargs, memo, keepalive_pointer);
+    Py_XDECREF(coerced_kwargs);
     if (!copied_kwargs) {
         Py_DECREF(copied_args);
         return NULL;
@@ -616,14 +627,21 @@ static int apply_dict_state_legacy(
     if (!dict_state || dict_state == Py_None)
         return 0;
 
-    if (!PyDict_Check(dict_state)) {
-        PyErr_SetString(PyExc_TypeError, "state must be a dict");
-        return -1;
-    }
-
     PyObject* copied = deepcopy_legacy(dict_state, memo, keepalive_pointer);
     if (!copied)
         return -1;
+
+    if (UNLIKELY(!PyDict_Check(copied))) {
+        PyObject* instance_dict = PyObject_GetAttr(instance, module_state.s__dict__);
+        if (!instance_dict) {
+            Py_DECREF(copied);
+            return -1;
+        }
+        int ret = PyDict_Merge(instance_dict, copied, 1);
+        Py_DECREF(instance_dict);
+        Py_DECREF(copied);
+        return ret;
+    }
 
     PyObject* instance_dict = PyObject_GetAttr(instance, module_state.s__dict__);
     if (!instance_dict) {
@@ -653,14 +671,47 @@ static int apply_slot_state_legacy(
     if (!slotstate || slotstate == Py_None)
         return 0;
 
-    if (!PyDict_Check(slotstate)) {
-        PyErr_SetString(PyExc_TypeError, "slot state is not a dictionary");
-        return -1;
-    }
-
     PyObject* copied = deepcopy_legacy(slotstate, memo, keepalive_pointer);
     if (!copied)
         return -1;
+
+    if (UNLIKELY(!PyDict_Check(copied))) {
+        PyObject* items = PyObject_CallMethod(copied, "items", NULL);
+        Py_DECREF(copied);
+        if (!items)
+            return -1;
+
+        PyObject* iterator = PyObject_GetIter(items);
+        Py_DECREF(items);
+        if (!iterator)
+            return -1;
+
+        int ret = 0;
+        PyObject* pair;
+        while ((pair = PyIter_Next(iterator))) {
+            PyObject* seq = PySequence_Fast(pair, "items() must return pairs");
+            Py_DECREF(pair);
+            if (!seq || PySequence_Fast_GET_SIZE(seq) != 2) {
+                Py_XDECREF(seq);
+                if (!PyErr_Occurred())
+                    PyErr_SetString(PyExc_ValueError, "not enough values to unpack");
+                ret = -1;
+                break;
+            }
+            int set_ret = PyObject_SetAttr(
+                instance, PySequence_Fast_GET_ITEM(seq, 0), PySequence_Fast_GET_ITEM(seq, 1)
+            );
+            Py_DECREF(seq);
+            if (set_ret < 0) {
+                ret = -1;
+                break;
+            }
+        }
+        if (ret == 0 && PyErr_Occurred())
+            ret = -1;
+        Py_DECREF(iterator);
+        return ret;
+    }
 
     PyObject *key, *value;
     Py_ssize_t pos = 0;
@@ -759,17 +810,42 @@ static int apply_dictitems_legacy(
     PyObject* pair;
 
     while ((pair = PyIter_Next(iterator))) {
-        if (!PyTuple_Check(pair) || PyTuple_GET_SIZE(pair) != 2) {
-            Py_DECREF(pair);
-            PyErr_SetString(PyExc_ValueError, "dictiter must yield (key, value) pairs");
-            ret = -1;
-            break;
-        }
+        PyObject* key;
+        PyObject* value;
 
-        PyObject* key = PyTuple_GET_ITEM(pair, 0);
-        PyObject* value = PyTuple_GET_ITEM(pair, 1);
-        Py_INCREF(key);
-        Py_INCREF(value);
+        if (LIKELY(PyTuple_Check(pair) && PyTuple_GET_SIZE(pair) == 2)) {
+            key = Py_NewRef(PyTuple_GET_ITEM(pair, 0));
+            value = Py_NewRef(PyTuple_GET_ITEM(pair, 1));
+        } else {
+            PyObject* seq = PySequence_Fast(pair, "cannot unpack non-sequence");
+            if (!seq) {
+                Py_DECREF(pair);
+                ret = -1;
+                break;
+            }
+            Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+            if (n != 2) {
+                Py_DECREF(seq);
+                Py_DECREF(pair);
+                if (n < 2)
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "not enough values to unpack (expected 2, got %zd)",
+                        n
+                    );
+                else
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "too many values to unpack (expected 2, got %zd)",
+                        n
+                    );
+                ret = -1;
+                break;
+            }
+            key = Py_NewRef(PySequence_Fast_GET_ITEM(seq, 0));
+            value = Py_NewRef(PySequence_Fast_GET_ITEM(seq, 1));
+            Py_DECREF(seq);
+        }
         Py_DECREF(pair);
 
         Py_SETREF(key, deepcopy_legacy(key, memo, keepalive_pointer));
