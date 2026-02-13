@@ -95,40 +95,14 @@ static int validate_reduce_tuple(
     PyObject* listitems = (size >= 4) ? PyTuple_GET_ITEM(reduce_result, 3) : Py_None;
     PyObject* dictitems = (size == 5) ? PyTuple_GET_ITEM(reduce_result, 4) : Py_None;
 
-    if (!PyCallable_Check(callable)) {
-        PyErr_Format(
-            PyExc_TypeError,
-            "first item of the tuple returned by __reduce__ must be callable, not %.200s",
-            Py_TYPE(callable)->tp_name
-        );
-        return REDUCE_ERROR;
-    }
-
     if (!PyTuple_Check(argtup)) {
-        PyErr_Format(
-            PyExc_TypeError,
-            "second item of the tuple returned by __reduce__ must be a tuple, not %.200s",
-            Py_TYPE(argtup)->tp_name
-        );
-        return REDUCE_ERROR;
-    }
-
-    if (listitems != Py_None && !PyIter_Check(listitems)) {
-        PyErr_Format(
-            PyExc_TypeError,
-            "fourth item of the tuple returned by __reduce__ must be an iterator, not %.200s",
-            Py_TYPE(listitems)->tp_name
-        );
-        return REDUCE_ERROR;
-    }
-
-    if (dictitems != Py_None && !PyIter_Check(dictitems)) {
-        PyErr_Format(
-            PyExc_TypeError,
-            "fifth item of the tuple returned by __reduce__ must be an iterator, not %.200s",
-            Py_TYPE(dictitems)->tp_name
-        );
-        return REDUCE_ERROR;
+        PyObject* coerced = PySequence_Tuple(argtup);
+        if (!coerced)
+            return REDUCE_ERROR;
+        PyObject* old = argtup;
+        PyTuple_SET_ITEM(reduce_result, 1, coerced);
+        Py_DECREF(old);
+        argtup = coerced;
     }
 
     *out_callable = callable;
