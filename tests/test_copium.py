@@ -72,11 +72,14 @@ class ContainerThatUsesDifferentCopy:
 
 
 EXPECTED_ERROR_DIVERGENCES = {
-    # Recreating this error seems unnecessary.
+    # Recreating these errors messages seems unnecessary.
     # It's highly unlikely that anyone would depend on it being this exact message
-    # the type of exception is preserved and that's enough
+    # the type of exception is preserved and that's enough.
     repr(TypeError("_reconstruct() missing 1 required positional argument: 'args'")): repr(
         TypeError("tuple returned by __reduce__ must contain 2 through 5 elements")
+    ),
+    repr(ValueError("too many values to unpack (expected 2)")): repr(
+        ValueError("too many values to unpack (expected 2, got 3)")
     )
 }
 
