@@ -64,8 +64,48 @@ static PyObject* call_reduce_method_preferring_ex(PyObject* obj) {
     return NULL;
 }
 
+static void _chain_type_error(const char* fmt, ...) {
+    PyObject *cause_type, *cause_val, *cause_tb;
+    PyErr_Fetch(&cause_type, &cause_val, &cause_tb);
+
+    va_list vargs;
+    va_start(vargs, fmt);
+    PyObject* msg = PyUnicode_FromFormatV(fmt, vargs);
+    va_end(vargs);
+
+    if (!msg) {
+        PyErr_Restore(cause_type, cause_val, cause_tb);
+        return;
+    }
+
+    if (cause_val)
+        PyErr_NormalizeException(&cause_type, &cause_val, &cause_tb);
+
+    PyObject* new_exc = PyObject_CallOneArg(PyExc_TypeError, msg);
+    Py_DECREF(msg);
+
+    if (!new_exc) {
+        PyErr_Restore(cause_type, cause_val, cause_tb);
+        return;
+    }
+
+    if (cause_val) {
+        PyException_SetCause(cause_val, new_exc);
+
+        PyErr_Restore(cause_type, cause_val, cause_tb);
+        return;
+    }
+
+    Py_XDECREF(cause_type);
+    Py_XDECREF(cause_tb);
+
+    PyErr_SetObject(PyExc_TypeError, new_exc);
+    Py_DECREF(new_exc);
+}
+
 static int validate_reduce_tuple(
     PyObject* reduce_result,
+    PyTypeObject* reducing_type,
     PyObject** out_callable,
     PyObject** out_argtup,
     PyObject** out_state,
@@ -97,8 +137,14 @@ static int validate_reduce_tuple(
 
     if (!PyTuple_Check(argtup)) {
         PyObject* coerced = PySequence_Tuple(argtup);
-        if (!coerced)
+        if (!coerced) {
+            _chain_type_error(
+                "second element of the tuple returned by %s.__reduce__ "
+                "must be a tuple, not %.200s",
+                reducing_type->tp_name, Py_TYPE(argtup)->tp_name
+            );
             return REDUCE_ERROR;
+        }
         PyObject* old = argtup;
         PyTuple_SET_ITEM(reduce_result, 1, coerced);
         Py_DECREF(old);

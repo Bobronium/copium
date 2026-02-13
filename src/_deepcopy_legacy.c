@@ -503,7 +503,8 @@ static PyObject* reconstruct_newobj_legacy(
 }
 
 static PyObject* reconstruct_newobj_ex_legacy(
-    PyObject* argtup, PyObject* memo, PyObject** keepalive_pointer
+    PyObject* argtup, PyObject* memo, PyObject** keepalive_pointer,
+    PyTypeObject* reducing_type
 ) {
     if (PyTuple_GET_SIZE(argtup) != 3) {
         PyErr_Format(
@@ -528,8 +529,13 @@ static PyObject* reconstruct_newobj_ex_legacy(
 
     if (!PyTuple_Check(args)) {
         coerced_args = PySequence_Tuple(args);
-        if (!coerced_args)
+        if (!coerced_args) {
+            _chain_type_error(
+                "__newobj_ex__ args in %s.__reduce__ result must be a tuple, not %.200s",
+                reducing_type->tp_name, Py_TYPE(args)->tp_name
+            );
             return NULL;
+        }
         args = coerced_args;
     }
     if (!PyDict_Check(kwargs)) {
@@ -539,6 +545,10 @@ static PyObject* reconstruct_newobj_ex_legacy(
             return NULL;
         }
         if (PyDict_Merge(coerced_kwargs, kwargs, 1) < 0) {
+            _chain_type_error(
+                "__newobj_ex__ kwargs in %s.__reduce__ result must be a dict, not %.200s",
+                reducing_type->tp_name, Py_TYPE(kwargs)->tp_name
+            );
             Py_XDECREF(coerced_args);
             Py_DECREF(coerced_kwargs);
             return NULL;
@@ -639,6 +649,12 @@ static int apply_dict_state_legacy(
         }
         int ret = PyDict_Merge(instance_dict, copied, 1);
         Py_DECREF(instance_dict);
+        if (ret < 0) {
+            _chain_type_error(
+                "dict state from %s.__reduce__ must be a dict or mapping, got %.200s",
+                Py_TYPE(instance)->tp_name, Py_TYPE(copied)->tp_name
+            );
+        }
         Py_DECREF(copied);
         return ret;
     }
@@ -677,9 +693,16 @@ static int apply_slot_state_legacy(
 
     if (UNLIKELY(!PyDict_Check(copied))) {
         PyObject* items = PyObject_CallMethod(copied, "items", NULL);
-        Py_DECREF(copied);
-        if (!items)
+        if (!items) {
+            _chain_type_error(
+                "slot state from %s.__reduce__ must be a dict or have an items() method, "
+                "got %.200s",
+                Py_TYPE(instance)->tp_name, Py_TYPE(copied)->tp_name
+            );
+            Py_DECREF(copied);
             return -1;
+        }
+        Py_DECREF(copied);
 
         PyObject* iterator = PyObject_GetIter(items);
         Py_DECREF(items);
@@ -893,7 +916,7 @@ static PyObject* deepcopy_object_legacy(
 
     PyObject *callable, *argtup, *state, *listitems, *dictitems;
     int valid = validate_reduce_tuple(
-        reduce_result, &callable, &argtup, &state, &listitems, &dictitems
+        reduce_result, tp, &callable, &argtup, &state, &listitems, &dictitems
     );
 
     if (valid == REDUCE_ERROR) {
@@ -910,7 +933,7 @@ static PyObject* deepcopy_object_legacy(
     if (callable == module_state.copyreg___newobj__)
         instance = reconstruct_newobj_legacy(argtup, memo, keepalive_pointer);
     else if (callable == module_state.copyreg___newobj___ex)
-        instance = reconstruct_newobj_ex_legacy(argtup, memo, keepalive_pointer);
+        instance = reconstruct_newobj_ex_legacy(argtup, memo, keepalive_pointer, tp);
     else
         instance = reconstruct_callable_legacy(callable, argtup, memo, keepalive_pointer);
 
