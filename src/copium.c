@@ -115,7 +115,7 @@ PyObject* py_copy(PyObject* self, PyObject* obj) {
 
     PyObject *constructor = NULL, *args = NULL, *state = NULL, *listiter = NULL, *dictiter = NULL;
     int unpack_result = validate_reduce_tuple(
-        reduce_result, &constructor, &args, &state, &listiter, &dictiter
+        reduce_result, obj_type, &constructor, &args, &state, &listiter, &dictiter
     );
     if (unpack_result == REDUCE_ERROR) {
         Py_DECREF(reduce_result);

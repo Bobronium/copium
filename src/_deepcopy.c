@@ -463,7 +463,9 @@ static PyObject* reconstruct_newobj(PyObject* argtup, PyMemoObject* memo) {
     return instance;
 }
 
-static PyObject* reconstruct_newobj_ex(PyObject* argtup, PyMemoObject* memo) {
+static PyObject* reconstruct_newobj_ex(
+    PyObject* argtup, PyMemoObject* memo, PyTypeObject* reducing_type
+) {
     if (PyTuple_GET_SIZE(argtup) != 3) {
         PyErr_Format(
             PyExc_TypeError, "__newobj_ex__ requires 3 arguments, got %zd", PyTuple_GET_SIZE(argtup)
@@ -487,8 +489,13 @@ static PyObject* reconstruct_newobj_ex(PyObject* argtup, PyMemoObject* memo) {
 
     if (!PyTuple_Check(args)) {
         coerced_args = PySequence_Tuple(args);
-        if (!coerced_args)
+        if (!coerced_args) {
+            _chain_type_error(
+                "__newobj_ex__ args in %s.__reduce__ result must be a tuple, not %.200s",
+                reducing_type->tp_name, Py_TYPE(args)->tp_name
+            );
             return NULL;
+        }
         args = coerced_args;
     }
     if (!PyDict_Check(kwargs)) {
@@ -498,6 +505,10 @@ static PyObject* reconstruct_newobj_ex(PyObject* argtup, PyMemoObject* memo) {
             return NULL;
         }
         if (PyDict_Merge(coerced_kwargs, kwargs, 1) < 0) {
+            _chain_type_error(
+                "__newobj_ex__ kwargs in %s.__reduce__ result must be a dict, not %.200s",
+                reducing_type->tp_name, Py_TYPE(kwargs)->tp_name
+            );
             Py_XDECREF(coerced_args);
             Py_DECREF(coerced_kwargs);
             return NULL;
@@ -592,6 +603,12 @@ static int apply_dict_state(PyObject* instance, PyObject* dict_state, PyMemoObje
         }
         int ret = PyDict_Merge(instance_dict, copied, 1);
         Py_DECREF(instance_dict);
+        if (ret < 0) {
+            _chain_type_error(
+                "dict state from %s.__reduce__ must be a dict or mapping, got %.200s",
+                Py_TYPE(instance)->tp_name, Py_TYPE(copied)->tp_name
+            );
+        }
         Py_DECREF(copied);
         return ret;
     }
@@ -628,9 +645,16 @@ static int apply_slot_state(PyObject* instance, PyObject* slotstate, PyMemoObjec
 
     if (UNLIKELY(!PyDict_Check(copied))) {
         PyObject* items = PyObject_CallMethod(copied, "items", NULL);
-        Py_DECREF(copied);
-        if (!items)
+        if (!items) {
+            _chain_type_error(
+                "slot state from %s.__reduce__ must be a dict or have an items() method, "
+                "got %.200s",
+                Py_TYPE(instance)->tp_name, Py_TYPE(copied)->tp_name
+            );
+            Py_DECREF(copied);
             return -1;
+        }
+        Py_DECREF(copied);
 
         PyObject* iterator = PyObject_GetIter(items);
         Py_DECREF(items);
@@ -838,7 +862,7 @@ static PyObject* deepcopy_object(
 
     PyObject *callable, *argtup, *state, *listitems, *dictitems;
     int valid = validate_reduce_tuple(
-        reduce_result, &callable, &argtup, &state, &listitems, &dictitems
+        reduce_result, tp, &callable, &argtup, &state, &listitems, &dictitems
     );
 
     if (valid == REDUCE_ERROR) {
@@ -855,7 +879,7 @@ static PyObject* deepcopy_object(
     if (callable == module_state.copyreg___newobj__)
         instance = reconstruct_newobj(argtup, memo);
     else if (callable == module_state.copyreg___newobj___ex)
-        instance = reconstruct_newobj_ex(argtup, memo);
+        instance = reconstruct_newobj_ex(argtup, memo, tp);
     else
         instance = reconstruct_callable(callable, argtup, memo);
 
