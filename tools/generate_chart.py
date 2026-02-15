@@ -14,39 +14,22 @@ from tools.terminal_svg import DARK, LIGHT, In, IPython, TerminalWindow, TimeitB
 DEFAULT_NOTEBOOK = Path("showcase.ipynb")
 
 
-def extract_data_expr_from_notebook(notebook_path: Path) -> str:
-    """Extract the benchmark data expression (x = ...) from a notebook."""
-    data = json.loads(notebook_path.read_text())
-    for cell in data.get("cells", []):
-        if cell.get("cell_type") != "code":
-            continue
-        source = "".join(cell.get("source", []))
-        match = re.search(r'^(x\s*=\s*\[.+\])$', source, re.MULTILINE)
-        if match:
-            return match.group(1)
-    raise ValueError(f"Could not find data expression 'x = [...]' in {notebook_path}")
-
-
 def create_chart(
     stdlib_seconds: float,
     copium_seconds: float,
-    data_expr: str | None = None,
-    notebook_path: Path = DEFAULT_NOTEBOOK,
 ) -> TerminalWindow:
-    if data_expr is None:
-        data_expr = extract_data_expr_from_notebook(notebook_path)
-
     return TerminalWindow(
         IPython(
-            In(data_expr),
+            In("from jsonschema import Draft202012Validator"),
             In("from copy import deepcopy"),
-            In("%timeit deepcopy(x)"),
+            In("%timeit deepcopy(Draft202012Validator.META_SCHEMA)"),
             (baseline := TimeitBar(stdlib_seconds, style="slow")),
             In("import copium.patch; copium.patch.enable();"),
-            In("%timeit deepcopy(x)"),
+            In("%timeit deepcopy(Draft202012Validator.META_SCHEMA)"),
             TimeitBar(copium_seconds, style="fast", baseline=baseline),
         ),
-        title="uvx --with copium ipython",
+        title="uvx --with copium --with jsonschema ipython",
+        min_width=600
     )
 
 
@@ -79,7 +62,7 @@ def main() -> None:
         stdlib_time = extract_median_from_pyperf(args.pyperf[0])
         copium_time = extract_median_from_pyperf(args.pyperf[1])
 
-    chart = create_chart(stdlib_time, copium_time, notebook_path=args.notebook)
+    chart = create_chart(stdlib_time, copium_time)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     themes = []

@@ -82,7 +82,11 @@ def run_benchmarks(notebook_src: Path, num_runs: int, work_dir: Path) -> list[Be
         
         result = run_notebook(notebook_src, work_dir, i)
         if result:
-            print(f"stdlib={result.stdlib_average:.3f}s, copium={result.copium_average:.4f}s, speedup={result.speedup:.1f}×")
+            print(
+                f"stdlib={result.stdlib_average}s, "
+                f"copium={result.copium_average:}s, "
+                f"speedup={result.speedup:.1f}×"
+            )
             results.append(result)
     
     return results
@@ -103,7 +107,7 @@ def generate_charts(
     from tools.generate_chart import create_chart
     from tools.terminal_svg import DARK, LIGHT
     
-    chart = create_chart(stdlib_time, copium_time, notebook_path=notebook_path)
+    chart = create_chart(stdlib_time, copium_time)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     chart.save(str(output_dir / "chart_dark.svg"), DARK)
