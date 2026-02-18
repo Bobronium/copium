@@ -50,7 +50,7 @@ class TimeitBar:
         if self.baseline is None:
             return None
         ratio = self.baseline.seconds / self.seconds
-        return f"{ratio:.0f}× faster"
+        return f"{ratio:.1f}× faster"
 
 
 CellContent = In | Out | TimeitBar | Bar
