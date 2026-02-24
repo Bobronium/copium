@@ -117,3 +117,36 @@ jobs:
       - name: "Test: Shuffle D"
         if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
+
+      - name: "Cache CPython test suite"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}1
+        id: cpython-cache
+        uses: actions/cache@v4
+        with:
+          path: cpython-tests
+          key: cpython-tests-${{ matrix.python.label }}
+
+      - name: "Checkout CPython test suite"
+        if: ${{ matrix.build.os != 'windows-11-arm' && steps.cpython-cache.outputs.cache-hit != 'true' }}
+        uses: actions/checkout@v5
+        with:
+          repository: python/cpython
+          ref: ${{ matrix.python.label }}
+          sparse-checkout: Lib/test
+          sparse-checkout-cone-mode: true
+          path: cpython-tests
+
+      - name: "Test: CPython test_copy (patched)"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        env:
+          COPIUM_PATCH_ENABLE: "1"
+          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
+        run: uv run --no-sync python -m unittest test.test_copy -v
+
+      - name: "Test: CPython test_copy (patched, dict memo)"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        env:
+          COPIUM_PATCH_ENABLE: "1"
+          COPIUM_USE_DICT_MEMO: "1"
+          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
+        run: uv run --no-sync python -m unittest test.test_copy -v
