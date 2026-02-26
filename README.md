@@ -41,7 +41,7 @@ copium
 - ⚡ **4-28x faster** on built-in types
 - 🧠 **~30% less memory** per copy
 - ✨ requires **zero code changes**
-- 🧪 passes Python's [test_copy.py](https://github.com/python/cpython/blob/41b9ad5b38e913194a5cc88f0e7cfc096787b664/Lib/test/test_copy.py)
+- 🧪 [passes](https://github.com/Bobronium/copium/blob/3cef83a230fb8c3bf2b7b11e3f2cba01fe0cce23/.github/workflows/cd-build.yaml#L129-L152) Python's [test_copy.py](https://github.com/python/cpython/blob/41b9ad5b38e913194a5cc88f0e7cfc096787b664/Lib/test/test_copy.py)
 - 📦 pre-built wheels for Python 3.10–3.14
      on Linux/macOS/Windows (x64/ARM64)
 - 🔓 passes all tests on **free-threaded** Python builds
