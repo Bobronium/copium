@@ -160,6 +160,7 @@ PyObject* py_copy(PyObject* self, PyObject* obj) {
 PyObject* py_deepcopy(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
     PyObject* obj = NULL;
     PyObject* memo_arg = Py_None;
+    int memo_owned = 0;
 
     if (!kwnames || PyTuple_GET_SIZE(kwnames) == 0) {
         if (UNLIKELY(nargs < 1)) {
@@ -275,8 +276,6 @@ PyObject* py_deepcopy(PyObject* self, PyObject* const* args, Py_ssize_t nargs, P
         }
     }
 
-    int memo_owned = 0;
-
 have_args:
 
     if (memo_arg == Py_None) {
@@ -315,16 +314,15 @@ have_args:
     }
 
     else {
-        if (!memo_owned) {
-            Py_INCREF(memo_arg);
-        }
         PyObject* memo = memo_arg;
         PyObject* keep_list = NULL;
 
         result = deepcopy_legacy(obj, memo, &keep_list);
 
+        if (memo_owned) {
+            Py_DECREF(memo_arg);
+        }
         Py_XDECREF(keep_list);
-        Py_DECREF(memo);
         return result;
     }
 }

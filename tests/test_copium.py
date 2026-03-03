@@ -386,6 +386,20 @@ def test_memo_reference_passthrough():
     assert len(Chaotic.observations) == 1
 
 
+def test_explicit_dictionary_memo_reference_balance():
+    memo_dictionary = {}
+    object_to_copy = [1, {"two": [3]}]
+
+    reference_count_before_copying = sys.getrefcount(memo_dictionary)
+    copied_object = copium.deepcopy(object_to_copy, memo_dictionary)
+    reference_count_after_copying = sys.getrefcount(memo_dictionary)
+
+    assert copied_object == object_to_copy
+    assert copied_object is not object_to_copy
+    assert reference_count_after_copying == reference_count_before_copying
+
+
+
 def test_no_extra_refs_post_deepcopy(copy):
     original = [object(), object(), object()]
     original_refcounts_before_copying = [sys.getrefcount(obj) for obj in original]
