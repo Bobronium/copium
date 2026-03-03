@@ -36,11 +36,10 @@ static struct {
 static void _copium_cleanup(void) {
     /* Clean up in reverse order of initialization */
 
-    /* Clean up fallback config (no flag needed, always safe to clear) */
     Py_CLEAR(module_state.ignored_errors);
     Py_CLEAR(module_state.ignored_errors_joined);
-    module_state.no_memo_fallback = 0;
-    module_state.use_dict_memo = 0;
+    module_state.memo_mode = COPIUM_MEMO_NATIVE;
+    module_state.on_incompatible = COPIUM_ON_INCOMPATIBLE_WARN;
 
     if (_init_state.dict_iter_ready) {
         dict_iter_module_cleanup();
@@ -322,29 +321,42 @@ static PyObject* _parse_ignored_errors(void) {
     return result;
 }
 
-int _copium_init(PyObject* module) {
-    const char* no_fallback_env = getenv("COPIUM_NO_MEMO_FALLBACK");
-    module_state.no_memo_fallback = (no_fallback_env != NULL && no_fallback_env[0] != '\0');
+static int _copium_update_suppress_warnings(PyObject* new_tuple) {
+    PyObject* old_errors = module_state.ignored_errors;
+    module_state.ignored_errors = new_tuple;
+    Py_XDECREF(old_errors);
 
-    const char* use_dict_memo_env = getenv("COPIUM_USE_DICT_MEMO");
-    module_state.use_dict_memo = (use_dict_memo_env != NULL && use_dict_memo_env[0] != '\0');
-
-    module_state.ignored_errors = _parse_ignored_errors();
-    if (!module_state.ignored_errors)
-        goto error;
-
-    /* Pre-join ignored errors for warning message construction */
-    if (PyTuple_GET_SIZE(module_state.ignored_errors) > 0) {
+    Py_CLEAR(module_state.ignored_errors_joined);
+    if (PyTuple_GET_SIZE(new_tuple) > 0) {
         PyObject* sep = PyUnicode_FromString("::");
         if (!sep)
-            goto error;
+            return -1;
         module_state.ignored_errors_joined = PyUnicode_Join(sep, module_state.ignored_errors);
         Py_DECREF(sep);
         if (!module_state.ignored_errors_joined)
-            goto error;
-    } else {
-        module_state.ignored_errors_joined = NULL;
+            return -1;
     }
+    return 0;
+}
+
+static int _load_config_from_env(void) {
+    const char* use_dict = getenv("COPIUM_USE_DICT_MEMO");
+    const char* no_fallback = getenv("COPIUM_NO_MEMO_FALLBACK");
+
+    module_state.memo_mode = (use_dict && use_dict[0]) ? COPIUM_MEMO_DICT : COPIUM_MEMO_NATIVE;
+    module_state.on_incompatible = (no_fallback && no_fallback[0]) ? COPIUM_ON_INCOMPATIBLE_RAISE
+                                                                   : COPIUM_ON_INCOMPATIBLE_WARN;
+
+    PyObject* parsed = _parse_ignored_errors();
+    if (!parsed)
+        return -1;
+
+    return _copium_update_suppress_warnings(parsed);
+}
+
+int _copium_init(PyObject* module) {
+    if (_load_config_from_env() < 0)
+        goto error;
 
     if (_init_strings() < 0)
         goto error;

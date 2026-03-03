@@ -8,6 +8,17 @@
 #define _COPIUM_STATE_C
 #include "_common.h"
 
+typedef enum {
+    COPIUM_MEMO_NATIVE = 0,
+    COPIUM_MEMO_DICT = 1,
+} CopiumMemoMode;
+
+typedef enum {
+    COPIUM_ON_INCOMPATIBLE_WARN = 0,
+    COPIUM_ON_INCOMPATIBLE_RAISE = 1,
+    COPIUM_ON_INCOMPATIBLE_SILENT = 2,
+} CopiumOnIncompatible;
+
 typedef struct {
     // Interned strings for attribute lookups
     PyObject* s__reduce_ex__;
@@ -46,9 +57,9 @@ typedef struct {
     // because deepcopy is synchronous and doesn't yield.
     Py_tss_t memo_tss;
 
-    // Fallback configuration (read from env vars at module init, immutable thereafter)
-    int no_memo_fallback;             // COPIUM_NO_MEMO_FALLBACK - disable fallback entirely
-    int use_dict_memo;                // COPIUM_USE_DICT_MEMO - use dict memo for full compatibility
+    // Configuration (initialized from env vars, overridable via copium.configure())
+    CopiumMemoMode memo_mode;
+    CopiumOnIncompatible on_incompatible;
     PyObject* ignored_errors;         // Tuple of error suffixes to suppress warnings for
     PyObject* ignored_errors_joined;  // Pre-joined string for warning message (or NULL if empty)
     PyObject* dict_items_descr;

@@ -275,36 +275,38 @@ PyObject* py_deepcopy(PyObject* self, PyObject* const* args, Py_ssize_t nargs, P
         }
     }
 
+    int memo_owned = 0;
+
 have_args:
+
     if (memo_arg == Py_None) {
         PyTypeObject* tp = Py_TYPE(obj);
-        if (is_atomic_immutable(tp)) {
+        if (UNLIKELY(is_atomic_immutable(tp))) {
             return Py_NewRef(obj);
         }
 
-        if (UNLIKELY(module_state.use_dict_memo)) {
-            PyObject* memo = PyDict_New();
-            if (!memo)
+        // copium.configure(memo="native")
+        if (LIKELY(module_state.memo_mode == COPIUM_MEMO_NATIVE)) {
+            int is_tss;
+            PyMemoObject* memo = get_memo(&is_tss);
+            if (UNLIKELY(!memo))
                 return NULL;
-            PyObject* keep_list = NULL;
-            PyObject* result = deepcopy_legacy(obj, memo, &keep_list);
-            Py_XDECREF(keep_list);
-            Py_DECREF(memo);
+
+            PyObject* result = deepcopy(obj, memo);
+            cleanup_memo(memo, is_tss);
             return result;
         }
-        int is_tss;
-        PyMemoObject* memo = get_memo(&is_tss);
-        if (UNLIKELY(!memo))
-            return NULL;
 
-        PyObject* result = deepcopy(obj, memo);
-        cleanup_memo(memo, is_tss);
-        return result;
+        // copium.configure(memo="dict")
+        memo_owned = 1;
+        memo_arg = PyDict_New();
+        if (!memo_arg)
+            return NULL;
     }
 
     PyObject* result = NULL;
 
-    if (Py_TYPE(memo_arg) == &Memo_Type) {
+    if (LIKELY(Py_TYPE(memo_arg) == &Memo_Type)) {
         PyMemoObject* memo = (PyMemoObject*)memo_arg;
         Py_INCREF(memo_arg);
         result = deepcopy(obj, memo);
@@ -313,10 +315,11 @@ have_args:
     }
 
     else {
-        /* deepcopy_py handles version-specific ordering of immutable check vs memo lookup */
-        Py_INCREF(memo_arg);
+        if (!memo_owned) {
+            Py_INCREF(memo_arg);
+        }
         PyObject* memo = memo_arg;
-        PyObject* keep_list = NULL; /* lazily created on first append */
+        PyObject* keep_list = NULL;
 
         result = deepcopy_legacy(obj, memo, &keep_list);
 
@@ -394,6 +397,189 @@ PyObject* py_replace(PyObject* self, PyObject* const* args, Py_ssize_t nargs, Py
 #endif
 
 /* ========================================================================== */
+/*                         Configuration API                                  */
+/* ========================================================================== */
+
+static PyObject* py_configure(
+    PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames
+) {
+    (void)self;
+
+    if (UNLIKELY(nargs > 0)) {
+        PyErr_SetString(PyExc_TypeError, "configure() takes no positional arguments");
+        return NULL;
+    }
+
+    if (!kwnames || PyTuple_GET_SIZE(kwnames) == 0) {
+        if (_load_config_from_env() < 0)
+            return NULL;
+        Py_RETURN_NONE;
+    }
+
+    PyObject* memo_val = NULL;
+    PyObject* on_incompat_val = NULL;
+    PyObject* suppress_val = NULL;
+
+    Py_ssize_t kwcount = PyTuple_GET_SIZE(kwnames);
+    for (Py_ssize_t i = 0; i < kwcount; i++) {
+        PyObject* name = PyTuple_GET_ITEM(kwnames, i);
+        PyObject* val = args[nargs + i];
+
+        if (PyUnicode_CompareWithASCIIString(name, "memo") == 0) {
+            memo_val = val;
+        } else if (PyUnicode_CompareWithASCIIString(name, "on_incompatible") == 0) {
+            on_incompat_val = val;
+        } else if (PyUnicode_CompareWithASCIIString(name, "suppress_warnings") == 0) {
+            suppress_val = val;
+        } else {
+            PyErr_Format(
+                PyExc_TypeError, "configure() got an unexpected keyword argument '%U'", name
+            );
+            return NULL;
+        }
+    }
+    int memo_is_dict = 0;
+    if (memo_val) {
+        if (!PyUnicode_Check(memo_val)) {
+            PyErr_Format(
+                PyExc_TypeError, "memo must be a 'str', got '%.200s'", Py_TYPE(memo_val)->tp_name
+            );
+            return NULL;
+        }
+        if (PyUnicode_CompareWithASCIIString(memo_val, "native") == 0) {
+            module_state.memo_mode = COPIUM_MEMO_NATIVE;
+        } else if (PyUnicode_CompareWithASCIIString(memo_val, "dict") == 0) {
+            module_state.memo_mode = COPIUM_MEMO_DICT;
+            memo_is_dict = 1;
+        } else {
+            PyErr_Format(PyExc_ValueError, "memo must be 'native' or 'dict', got '%U'", memo_val);
+            return NULL;
+        }
+    }
+
+    if (memo_is_dict && (on_incompat_val || suppress_val)) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "when `memo='dict'`, `on_incompatible` and `suppress_warnings` are ambiguous: remove them or use `memo='native'`"
+        );
+        return NULL;
+    }
+
+    if (on_incompat_val) {
+        if (!PyUnicode_Check(on_incompat_val)) {
+            PyErr_Format(
+                PyExc_TypeError,
+                "on_incompatible must be a 'str', got '%.200s'",
+                Py_TYPE(on_incompat_val)->tp_name
+            );
+            return NULL;
+        }
+        if (PyUnicode_CompareWithASCIIString(on_incompat_val, "warn") == 0) {
+            module_state.on_incompatible = COPIUM_ON_INCOMPATIBLE_WARN;
+        } else if (PyUnicode_CompareWithASCIIString(on_incompat_val, "raise") == 0) {
+            module_state.on_incompatible = COPIUM_ON_INCOMPATIBLE_RAISE;
+        } else if (PyUnicode_CompareWithASCIIString(on_incompat_val, "silent") == 0) {
+            module_state.on_incompatible = COPIUM_ON_INCOMPATIBLE_SILENT;
+        } else {
+            PyErr_Format(
+                PyExc_ValueError,
+                "on_incompatible must be 'warn', 'raise', or 'silent', got '%U'",
+                on_incompat_val
+            );
+            return NULL;
+        }
+    }
+
+    if (suppress_val) {
+        PyObject* new_tuple;
+        if (suppress_val == Py_None) {
+            new_tuple = PyTuple_New(0);
+            if (!new_tuple)
+                return NULL;
+        } else {
+            new_tuple = PySequence_Tuple(suppress_val);
+            if (!new_tuple)
+                return NULL;
+            Py_ssize_t n = PyTuple_GET_SIZE(new_tuple);
+            for (Py_ssize_t i = 0; i < n; i++) {
+                PyObject* item = PyTuple_GET_ITEM(new_tuple, i);
+                if (!PyUnicode_Check(item)) {
+                    Py_DECREF(new_tuple);
+                    PyErr_Format(
+                        PyExc_TypeError,
+                        "on_incompatible[%zd] must be a 'str', got '%.200s'",
+                        i,
+                        Py_TYPE(item)->tp_name
+                    );
+                    return NULL;
+                }
+            }
+        }
+        if (_copium_update_suppress_warnings(new_tuple) < 0)
+            return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
+static PyObject* py_get_config(PyObject* self, PyObject* noargs) {
+    (void)self;
+    (void)noargs;
+
+    PyObject* dict = PyDict_New();
+    if (!dict)
+        return NULL;
+
+    const char* memo_str = (module_state.memo_mode == COPIUM_MEMO_DICT) ? "dict" : "native";
+    PyObject* memo_obj = PyUnicode_FromString(memo_str);
+    if (!memo_obj)
+        goto error;
+    if (PyDict_SetItemString(dict, "memo", memo_obj) < 0) {
+        Py_DECREF(memo_obj);
+        goto error;
+    }
+    Py_DECREF(memo_obj);
+
+    const char* on_incompatible_str;
+    switch (module_state.on_incompatible) {
+        case COPIUM_ON_INCOMPATIBLE_RAISE:
+            on_incompatible_str = "raise";
+            break;
+        case COPIUM_ON_INCOMPATIBLE_SILENT:
+            on_incompatible_str = "silent";
+            break;
+        default:
+            on_incompatible_str = "warn";
+            break;
+    }
+    PyObject* on_incompatible_obj = PyUnicode_FromString(on_incompatible_str);
+    if (!on_incompatible_obj)
+        goto error;
+    if (PyDict_SetItemString(dict, "on_incompatible", on_incompatible_obj) < 0) {
+        Py_DECREF(on_incompatible_obj);
+        goto error;
+    }
+    Py_DECREF(on_incompatible_obj);
+
+    PyObject* suppress_warnings = module_state.ignored_errors
+        ? Py_NewRef(module_state.ignored_errors)
+        : PyTuple_New(0);
+    if (!suppress_warnings)
+        goto error;
+    if (PyDict_SetItemString(dict, "suppress_warnings", suppress_warnings) < 0) {
+        Py_DECREF(suppress_warnings);
+        goto error;
+    }
+    Py_DECREF(suppress_warnings);
+
+    return dict;
+
+error:
+    Py_DECREF(dict);
+    return NULL;
+}
+
+/* ========================================================================== */
 /*                         Module Definition                                  */
 /* ========================================================================== */
 
@@ -416,6 +602,24 @@ static PyMethodDef main_methods[] = {
          ":param x: object to deepcopy\n"
          ":param memo: treat as opaque.\n"
          ":return: deep copy of the `x`."
+     )},
+    {"configure",
+     (PyCFunction)(void*)py_configure,
+     METH_FASTCALL | METH_KEYWORDS,
+     PyDoc_STR(
+         "configure(*, memo=None, on_incompatible=None, suppress_warnings=None)\n--\n\n"
+         "Configure copium behavior.\n\n"
+         "Called with no arguments, resets to environment variable defaults.\n\n"
+         ":param memo: 'native' (fast, default) or 'dict' (compatible).\n"
+         ":param on_incompatible: 'warn' (default), 'raise', or 'silent'.\n"
+         ":param suppress_warnings: sequence of error strings to suppress, or None to clear."
+     )},
+    {"get_config",
+     (PyCFunction)py_get_config,
+     METH_NOARGS,
+     PyDoc_STR(
+         "get_config()\n--\n\n"
+         "Return the current configuration as a dict."
      )},
 #if PY_VERSION_HEX >= 0x030D0000
     {"replace",

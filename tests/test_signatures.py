@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import inspect
 import types
+import typing
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 import copium
 
@@ -18,7 +21,7 @@ PACKAGE_STUB = PACKAGE_ROOT / "__init__.pyi"
 def _exec_stub_module(path: Path) -> types.ModuleType:
     """
     Execute the .pyi stub as if it were a normal Python module to get callable objects
-    with inspectable signatures. This works because function bodies contain docstrings/ellipsis.
+    with inspectable signatures.
     """
     code = path.read_text(encoding="utf-8")
     module = types.ModuleType("copium_stub_exec")
@@ -96,7 +99,12 @@ def test_stub_signatures_bind_to_runtime_signatures(subtests):
 
     for name, stub_function in sorted(stub_functions.items()):
         with subtests.test(name):
-            runtime_object = getattr(copium, name)
+            try:
+                runtime_object = getattr(copium, name)
+            except AttributeError:
+                if name in typing.__dict__:
+                    continue
+                pytest.fail("Unexpected member declared in .pyi file but not found at runtime")
             # Get signatures
             stub_signature = inspect.signature(stub_function)
             runtime_signature_raw = inspect.signature(runtime_object)

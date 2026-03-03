@@ -22,8 +22,7 @@ static ALWAYS_INLINE int is_literal_immutable(PyTypeObject* tp) {
 static ALWAYS_INLINE int is_builtin_immutable(PyTypeObject* tp) {
     unsigned long r = (tp == &PyRange_Type) | (tp == &PyFunction_Type) | (tp == &PyCFunction_Type) |
         (tp == &PyProperty_Type) | (tp == &_PyWeakref_RefType) | (tp == &PyCode_Type) |
-        (tp == &PyModule_Type) | (tp == &_PyNotImplemented_Type) | (tp == &PyEllipsis_Type) |
-        (tp == &PyComplex_Type);
+        (tp == &_PyNotImplemented_Type) | (tp == &PyEllipsis_Type) | (tp == &PyComplex_Type);
     return (int)r;
 }
 

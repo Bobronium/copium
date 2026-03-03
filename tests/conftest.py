@@ -26,6 +26,17 @@ if TYPE_CHECKING:
     from types import FunctionType
 
 
+@pytest.fixture(scope="session")
+def copium_default_config():
+    yield copium.get_config()
+
+
+@pytest.fixture(autouse=True)
+def restore_config(copium_default_config):
+    yield
+    copium.configure(**copium_default_config)
+
+
 def pytest_addoption(parser):
     """Add custom command line options."""
     parser.addoption(
