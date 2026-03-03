@@ -47,11 +47,13 @@ def configure(
 
 @overload
 def configure(*, memo: Literal["dict"]) -> None:
-    """Use stdlib-compatible dict memo."""
+    """Use stdlib-compatible dict memo. 100% parity with stdlib."""
 
 @overload
 def configure(*, memo: Literal["native"]) -> None:
-    """Use fast and lightweight `copium.memo`. Incompatible `__deepcopy__` implementations."""
+    """
+    Use fast and lightweight `copium.memo`. Incompatible with some `__deepcopy__` implementations.
+    """
 
 @overload
 def configure(
