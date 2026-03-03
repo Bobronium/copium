@@ -15,6 +15,7 @@ import pytest
 
 import copium
 import copium.patch
+from tests.conftest import COPIUM_ENV
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,14 +24,7 @@ import copium.patch
 
 def env(**kwargs):
     """Build a clean env dict for subprocess tests."""
-    base = {
-        "COPIUM_NO_MEMO_FALLBACK_WARNING": None,
-        "COPIUM_NO_MEMO_FALLBACK": None,
-        "COPIUM_USE_DICT_MEMO": None,
-        "COPIUM_PATCH_ENABLE": None,
-    }
-    base.update(kwargs)
-    return base
+    return {**COPIUM_ENV, **kwargs}
 
 
 class Stubborn:

@@ -12,7 +12,9 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
+from typing import Final
 
 import pytest
 from _pytest.assertion.rewrite import rewrite_asserts
@@ -25,16 +27,30 @@ from datamodelzoo import EVIL_CASES
 if TYPE_CHECKING:
     from types import FunctionType
 
+COPIUM_ENV: Final = MappingProxyType(
+    dict.fromkeys(
+        (
+            "COPIUM_NO_MEMO_FALLBACK_WARNING",
+            "COPIUM_NO_MEMO_FALLBACK",
+            "COPIUM_USE_DICT_MEMO",
+            "COPIUM_PATCH_ENABLE",
+        )
+    )
+)
 
-@pytest.fixture(scope="session")
-def copium_default_config():
-    yield copium.get_config()
+
+def _clear_copium_env():
+    for key in COPIUM_ENV:
+        os.environ.pop(key, None)
 
 
 @pytest.fixture(autouse=True)
-def restore_config(copium_default_config):
+def restore_config():
+    _clear_copium_env()
+    copium.configure()
     yield
-    copium.configure(**copium_default_config)
+    _clear_copium_env()
+    copium.configure()
 
 
 def pytest_addoption(parser):
