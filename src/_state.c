@@ -50,7 +50,6 @@ typedef struct {
     PyObject* copy_Error;                        // exception class
     PyObject* copyreg___newobj__;                // copyreg.__newobj__ (or sentinel)
     PyObject* copyreg___newobj___ex;             // copyreg.__newobj_ex__ (or sentinel)
-    PyObject* create_precompiler_reconstructor;  // duper.snapshots.create_precompiler_reconstructor
 
     // TLS memo allows reuse across deepcopy calls without allocation.
     // Key insight: memo is thread-local, not coroutine-local, which is correct

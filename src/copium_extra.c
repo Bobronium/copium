@@ -20,20 +20,19 @@
 #include "_memo.c"
 #include "_deepcopy.c"
 #include "_extra.c"
-#include "_pinning.c"
 
 PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
     (void)self;
 
     if (UNLIKELY(nargs != 2)) {
-        PyErr_SetString(PyExc_TypeError, "replicate(obj, n, /, *, compile_after=20)");
+        PyErr_SetString(PyExc_TypeError, "replicate(obj, n, /)");
         return NULL;
     }
 
     PyObject* obj = args[0];
 
     long n_long = PyLong_AsLong(args[1]);
-    if (n_long == -1 && PyErr_Occurred())
+    if (PyErr_Occurred())
         return NULL;
     if (n_long < 0) {
         PyErr_SetString(PyExc_ValueError, "n must be >= 0");
@@ -41,42 +40,9 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
     }
     Py_ssize_t n = (Py_ssize_t)n_long;
 
-    int duper_available = (module_state.create_precompiler_reconstructor != NULL);
-
-    int compile_after = 20;
     if (kwnames) {
-        Py_ssize_t kwcount = PyTuple_GET_SIZE(kwnames);
-        if (kwcount > 1) {
-            PyErr_SetString(PyExc_TypeError, "replicate accepts only 'compile_after' keyword");
-            return NULL;
-        }
-        if (kwcount == 1) {
-            PyObject* kwname = PyTuple_GET_ITEM(kwnames, 0);
-            int is_compile_after = PyUnicode_Check(kwname) &&
-                (PyUnicode_CompareWithASCIIString(kwname, "compile_after") == 0);
-            if (!is_compile_after) {
-                PyErr_SetString(
-                    PyExc_TypeError, "unknown keyword; only 'compile_after' is supported"
-                );
-                return NULL;
-            }
-            if (!duper_available) {
-                PyErr_SetString(
-                    PyExc_TypeError,
-                    "replicate(): 'compile_after' requires duper.snapshots; it is not available"
-                );
-                return NULL;
-            }
-            PyObject* kwval = args[nargs + 0];
-            long ca = PyLong_AsLong(kwval);
-            if (ca == -1 && PyErr_Occurred())
-                return NULL;
-            if (ca < 0) {
-                PyErr_SetString(PyExc_ValueError, "compile_after must be >= 0");
-                return NULL;
-            }
-            compile_after = (int)ca;
-        }
+        PyErr_SetString(PyExc_TypeError, "replicate() does not accept keyword arguments");
+        return NULL;
     }
 
     if (n == 0)
@@ -99,21 +65,6 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
     }
 
     {
-        PinObject* pin = _duper_lookup_pin_for_object(obj);
-        if (pin) {
-            PyObject* factory = pin->factory;
-            if (UNLIKELY(!factory || !PyCallable_Check(factory))) {
-                PyErr_SetString(PyExc_RuntimeError, "pinned object has no valid factory");
-                return NULL;
-            }
-            PyObject* out = build_list_by_calling_noargs(factory, n);
-            if (out)
-                pin->hits += (uint64_t)n;
-            return out;
-        }
-    }
-
-    if (!duper_available || n <= (Py_ssize_t)compile_after) {
         PyObject* out = PyList_New(n);
         if (!out)
             return NULL;
@@ -141,31 +92,6 @@ PyObject* py_replicate(PyObject* self, PyObject* const* args, Py_ssize_t nargs, 
             }
             PyList_SET_ITEM(out, i, copy_i);
         }
-        return out;
-    }
-
-    {
-        PyObject* cpr = module_state.create_precompiler_reconstructor;
-        if (UNLIKELY(!cpr || !PyCallable_Check(cpr))) {
-            PyErr_SetString(
-                PyExc_RuntimeError,
-                "duper.snapshots.create_precompiler_reconstructor is not callable"
-            );
-            return NULL;
-        }
-
-        PyObject* reconstructor = PyObject_CallOneArg(cpr, obj);
-        if (!reconstructor)
-            return NULL;
-
-        if (UNLIKELY(!PyCallable_Check(reconstructor))) {
-            Py_DECREF(reconstructor);
-            PyErr_SetString(PyExc_TypeError, "reconstructor must be callable (FunctionType)");
-            return NULL;
-        }
-
-        PyObject* out = build_list_by_calling_noargs(reconstructor, n);
-        Py_DECREF(reconstructor);
         return out;
     }
 }
