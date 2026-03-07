@@ -58,31 +58,6 @@ static int _error_is_ignored(PyObject* error_identifier) {
     return 0;
 }
 
-static PyObject* _build_ignored_errors_repr(PyObject* error_identifier) {
-    PyObject* joined = NULL;
-    PyObject* result = NULL;
-
-    if (module_state.ignored_errors_joined && error_identifier) {
-        joined = PyUnicode_FromFormat(
-            "%U::%U", module_state.ignored_errors_joined, error_identifier
-        );
-    } else if (module_state.ignored_errors_joined) {
-        joined = Py_NewRef(module_state.ignored_errors_joined);
-    } else if (error_identifier) {
-        joined = Py_NewRef(error_identifier);
-    } else {
-        joined = PyUnicode_FromString("");
-    }
-
-    if (!joined)
-        goto done;
-
-    result = PyObject_Repr(joined);
-
-done:
-    Py_XDECREF(joined);
-    return result;
-}
 
 /**
  * Extract the deepcopy(...) expression from a source line.
@@ -181,7 +156,7 @@ static PyObject* _make_expr_with_memo(PyObject* expr) {
             prefix = PyUnicode_Substring(expr, 0, len - 2);
             if (!prefix)
                 goto done;
-            suffix = PyUnicode_FromString(", {})");
+            suffix = PyUnicode_FromString(", memo={})");
             if (!suffix)
                 goto done;
             result = PyUnicode_Concat(prefix, suffix);
@@ -193,7 +168,7 @@ static PyObject* _make_expr_with_memo(PyObject* expr) {
     prefix = PyUnicode_Substring(expr, 0, len - 1);
     if (!prefix)
         goto done;
-    suffix = PyUnicode_FromString(", {})");
+    suffix = PyUnicode_FromString(", memo={})");
     if (!suffix)
         goto done;
     result = PyUnicode_Concat(prefix, suffix);
@@ -203,7 +178,6 @@ done:
     Py_XDECREF(suffix);
     return result;
 }
-
 
 static PyObject* _get_caller_frame_info(void) {
     PyObject* result = NULL;
@@ -466,7 +440,7 @@ static int _emit_fallback_warning(PyObject* exc_value, PyObject* obj, PyObject* 
         deepcopy_expr_with_memo = _make_expr_with_memo(deepcopy_expr);
         if (!deepcopy_expr_with_memo) {
             PyErr_Clear();
-            deepcopy_expr_with_memo = PyUnicode_FromFormat("deepcopy(%U(), {})", type_name);
+            deepcopy_expr_with_memo = PyUnicode_FromFormat("deepcopy(%U(), memo={})", type_name);
             if (!deepcopy_expr_with_memo)
                 goto done;
         }
@@ -485,7 +459,7 @@ static int _emit_fallback_warning(PyObject* exc_value, PyObject* obj, PyObject* 
         "\n"
         "%U"
         "\n"
-        "copium was able to recover from this error, but this is slow and unreliable.\n"
+        "copium was able to recover from this error, but this is slow.\n"
         "\n"
         "Fix:\n"
         "\n"
@@ -494,24 +468,25 @@ static int _emit_fallback_warning(PyObject* exc_value, PyObject* obj, PyObject* 
         "\n"
         "Workarounds:\n"
         "\n"
-        "    local  change %U to %U\n"
-        "           -> copium uses dict memo in this call (recommended)\n"
+        "     local  change %U to %U\n"
+        "            -> copium uses dict memo in this call (recommended)\n"
         "\n"
-        "   global  export COPIUM_USE_DICT_MEMO=1\n"
-        "           -> copium uses dict memo everywhere (~1.3-2x slowdown, still faster than stdlib)\n"
+        "    global  `copium.configure(memo=\"dict\")` or export COPIUM_USE_DICT_MEMO=1\n"
+        "            -> copium uses dict memo everywhere (~1.3-2x slowdown, still faster than stdlib)\n"
         "\n"
-        "   silent  export COPIUM_NO_MEMO_FALLBACK_WARNING='%U'\n"
-        "           -> '%U' stays slow to deepcopy\n"
+        " explosive  `copium.configure(on_incompatible=\"raise\")` or export COPIUM_NO_MEMO_FALLBACK=1\n"
+        "            -> '%U' raises the error above. Useful if you want to handle it yourself.\n"
         "\n"
-        "explosive  export COPIUM_NO_MEMO_FALLBACK=1\n"
-        "           -> '%U' raises the error above\n",
+        "    silent  `copium.configure(suppress_warnings=[%R])` or export COPIUM_NO_MEMO_FALLBACK_WARNING='%U'\n"
+        "            -> disables this warning for '%U', it stays slow to deepcopy\n",
         deepcopy_qualname,
         tb_str,
         deepcopy_qualname,
         deepcopy_expr,
         deepcopy_expr_with_memo,
-        error_identifier,
         deepcopy_expr,
+        error_identifier,
+        error_identifier,
         deepcopy_expr
     );
     if (!full_message)
@@ -552,7 +527,7 @@ static PyObject* _maybe_retry_with_dict_memo(
         return NULL;
     }
 
-    if (module_state.no_memo_fallback) {
+    if (module_state.on_incompatible == COPIUM_ON_INCOMPATIBLE_RAISE) {
         return NULL;
     }
 
@@ -575,7 +550,8 @@ static PyObject* _maybe_retry_with_dict_memo(
         goto error;
 
     error_identifier = _build_error_identifier(exc_type, exc_value);
-    if (error_identifier && !_error_is_ignored(error_identifier)) {
+    if (module_state.on_incompatible == COPIUM_ON_INCOMPATIBLE_WARN && error_identifier &&
+        !_error_is_ignored(error_identifier)) {
         /* In this branch priority is not speed, but informativeness */
         if (exc_tb && exc_value) {
             PyException_SetTraceback(exc_value, exc_tb);
