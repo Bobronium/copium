@@ -17,7 +17,6 @@
  *   - copium.patch        - stdlib patching (enable, disable, enabled)
  *   - copium.extra        - batch utilities (replicate, repeatcall)
  *   - copium.__about__    - version information
- *   - copium._experimental - pin API (when duper.snapshots available)
  */
 
 /* Enable GNU extensions for pthread_getattr_np on Linux */
@@ -41,7 +40,6 @@
 #include "_memo_legacy.c"
 #include "_deepcopy_legacy.c"
 #include "_copy.c"
-#include "_pinning.c"
 #include "_patching.c"
 #include "_init.c"
 
@@ -52,7 +50,6 @@
 #include "copium_patch.c"
 #include "copium_extra.c"
 #include "copium___about__.c"
-#include "copium__experimental.c"
 
 /* ========================================================================== */
 /*                              Main API                                      */
@@ -730,13 +727,6 @@ static int copium_exec(PyObject* module) {
     PyObject* patch_module = PyModule_Create(&patch_module_def);
     if (_add_submodule(module, "patch", patch_module) < 0)
         return -1;
-
-    /* Conditionally create experimental submodule */
-    if (_copium_duper_available()) {
-        PyObject* experimental_module = PyModule_Create(&experimental_module_def);
-        if (_add_submodule(module, "_experimental", experimental_module) < 0)
-            return -1;
-    }
 
     /* Build and attach __about__ submodule */
     if (_build_about_module(module, _add_submodule) < 0)

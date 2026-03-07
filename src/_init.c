@@ -18,7 +18,6 @@
 #include "_state.c"
 #include "_dict_iter.c"
 #include "_memo.c"
-#include "_pinning.c"
 
 /* Tracks initialization state for proper cleanup in reverse order */
 static struct {
@@ -29,7 +28,6 @@ static struct {
     int memo_tss_ready;
     int dict_iter_ready;
     int memo_types_ready;
-    int pinning_ready;
     int error_attr_ready;
 } _init_state = {0};
 
@@ -63,7 +61,6 @@ static void _copium_cleanup(void) {
         Py_CLEAR(module_state.copy_Error);
         Py_CLEAR(module_state.copyreg___newobj__);
         Py_CLEAR(module_state.copyreg___newobj___ex);
-        Py_CLEAR(module_state.create_precompiler_reconstructor);
         _init_state.copyreg_ready = 0;
     }
 
@@ -245,30 +242,6 @@ done:
     return result;
 }
 
-static int _init_pinning(PyObject* module) {
-    PyObject* mod_snapshots = PyImport_ImportModule("duper.snapshots");
-    if (!mod_snapshots) {
-        PyErr_Clear();
-        module_state.create_precompiler_reconstructor = NULL;
-        return 0; /* Not an error - pinning is optional */
-    }
-
-    module_state.create_precompiler_reconstructor = PyObject_GetAttrString(
-        mod_snapshots, "create_precompiler_reconstructor"
-    );
-    if (!module_state.create_precompiler_reconstructor) {
-        PyErr_Clear();
-    }
-
-    if (_duper_pinning_add_types(module) < 0) {
-        Py_DECREF(mod_snapshots);
-        return -1;
-    }
-
-    Py_DECREF(mod_snapshots);
-    return 0;
-}
-
 /* -------------------------------------------------------------------------- */
 
 /* Parse COPIUM_NO_MEMO_FALLBACK_WARNING env var into a tuple of strings */
@@ -405,10 +378,6 @@ int _copium_init(PyObject* module) {
     if (memo_register_abcs() < 0)
         goto error;
 
-    if (_init_pinning(module) < 0)
-        goto error;
-    _init_state.pinning_ready = 1;
-
     if (PyObject_SetAttrString(module, "Error", module_state.copy_Error) < 0)
         goto error;
     _init_state.error_attr_ready = 1;
@@ -420,8 +389,5 @@ error:
     return -1;
 }
 
-int _copium_duper_available(void) {
-    return module_state.create_precompiler_reconstructor != NULL;
-}
 
 #endif /* _COPIUM_INIT_C */
