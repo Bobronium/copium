@@ -61,7 +61,6 @@ static void _copium_cleanup(void) {
         Py_CLEAR(module_state.copy_Error);
         Py_CLEAR(module_state.copyreg___newobj__);
         Py_CLEAR(module_state.copyreg___newobj___ex);
-        Py_CLEAR(module_state.create_precompiler_reconstructor);
         _init_state.copyreg_ready = 0;
     }
 
