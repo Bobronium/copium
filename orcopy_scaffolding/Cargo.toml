@@ -1,0 +1,28 @@
+[package]
+name = "orcopy"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+
+[lib]
+name = "__init__"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3-ffi = { version = "0.28.2", features = ["extension-module"] }
+pyo3 = { version = "0.28", features = ["extension-module"] }
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+[build-dependencies]
+pyo3-build-config = "0.28.2"

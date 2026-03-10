@@ -1,0 +1,413 @@
+use std::os::raw::{c_char, c_int};
+use std::ptr;
+
+use pyo3_ffi::*;
+
+use crate::compat;
+use crate::ffi_ext;
+use crate::ffi_ext::*;
+use crate::state::STATE;
+
+// ── Type identity (on the type, not the pointer) ───────────
+
+pub unsafe trait PyTypeInfo: Sized {
+    fn type_ptr() -> *mut PyTypeObject;
+    #[inline(always)]
+    fn is(tp: *mut PyTypeObject) -> bool {
+        unsafe { tp == Self::type_ptr() }
+    }
+
+    #[inline(always)]
+    fn check_exact(obj: *mut PyObject) -> bool {
+        unsafe { obj.class() == Self::type_ptr() }
+    }
+}
+
+macro_rules! pytype {
+    ($($rust:ty => $ffi:ident),+ $(,)?) => {$(
+        unsafe impl PyTypeInfo for $rust {
+            #[inline(always)]
+            fn type_ptr() -> *mut PyTypeObject {
+                unsafe { std::ptr::addr_of_mut!($ffi) }
+            }
+        }
+    )+}
+}
+pub struct PyFrozensetObject;
+
+pytype! {
+    PyObject          => PyBaseObject_Type,
+    PyListObject      => PyList_Type,
+    PyTupleObject     => PyTuple_Type,
+    PyDictObject      => PyDict_Type,
+    PySetObject       => PySet_Type,
+    PyByteArrayObject => PyByteArray_Type,
+    PyFrozensetObject => PyFrozenSet_Type,
+    PyMethodObject    => PyMethod_Type,
+}
+
+// ── PyAnyPtr — pointer methods on every *mut T ─────────────
+
+pub unsafe trait PyObjectPtr {
+    unsafe fn as_pyobject(self) -> *mut PyObject;
+    unsafe fn refcount(self) -> Py_ssize_t;
+    unsafe fn incref(self);
+    unsafe fn decref(self);
+    unsafe fn newref(self) -> *mut PyObject;
+    unsafe fn class(self) -> *mut PyTypeObject;
+    unsafe fn getattr(self, name: *mut PyObject) -> *mut PyObject;
+    unsafe fn get_optional_attr(self, name: *mut PyObject, out: &mut *mut PyObject) -> c_int;
+    unsafe fn call(self) -> *mut PyObject;
+    unsafe fn call_one(self, arg: *mut PyObject) -> *mut PyObject;
+    unsafe fn call_with(self, args: *mut PyObject) -> *mut PyObject;
+    unsafe fn set_attr(self, name: *mut PyObject, value: *mut PyObject) -> c_int;
+    unsafe fn set_item_obj(self, key: *mut PyObject, value: *mut PyObject) -> c_int;
+    unsafe fn get_iter(self) -> *mut PyObject;
+
+    unsafe fn is_type(self) -> bool;
+    unsafe fn is_tuple(self) -> bool;
+    unsafe fn is_dict(self) -> bool;
+    unsafe fn is_unicode(self) -> bool;
+    unsafe fn is_bytes(self) -> bool;
+    unsafe fn is_none(self) -> bool;
+}
+
+unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
+    #[inline(always)]
+    unsafe fn as_pyobject(self) -> *mut PyObject {
+
+        self as _
+    }
+    #[inline(always)]
+    unsafe fn refcount(self) -> Py_ssize_t {
+        Py_REFCNT(self as *mut PyObject)
+    }
+    #[inline(always)]
+    unsafe fn incref(self) {
+        Py_INCREF(self as *mut PyObject)
+    }
+    #[inline(always)]
+    unsafe fn decref(self) {
+        Py_DECREF(self as *mut PyObject)
+    }
+    #[inline(always)]
+    unsafe fn newref(self) -> *mut PyObject {
+        Py_NewRef(self as *mut PyObject)
+    }
+    #[inline(always)]
+    unsafe fn class(self) -> *mut PyTypeObject {
+        (*(self as *mut PyObject)).ob_type
+    }
+    #[inline]
+    unsafe fn getattr(self, name: *mut PyObject) -> *mut PyObject {
+        PyObject_GetAttr(self as *mut PyObject, name)
+    }
+    #[inline]
+    unsafe fn get_optional_attr(self, name: *mut PyObject, out: &mut *mut PyObject) -> c_int {
+        compat::PyObject_GetOptionalAttr(self as *mut PyObject, name, out)
+    }
+    #[inline]
+    unsafe fn call(self) -> *mut PyObject {
+        PyObject_CallNoArgs(self as *mut PyObject)
+    }
+    #[inline(always)]
+    unsafe fn call_one(self, arg: *mut PyObject) -> *mut PyObject {
+        PyObject_CallOneArg(self as *mut PyObject, arg)
+    }
+    #[inline]
+    unsafe fn call_with(self, args: *mut PyObject) -> *mut PyObject {
+        PyObject_CallObject(self as *mut PyObject, args)
+    }
+    #[inline]
+    unsafe fn set_attr(self, name: *mut PyObject, value: *mut PyObject) -> c_int {
+        PyObject_SetAttr(self as *mut PyObject, name, value)
+    }
+    #[inline]
+    unsafe fn set_item_obj(self, key: *mut PyObject, value: *mut PyObject) -> c_int {
+        PyObject_SetItem(self as *mut PyObject, key, value)
+    }
+    #[inline]
+    unsafe fn get_iter(self) -> *mut PyObject {
+        PyObject_GetIter(self as *mut PyObject)
+    }
+    #[inline(always)]
+    unsafe fn is_type(self) -> bool {
+        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_TYPE_SUBCLASS) != 0
+    }
+    #[inline(always)]
+    unsafe fn is_tuple(self) -> bool {
+        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_TUPLE_SUBCLASS) != 0
+    }
+    #[inline(always)]
+    unsafe fn is_dict(self) -> bool {
+        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_DICT_SUBCLASS) != 0
+    }
+    #[inline(always)]
+    unsafe fn is_unicode(self) -> bool {
+        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_UNICODE_SUBCLASS) != 0
+    }
+    #[inline(always)]
+    unsafe fn is_bytes(self) -> bool {
+        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_BYTES_SUBCLASS) != 0
+    }
+    #[inline(always)]
+    unsafe fn is_none(self) -> bool {
+        self as *mut PyObject == ffi_ext::Py_None()
+    }
+}
+
+// ── Constructors ───────────────────────────────────────────
+
+#[inline]
+pub unsafe fn py_list_new(n: Py_ssize_t) -> *mut PyListObject {
+    PyList_New(n) as _
+}
+
+#[inline]
+pub unsafe fn py_tuple_new(n: Py_ssize_t) -> *mut PyTupleObject {
+    PyTuple_New(n) as _
+}
+
+#[inline]
+pub unsafe fn py_dict_new(n: Py_ssize_t) -> *mut PyDictObject {
+    compat::_PyDict_NewPresized(n) as _
+}
+
+#[inline]
+pub unsafe fn py_set_new() -> *mut PySetObject {
+    PySet_New(ptr::null_mut()) as _
+}
+
+#[inline]
+pub unsafe fn frozenset_from(iterable: *mut PyObject) -> *mut PyObject {
+    PyFrozenSet_New(iterable)
+}
+
+#[inline]
+pub unsafe fn py_bytearray_new(n: Py_ssize_t) -> *mut PyByteArrayObject {
+    PyByteArray_FromStringAndSize(ptr::null(), n) as _
+}
+
+#[inline]
+pub unsafe fn py_method_new(
+    func: *mut PyObject,
+    self_: *mut PyObject,
+) -> *mut ffi_ext::PyMethodObject {
+    ffi_ext::PyMethod_New(func, self_) as _
+}
+
+// ── Indexed sequence ops (list, tuple) ─────────────────────
+#[inline(always)]
+unsafe fn valid_index(i: Py_ssize_t, limit: Py_ssize_t) -> bool {
+    (i as usize) < (limit as usize)
+}
+pub unsafe trait PySeqPtr: Sized {
+    unsafe fn len(&self) -> Py_ssize_t;
+    unsafe fn get_borrowed(self, i: Py_ssize_t) -> *mut PyObject;
+    unsafe fn set_stolen(self, i: Py_ssize_t, v: *mut PyObject);
+
+    unsafe fn get_item_ref_safe(self, i: Py_ssize_t) -> *mut PyObject {
+        if !valid_index(i, self.len()) {
+            return ptr::null_mut();
+        }
+        self.get_borrowed(i).newref()
+    }
+}
+
+unsafe impl PySeqPtr for *mut PyListObject {
+    #[inline(always)]
+    unsafe fn len(&self) -> Py_ssize_t {
+        Py_SIZE(*self as *mut PyObject)
+    }
+    #[inline(always)]
+    unsafe fn get_borrowed(self, i: Py_ssize_t) -> *mut PyObject {
+        *(*self).ob_item.add(i as usize)
+    }
+    #[inline(always)]
+    unsafe fn set_stolen(self, i: Py_ssize_t, v: *mut PyObject) {
+        *(*self).ob_item.add(i as usize) = v;
+    }
+}
+
+unsafe impl PySeqPtr for *mut PyTupleObject {
+    #[inline(always)]
+    unsafe fn len(&self) -> Py_ssize_t {
+        Py_SIZE(*self as *mut PyObject)
+    }
+    #[inline(always)]
+    unsafe fn get_borrowed(self, i: Py_ssize_t) -> *mut PyObject {
+        *(*self).ob_item.as_ptr().add(i as usize)
+    }
+    #[inline(always)]
+    unsafe fn set_stolen(self, i: Py_ssize_t, v: *mut PyObject) {
+        *(*self).ob_item.as_mut_ptr().add(i as usize) = v;
+    }
+}
+
+// ── Mapping ops (dict) ─────────────────────────────────────
+
+pub unsafe trait PyMapPtr {
+    unsafe fn len(self) -> Py_ssize_t;
+    /// Does NOT steal references.
+    unsafe fn set_item(self, k: *mut PyObject, v: *mut PyObject) -> c_int;
+    /// Returns borrowed ref or null.
+    unsafe fn get_item(self, k: *mut PyObject) -> *mut PyObject;
+}
+
+unsafe impl PyMapPtr for *mut PyDictObject {
+    #[inline]
+    unsafe fn len(self) -> Py_ssize_t {
+        PyDict_Size(self as _)
+    }
+    #[inline]
+    unsafe fn set_item(self, k: *mut PyObject, v: *mut PyObject) -> c_int {
+        PyDict_SetItem(self as _, k, v)
+    }
+    #[inline]
+    unsafe fn get_item(self, k: *mut PyObject) -> *mut PyObject {
+        PyDict_GetItemWithError(self as _, k)
+    }
+}
+
+pub unsafe trait PySetPtr {
+    unsafe fn len(self) -> Py_ssize_t;
+    unsafe fn next_entry(
+        self,
+        pos: &mut Py_ssize_t,
+        key: &mut *mut PyObject,
+        hash: &mut Py_hash_t,
+    ) -> c_int;
+}
+
+unsafe impl PySetPtr for *mut PySetObject {
+    #[inline]
+    unsafe fn len(self) -> Py_ssize_t {
+        PySet_Size(self as _)
+    }
+    #[inline]
+    unsafe fn next_entry(
+        self,
+        pos: &mut Py_ssize_t,
+        key: &mut *mut PyObject,
+        hash: &mut Py_hash_t,
+    ) -> c_int {
+        _PySet_NextEntry(self as _, pos, key, hash)
+    }
+}
+
+unsafe impl PySetPtr for *mut PyFrozensetObject {
+    #[inline]
+    unsafe fn len(self) -> Py_ssize_t {
+        PySet_Size(self as _)
+    }
+    #[inline]
+    unsafe fn next_entry(
+        self,
+        pos: &mut Py_ssize_t,
+        key: &mut *mut PyObject,
+        hash: &mut Py_hash_t,
+    ) -> c_int {
+        _PySet_NextEntry(self as _, pos, key, hash)
+    }
+}
+
+pub unsafe trait PyMutSetPtr {
+    unsafe fn add_item(self, item: *mut PyObject) -> c_int;
+}
+
+unsafe impl PyMutSetPtr for *mut PySetObject {
+    #[inline]
+    unsafe fn add_item(self, item: *mut PyObject) -> c_int {
+        PySet_Add(self as _, item)
+    }
+}
+
+// ── Buffer ops (bytearray) ─────────────────────────────────
+
+pub unsafe trait PyBufPtr {
+    unsafe fn len(self) -> Py_ssize_t;
+    unsafe fn as_ptr(self) -> *mut c_char;
+}
+
+unsafe impl PyBufPtr for *mut PyByteArrayObject {
+    #[inline]
+    unsafe fn len(self) -> Py_ssize_t {
+        PyByteArray_Size(self as _)
+    }
+    #[inline]
+    unsafe fn as_ptr(self) -> *mut c_char {
+        PyByteArray_AsString(self as _)
+    }
+}
+
+// ── Bound method ops ───────────────────────────────────────
+
+pub unsafe trait PyBoundMethodPtr {
+    unsafe fn function(self) -> *mut PyObject;
+    unsafe fn self_obj(self) -> *mut PyObject;
+}
+
+unsafe impl PyBoundMethodPtr for *mut ffi_ext::PyMethodObject {
+    #[inline]
+    unsafe fn function(self) -> *mut PyObject {
+        ffi_ext::PyMethod_GET_FUNCTION(self as _)
+    }
+    #[inline]
+    unsafe fn self_obj(self) -> *mut PyObject {
+        ffi_ext::PyMethod_GET_SELF(self as _)
+    }
+}
+
+// ── Immutability checks ────────────────────────────────────
+
+pub unsafe trait PyTypeObjectPtr {
+    unsafe fn is_literal_immutable(self) -> bool;
+    unsafe fn is_builtin_immutable(self) -> bool;
+    unsafe fn is_stdlib_immutable(self) -> bool;
+    unsafe fn is_type_subclass(self) -> bool;
+    unsafe fn is_atomic_immutable(self) -> bool;
+}
+
+unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
+    #[inline(always)]
+    unsafe fn is_literal_immutable(self) -> bool {
+        (self == std::ptr::addr_of_mut!(_PyNone_Type))
+            | (self == std::ptr::addr_of_mut!(PyLong_Type))
+            | (self == std::ptr::addr_of_mut!(PyUnicode_Type))
+            | (self == std::ptr::addr_of_mut!(PyBool_Type))
+            | (self == std::ptr::addr_of_mut!(PyFloat_Type))
+            | (self == std::ptr::addr_of_mut!(PyBytes_Type))
+    }
+
+    #[inline(always)]
+    unsafe fn is_builtin_immutable(self) -> bool {
+        (self == std::ptr::addr_of_mut!(PyRange_Type))
+            | (self == std::ptr::addr_of_mut!(PyFunction_Type))
+            | (self == std::ptr::addr_of_mut!(PyCFunction_Type))
+            | (self == std::ptr::addr_of_mut!(ffi_ext::PyProperty_Type))
+            | (self == std::ptr::addr_of_mut!(ffi_ext::_PyWeakref_RefType))
+            | (self == std::ptr::addr_of_mut!(PyCode_Type))
+            | (self == std::ptr::addr_of_mut!(_PyNotImplemented_Type))
+            | (self == std::ptr::addr_of_mut!(ffi_ext::PyEllipsis_Type))
+            | (self == std::ptr::addr_of_mut!(PyComplex_Type))
+    }
+
+    #[inline(always)]
+    unsafe fn is_stdlib_immutable(self) -> bool {
+        let s = &STATE;
+        (self == s.re_pattern_type) | (self == s.decimal_type) | (self == s.fraction_type)
+    }
+
+    #[inline(always)]
+    unsafe fn is_type_subclass(self) -> bool {
+        (crate::ffi_ext::tp_flags_of(self) & Py_TPFLAGS_TYPE_SUBCLASS) != 0
+    }
+
+    #[inline(always)]
+    unsafe fn is_atomic_immutable(self) -> bool {
+        self.is_literal_immutable()
+            | self.is_builtin_immutable()
+            | self.is_type_subclass()
+            | self.is_stdlib_immutable()
+    }
+}

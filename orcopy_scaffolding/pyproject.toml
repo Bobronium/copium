@@ -1,0 +1,16 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "copium"
+version = "0.1.0.dev0"
+requires-python = ">=3.10"
+
+[tool.maturin]
+features = ["pyo3-ffi/extension-module"]
+module-name = "copium.__init__"
+python-source = "src/"
+
+[tool.pytest.ini_options]
+markers = ["typecheck: type checking tests"]
