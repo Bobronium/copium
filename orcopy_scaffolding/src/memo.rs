@@ -32,6 +32,13 @@ pub trait Memo: Sized {
 
     /// Get the Python object to pass to __deepcopy__(memo).
     unsafe fn as_call_arg(&mut self) -> *mut PyObject;
+
+    /// Ensure any keepalive-backed memo state is ready before a copy path that
+    /// needs stdlib-compatible early memo interaction.
+    #[inline(always)]
+    unsafe fn ensure_memo_is_valid(&mut self) -> i32 {
+        0
+    }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -927,6 +934,10 @@ impl Memo for DictMemo {
     unsafe fn as_call_arg(&mut self) -> *mut PyObject {
         self.dict as *mut PyObject
     }
+
+    unsafe fn ensure_memo_is_valid(&mut self) -> i32 {
+        unsafe { self.ensure_keepalive() }
+    }
 }
 
 impl Drop for DictMemo {
@@ -1069,6 +1080,10 @@ impl Memo for AnyMemo {
     #[inline(always)]
     unsafe fn as_call_arg(&mut self) -> *mut PyObject {
         self.object
+    }
+
+    unsafe fn ensure_memo_is_valid(&mut self) -> i32 {
+        unsafe { self.ensure_keepalive() }
     }
 }
 

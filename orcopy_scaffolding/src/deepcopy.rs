@@ -240,6 +240,7 @@ impl DeepCopy for *mut PyDictObject {
             }
 
             let mut guard = DictIterGuard::new(self as _);
+            guard.activate();
             let mut key: *mut PyObject = ptr::null_mut();
             let mut value: *mut PyObject = ptr::null_mut();
 
@@ -356,6 +357,14 @@ impl DeepCopy for *mut PyFrozensetObject {
             if sz < 0 {
                 return PyResult::error();
             }
+
+            // stdlib exercises memo usability before reconstructing frozenset
+            // members via the reduce-style path, so malformed mappings must
+            // fail here rather than later in nested copies.
+            if memo.ensure_memo_is_valid() < 0 {
+                return PyResult::error();
+            }
+
             let snapshot = check!(py_tuple_new(sz));
 
             let mut pos: Py_ssize_t = 0;

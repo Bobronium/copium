@@ -142,7 +142,7 @@ impl DictIterGuard {
 
         #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
         unsafe {
-            let mut guard = Self {
+            Self {
                 dict,
                 pos: 0,
                 size0: PyDict_Size(dict),
@@ -150,10 +150,8 @@ impl DictIterGuard {
                 size_changed: false,
                 prev: ptr::null_mut(),
                 next: ptr::null_mut(),
-                active: true,
-            };
-            guard.register_watch();
-            guard
+                active: false,
+            }
         }
 
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
@@ -175,6 +173,28 @@ impl DictIterGuard {
                 it,
                 active: true,
             }
+        }
+    }
+
+    pub unsafe fn activate(&mut self) {
+        #[cfg(not(Py_3_14))]
+        {
+            let _ = self;
+        }
+
+        #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
+        unsafe {
+            if self.active {
+                return;
+            }
+
+            self.active = true;
+            self.register_watch();
+        }
+
+        #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+        {
+            let _ = self;
         }
     }
 
