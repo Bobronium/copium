@@ -21,7 +21,7 @@ macro_rules! bail {
 
 // ── Error chaining ─────────────────────────────────────────
 
-unsafe fn chain_type_error(msg: *mut PyObject) {
+pub(crate) unsafe fn chain_type_error(msg: *mut PyObject) {
     unsafe {
         let mut cause_type: *mut PyObject = ptr::null_mut();
         let mut cause_val: *mut PyObject = ptr::null_mut();
@@ -56,7 +56,7 @@ unsafe fn chain_type_error(msg: *mut PyObject) {
 
 // ── Registry & reduce dispatch ─────────────────────────────
 
-unsafe fn try_reduce_via_registry(
+pub(crate) unsafe fn try_reduce_via_registry(
     obj: *mut PyObject,
     tp: *mut PyTypeObject,
 ) -> *mut PyObject {
@@ -76,7 +76,7 @@ unsafe fn try_reduce_via_registry(
     }
 }
 
-pub unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mut PyObject {
+pub(crate) unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mut PyObject {
     unsafe {
         let s = &STATE;
         let mut reduce_ex: *mut PyObject = ptr::null_mut();
@@ -111,21 +111,21 @@ pub unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mut PyObj
 
 // ── Reduce result parsing ──────────────────────────────────
 
-struct ReduceParts {
-    callable: *mut PyObject,
-    argtup: *mut PyObject,
-    state: *mut PyObject,
-    listitems: *mut PyObject,
-    dictitems: *mut PyObject,
+pub(crate) struct ReduceParts {
+    pub(crate) callable: *mut PyObject,
+    pub(crate) argtup: *mut PyObject,
+    pub(crate) state: *mut PyObject,
+    pub(crate) listitems: *mut PyObject,
+    pub(crate) dictitems: *mut PyObject,
 }
 
-enum ReduceKind {
+pub(crate) enum ReduceKind {
     Error,
     Tuple,
     String,
 }
 
-unsafe fn validate_reduce_tuple(
+pub(crate) unsafe fn validate_reduce_tuple(
     reduce_result: *mut PyObject,
     reducing_type: *mut PyTypeObject,
 ) -> (ReduceKind, ReduceParts) {
@@ -159,12 +159,12 @@ unsafe fn validate_reduce_tuple(
             return (ReduceKind::Error, empty);
         }
 
-        let callable = tup.get_borrowed(0);
-        let mut argtup = tup.get_borrowed(1);
+        let callable = tup.get_borrowed_unchecked(0);
+        let mut argtup = tup.get_borrowed_unchecked(1);
         let none = ffi_ext::Py_None();
-        let state_raw = if size >= 3 { tup.get_borrowed(2) } else { none };
-        let list_raw = if size >= 4 { tup.get_borrowed(3) } else { none };
-        let dict_raw = if size == 5 { tup.get_borrowed(4) } else { none };
+        let state_raw = if size >= 3 { tup.get_borrowed_unchecked(2) } else { none };
+        let list_raw = if size >= 4 { tup.get_borrowed_unchecked(3) } else { none };
+        let dict_raw = if size == 5 { tup.get_borrowed_unchecked(4) } else { none };
 
         if !argtup.is_tuple() {
             let coerced = PySequence_Tuple(argtup);
@@ -182,7 +182,7 @@ unsafe fn validate_reduce_tuple(
                 return (ReduceKind::Error, empty);
             }
             let old = argtup;
-            tup.set_stolen(1, coerced);
+            tup.set_slot_steal_unchecked(1, coerced);
             old.decref();
             argtup = coerced;
         }
@@ -234,7 +234,7 @@ unsafe fn reconstruct_newobj<M: Memo>(
             return ptr::null_mut();
         }
 
-        let cls = tup.get_borrowed(0);
+        let cls = tup.get_borrowed_unchecked(0);
         if !cls.is_type() {
             ffi_ext::PyErr_Format(
                 PyExc_TypeError,
@@ -248,13 +248,13 @@ unsafe fn reconstruct_newobj<M: Memo>(
         let args_tup = args as *mut PyTupleObject;
 
         for i in 1..nargs {
-            let arg = tup.get_borrowed(i);
+            let arg = tup.get_borrowed_unchecked(i);
             let copied = deepcopy::deepcopy(arg, memo);
             if copied.is_error() {
                 args.decref();
                 return ptr::null_mut();
             }
-            args_tup.set_stolen(i - 1, copied.into_raw());
+            args_tup.set_slot_steal_unchecked(i - 1, copied.into_raw());
         }
 
         let instance = call_tp_new(cls as *mut PyTypeObject, args, ptr::null_mut());
@@ -279,9 +279,9 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
             return ptr::null_mut();
         }
 
-        let cls = tup.get_borrowed(0);
-        let mut args = tup.get_borrowed(1);
-        let mut kwargs = tup.get_borrowed(2);
+        let cls = tup.get_borrowed_unchecked(0);
+        let mut args = tup.get_borrowed_unchecked(1);
+        let mut kwargs = tup.get_borrowed_unchecked(2);
 
         if !cls.is_type() {
             ffi_ext::PyErr_Format(
@@ -377,13 +377,13 @@ unsafe fn reconstruct_callable<M: Memo>(
         let copied_tup = copied_args as *mut PyTupleObject;
 
         for i in 0..nargs {
-            let arg = tup.get_borrowed(i);
+            let arg = tup.get_borrowed_unchecked(i);
             let copied = deepcopy::deepcopy(arg, memo);
             if copied.is_error() {
                 copied_args.decref();
                 return ptr::null_mut();
             }
-            copied_tup.set_stolen(i, copied.into_raw());
+            copied_tup.set_slot_steal_unchecked(i, copied.into_raw());
         }
 
         let instance = callable.call_with(copied_args);
@@ -607,8 +607,8 @@ unsafe fn apply_state_tuple<M: Memo>(
 
         if state.is_tuple() && (state as *mut PyTupleObject).len() == 2 {
             let tup = state as *mut PyTupleObject;
-            dict_state = tup.get_borrowed(0);
-            slotstate = tup.get_borrowed(1);
+            dict_state = tup.get_borrowed_unchecked(0);
+            slotstate = tup.get_borrowed_unchecked(1);
         }
 
         if apply_dict_state(instance, dict_state, memo) < 0 {
@@ -698,8 +698,8 @@ unsafe fn apply_dictitems<M: Memo>(
             let (mut key, mut value);
             if pair.is_tuple() && (pair as *mut PyTupleObject).len() == 2 {
                 let ptup = pair as *mut PyTupleObject;
-                key = ptup.get_borrowed(0).newref();
-                value = ptup.get_borrowed(1).newref();
+                key = ptup.get_borrowed_unchecked(0).newref();
+                value = ptup.get_borrowed_unchecked(1).newref();
             } else {
                 let seq = ffi_ext::PySequence_Fast(
                     pair,

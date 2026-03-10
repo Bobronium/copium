@@ -1,5 +1,5 @@
 #![feature(thread_local)]
-use core::ffi::c_char;
+use core::ffi::{c_char, c_void};
 use pyo3_ffi::*;
 use std::ptr;
 
@@ -29,7 +29,7 @@ use crate::types::{py_dict_new, PyObjectPtr, PyTypeObjectPtr};
 // ══════════════════════════════════════════════════════════════
 
 unsafe extern "C" fn py_copy(_self: *mut PyObject, obj: *mut PyObject) -> *mut PyObject {
-    unsafe { copy::copy(obj) }
+    unsafe { copy::copy(obj).into_raw() }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -305,6 +305,10 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
             return -1;
         }
 
+        if dict_iter::dict_iter_module_init() < 0 {
+            return -1;
+        }
+
         if memo::memo_ready_type() < 0 {
             return -1;
         }
@@ -327,11 +331,44 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
         if config::create_module(module) < 0 {
             return -1;
         }
+
+        let config_module = PyObject_GetAttrString(module, cstr!("config"));
+        if config_module.is_null() {
+            return -1;
+        }
+
+        let configure = PyObject_GetAttrString(config_module, cstr!("apply"));
+        if configure.is_null() {
+            Py_DECREF(config_module);
+            return -1;
+        }
+        if PyModule_AddObject(module, cstr!("configure"), configure) < 0 {
+            Py_DECREF(config_module);
+            Py_DECREF(configure);
+            return -1;
+        }
+
+        let get_config = PyObject_GetAttrString(config_module, cstr!("get"));
+        Py_DECREF(config_module);
+        if get_config.is_null() {
+            return -1;
+        }
+        if PyModule_AddObject(module, cstr!("get_config"), get_config) < 0 {
+            Py_DECREF(get_config);
+            return -1;
+        }
+
         if about::create_module(module) < 0 {
             return -1;
         }
 
         0
+    }
+}
+
+unsafe extern "C" fn orcopium_free(_: *mut c_void) {
+    unsafe {
+        dict_iter::dict_iter_module_cleanup();
     }
 }
 
@@ -355,7 +392,7 @@ static mut MODULE_DEF: PyModuleDef = PyModuleDef {
     m_slots: ptr::null_mut(),
     m_traverse: None,
     m_clear: None,
-    m_free: None,
+    m_free: Some(orcopium_free),
 };
 
 /// Register a submodule on the parent and in sys.modules.

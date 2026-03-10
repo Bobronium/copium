@@ -1,6 +1,6 @@
 use std::os::raw::{c_char, c_int};
 use std::ptr;
-
+use pyo3::types::PyTuple;
 use pyo3_ffi::*;
 
 use crate::compat;
@@ -203,29 +203,31 @@ unsafe fn valid_index(i: Py_ssize_t, limit: Py_ssize_t) -> bool {
 }
 pub unsafe trait PySeqPtr: Sized {
     unsafe fn len(&self) -> Py_ssize_t;
-    unsafe fn get_borrowed(self, i: Py_ssize_t) -> *mut PyObject;
-    unsafe fn set_stolen(self, i: Py_ssize_t, v: *mut PyObject);
+    unsafe fn get_borrowed_unchecked(self, i: Py_ssize_t) -> *mut PyObject;
+    unsafe fn set_slot_steal_unchecked(self, i: Py_ssize_t, v: *mut PyObject);
 
-    unsafe fn get_item_ref_safe(self, i: Py_ssize_t) -> *mut PyObject {
+    #[inline(always)]
+    unsafe fn get_owned_check_bounds(self, i: Py_ssize_t) -> *mut PyObject {
+        // analogous to _PyList_GetItemRef()
         if !valid_index(i, self.len()) {
             return ptr::null_mut();
         }
-        self.get_borrowed(i).newref()
+        self.get_borrowed_unchecked(i).newref()
     }
 }
 
 unsafe impl PySeqPtr for *mut PyListObject {
     #[inline(always)]
     unsafe fn len(&self) -> Py_ssize_t {
-        Py_SIZE(*self as *mut PyObject)
+        Py_SIZE(*self as _)
     }
     #[inline(always)]
-    unsafe fn get_borrowed(self, i: Py_ssize_t) -> *mut PyObject {
-        *(*self).ob_item.add(i as usize)
+    unsafe fn get_borrowed_unchecked(self, i: Py_ssize_t) -> *mut PyObject {
+        PyList_GET_ITEM(self as _, i)
     }
     #[inline(always)]
-    unsafe fn set_stolen(self, i: Py_ssize_t, v: *mut PyObject) {
-        *(*self).ob_item.add(i as usize) = v;
+    unsafe fn set_slot_steal_unchecked(self, i: Py_ssize_t, v: *mut PyObject) {
+        PyList_SET_ITEM(self as _, i, v)
     }
 }
 
@@ -235,12 +237,12 @@ unsafe impl PySeqPtr for *mut PyTupleObject {
         Py_SIZE(*self as *mut PyObject)
     }
     #[inline(always)]
-    unsafe fn get_borrowed(self, i: Py_ssize_t) -> *mut PyObject {
-        *(*self).ob_item.as_ptr().add(i as usize)
+    unsafe fn get_borrowed_unchecked(self, i: Py_ssize_t) -> *mut PyObject {
+        PyTuple_GET_ITEM(self as _, i)
     }
     #[inline(always)]
-    unsafe fn set_stolen(self, i: Py_ssize_t, v: *mut PyObject) {
-        *(*self).ob_item.as_mut_ptr().add(i as usize) = v;
+    unsafe fn set_slot_steal_unchecked(self, i: Py_ssize_t, v: *mut PyObject) {
+        PyTuple_SET_ITEM(self as _, i, v)
     }
 }
 
@@ -372,30 +374,30 @@ unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
     #[inline(always)]
     unsafe fn is_literal_immutable(self) -> bool {
         (self == std::ptr::addr_of_mut!(_PyNone_Type))
-            | (self == std::ptr::addr_of_mut!(PyLong_Type))
-            | (self == std::ptr::addr_of_mut!(PyUnicode_Type))
-            | (self == std::ptr::addr_of_mut!(PyBool_Type))
-            | (self == std::ptr::addr_of_mut!(PyFloat_Type))
-            | (self == std::ptr::addr_of_mut!(PyBytes_Type))
+            || (self == std::ptr::addr_of_mut!(PyLong_Type))
+            || (self == std::ptr::addr_of_mut!(PyUnicode_Type))
+            || (self == std::ptr::addr_of_mut!(PyBool_Type))
+            || (self == std::ptr::addr_of_mut!(PyFloat_Type))
+            || (self == std::ptr::addr_of_mut!(PyBytes_Type))
     }
 
     #[inline(always)]
     unsafe fn is_builtin_immutable(self) -> bool {
         (self == std::ptr::addr_of_mut!(PyRange_Type))
-            | (self == std::ptr::addr_of_mut!(PyFunction_Type))
-            | (self == std::ptr::addr_of_mut!(PyCFunction_Type))
-            | (self == std::ptr::addr_of_mut!(ffi_ext::PyProperty_Type))
-            | (self == std::ptr::addr_of_mut!(ffi_ext::_PyWeakref_RefType))
-            | (self == std::ptr::addr_of_mut!(PyCode_Type))
-            | (self == std::ptr::addr_of_mut!(_PyNotImplemented_Type))
-            | (self == std::ptr::addr_of_mut!(ffi_ext::PyEllipsis_Type))
-            | (self == std::ptr::addr_of_mut!(PyComplex_Type))
+            || (self == std::ptr::addr_of_mut!(PyFunction_Type))
+            || (self == std::ptr::addr_of_mut!(PyCFunction_Type))
+            || (self == std::ptr::addr_of_mut!(ffi_ext::PyProperty_Type))
+            || (self == std::ptr::addr_of_mut!(ffi_ext::_PyWeakref_RefType))
+            || (self == std::ptr::addr_of_mut!(PyCode_Type))
+            || (self == std::ptr::addr_of_mut!(_PyNotImplemented_Type))
+            || (self == std::ptr::addr_of_mut!(ffi_ext::PyEllipsis_Type))
+            || (self == std::ptr::addr_of_mut!(PyComplex_Type))
     }
 
     #[inline(always)]
     unsafe fn is_stdlib_immutable(self) -> bool {
         let s = &STATE;
-        (self == s.re_pattern_type) | (self == s.decimal_type) | (self == s.fraction_type)
+        (self == s.re_pattern_type) || (self == s.decimal_type) || (self == s.fraction_type)
     }
 
     #[inline(always)]
@@ -406,8 +408,8 @@ unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
     #[inline(always)]
     unsafe fn is_atomic_immutable(self) -> bool {
         self.is_literal_immutable()
-            | self.is_builtin_immutable()
-            | self.is_type_subclass()
-            | self.is_stdlib_immutable()
+            || self.is_builtin_immutable()
+            || self.is_type_subclass()
+            || self.is_stdlib_immutable()
     }
 }

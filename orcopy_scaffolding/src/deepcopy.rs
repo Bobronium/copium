@@ -43,14 +43,14 @@ macro_rules! check {
     }};
 }
 
-trait DeepCopy {
+trait PyDeepCopy {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult;
 }
 
 #[inline(always)]
 unsafe fn dispatch<T, M: Memo>(object: *mut T, memo: &mut M, probe: M::Probe) -> PyResult
 where
-    *mut T: DeepCopy,
+    *mut T: PyDeepCopy,
 {
     if unsafe { recursion::enter() } < 0 {
         return PyResult::error();
@@ -118,7 +118,7 @@ unsafe fn deepcopy_cold<M: Memo>(
     }
 }
 
-impl DeepCopy for *mut PyListObject {
+impl PyDeepCopy for *mut PyListObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
             let sz = self.len();
@@ -128,7 +128,7 @@ impl DeepCopy for *mut PyListObject {
                 let ellipsis = Py_Ellipsis();
                 #[cfg(not(any(Py_3_12, Py_3_12, Py_3_13, Py_3_14)))]
                 ellipsis.incref();
-                copied.set_stolen(i, ellipsis);
+                copied.set_slot_steal_unchecked(i, ellipsis);
             }
 
             if memo.memoize(self as _, copied as _, &probe) < 0 {
@@ -137,7 +137,7 @@ impl DeepCopy for *mut PyListObject {
             }
 
             for i in 0..sz {
-                let item = self.get_item_ref_safe(i);
+                let item = self.get_owned_check_bounds(i);
                 if item.is_null() {
                     PyErr_SetString(
                         PyExc_RuntimeError,
@@ -165,7 +165,7 @@ impl DeepCopy for *mut PyListObject {
                     } else {
                         #[cfg(not(any(Py_3_12, Py_3_13, Py_3_14)))]
                         let old_item = copied.get_borrowed(i);
-                        copied.set_stolen(i, raw);
+                        copied.set_slot_steal_unchecked(i, raw);
                         #[cfg(not(any(Py_3_12, Py_3_13, Py_3_14)))]
                         old_item.decref();
                     }
@@ -187,7 +187,7 @@ impl DeepCopy for *mut PyListObject {
     }
 }
 
-impl DeepCopy for *mut PyTupleObject {
+impl PyDeepCopy for *mut PyTupleObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
             let sz = self.len();
@@ -195,7 +195,7 @@ impl DeepCopy for *mut PyTupleObject {
 
             let mut all_same = true;
             for i in 0..sz {
-                let item = self.get_borrowed(i);
+                let item = self.get_borrowed_unchecked(i);
                 let item_copy = deepcopy(item, memo);
                 if item_copy.is_error() {
                     copied.decref();
@@ -205,7 +205,7 @@ impl DeepCopy for *mut PyTupleObject {
                 if raw != item {
                     all_same = false;
                 }
-                copied.set_stolen(i, raw);
+                copied.set_slot_steal_unchecked(i, raw);
             }
 
             if all_same {
@@ -229,7 +229,7 @@ impl DeepCopy for *mut PyTupleObject {
     }
 }
 
-impl DeepCopy for *mut PyDictObject {
+impl PyDeepCopy for *mut PyDictObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
             let copied = check!(py_dict_new(self.len()));
@@ -291,7 +291,7 @@ impl DeepCopy for *mut PyDictObject {
     }
 }
 
-impl DeepCopy for *mut PySetObject {
+impl PyDeepCopy for *mut PySetObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
             let sz = self.len();
@@ -307,7 +307,7 @@ impl DeepCopy for *mut PySetObject {
                 let mut hash: Py_hash_t = 0;
                 while self.next_entry(&mut pos, &mut item, &mut hash) != 0 {
                     item.incref();
-                    snapshot.set_stolen(i, item);
+                    snapshot.set_slot_steal_unchecked(i, item);
                     i += 1;
                 }
             });
@@ -325,7 +325,7 @@ impl DeepCopy for *mut PySetObject {
             }
 
             for j in 0..i {
-                let item = snapshot.get_borrowed(j);
+                let item = snapshot.get_borrowed_unchecked(j);
                 let item_copy = deepcopy(item, memo);
                 if item_copy.is_error() {
                     snapshot.decref();
@@ -350,7 +350,7 @@ impl DeepCopy for *mut PySetObject {
     }
 }
 
-impl DeepCopy for *mut PyFrozensetObject {
+impl PyDeepCopy for *mut PyFrozensetObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
             let sz = self.len();
@@ -373,7 +373,7 @@ impl DeepCopy for *mut PyFrozensetObject {
             let mut i: Py_ssize_t = 0;
             while self.next_entry(&mut pos, &mut item, &mut hash) != 0 {
                 item.incref();
-                snapshot.set_stolen(i, item);
+                snapshot.set_slot_steal_unchecked(i, item);
                 i += 1;
             }
 
@@ -384,14 +384,14 @@ impl DeepCopy for *mut PyFrozensetObject {
             }
 
             for j in 0..i {
-                let orig = snapshot.get_borrowed(j);
+                let orig = snapshot.get_borrowed_unchecked(j);
                 let item_copy = deepcopy(orig, memo);
                 if item_copy.is_error() {
                     snapshot.decref();
                     items.decref();
                     return PyResult::error();
                 }
-                items.set_stolen(j, item_copy.into_raw());
+                items.set_slot_steal_unchecked(j, item_copy.into_raw());
             }
             snapshot.decref();
 
@@ -411,7 +411,7 @@ impl DeepCopy for *mut PyFrozensetObject {
     }
 }
 
-impl DeepCopy for *mut PyByteArrayObject {
+impl PyDeepCopy for *mut PyByteArrayObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
             let sz = self.len();
@@ -431,7 +431,7 @@ impl DeepCopy for *mut PyByteArrayObject {
     }
 }
 
-impl DeepCopy for *mut PyMethodObject {
+impl PyDeepCopy for *mut PyMethodObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
             let func = self.function();
@@ -461,7 +461,7 @@ impl DeepCopy for *mut PyMethodObject {
     }
 }
 
-impl DeepCopy for *mut PyObject {
+impl PyDeepCopy for *mut PyObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
             let s = &STATE;
@@ -491,7 +491,23 @@ unsafe fn deepcopy_via_dunder<M: Memo>(
     probe: M::Probe,
 ) -> PyResult {
     unsafe {
-        let copied = dunder.call_one(memo.as_call_arg());
+        let checkpoint = memo.checkpoint();
+        let mut copied = dunder.call_one(memo.as_call_arg());
+
+        if copied.is_null() {
+            if let Some(saved_checkpoint) = checkpoint {
+                let native_memo = memo.as_native_memo();
+                if !native_memo.is_null() {
+                    copied = crate::fallback::maybe_retry_with_dict_memo(
+                        object,
+                        dunder,
+                        &mut *native_memo,
+                        saved_checkpoint,
+                    );
+                }
+            }
+        }
+
         dunder.decref();
 
         if copied.is_null() {

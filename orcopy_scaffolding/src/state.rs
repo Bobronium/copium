@@ -189,33 +189,98 @@ pub unsafe fn init() -> i32 {
         }
 
         // config from env
-        load_config_from_env();
+        load_config_from_env()
+    }
+}
+
+unsafe fn parse_ignored_errors_from_environment() -> *mut PyObject {
+    unsafe {
+        let environment_value = match std::env::var("COPIUM_NO_MEMO_FALLBACK_WARNING") {
+            Ok(value) if !value.is_empty() => value,
+            _ => return PyTuple_New(0),
+        };
+
+        let ignored_error_parts: Vec<&str> = environment_value
+            .split("::")
+            .filter(|part| !part.is_empty())
+            .collect();
+
+        let tuple = PyTuple_New(ignored_error_parts.len() as isize);
+        if tuple.is_null() {
+            return ptr::null_mut();
+        }
+
+        for (index, ignored_error_part) in ignored_error_parts.iter().enumerate() {
+            let item = PyUnicode_FromStringAndSize(
+                ignored_error_part.as_ptr() as *const c_char,
+                ignored_error_part.len() as isize,
+            );
+            if item.is_null() {
+                Py_DECREF(tuple);
+                return ptr::null_mut();
+            }
+
+            if PyTuple_SetItem(tuple, index as isize, item) < 0 {
+                Py_DECREF(item);
+                Py_DECREF(tuple);
+                return ptr::null_mut();
+            }
+        }
+
+        tuple
+    }
+}
+
+pub unsafe fn update_suppress_warnings(new_tuple: *mut PyObject) -> i32 {
+    unsafe {
+        let s = std::ptr::addr_of_mut!(STATE);
+
+        let old_ignored_errors = (*s).ignored_errors;
+        (*s).ignored_errors = new_tuple;
+        Py_XDECREF(old_ignored_errors);
+
+        Py_XDECREF((*s).ignored_errors_joined);
+        (*s).ignored_errors_joined = ptr::null_mut();
+
+        if PyTuple_GET_SIZE(new_tuple) > 0 {
+            let separator = PyUnicode_FromString(cstr!("::"));
+            if separator.is_null() {
+                return -1;
+            }
+
+            (*s).ignored_errors_joined = PyUnicode_Join(separator, new_tuple);
+            Py_DECREF(separator);
+            if (*s).ignored_errors_joined.is_null() {
+                return -1;
+            }
+        }
 
         0
     }
 }
 
-pub unsafe fn load_config_from_env() {
+pub unsafe fn load_config_from_env() -> i32 {
     unsafe {
         let s = std::ptr::addr_of_mut!(STATE);
         let use_dict = std::env::var("COPIUM_USE_DICT_MEMO").ok();
         let no_fallback = std::env::var("COPIUM_NO_MEMO_FALLBACK").ok();
 
-        (*s).memo_mode = if use_dict.as_deref().is_some_and(|v| !v.is_empty()) {
+        (*s).memo_mode = if use_dict.as_deref().is_some_and(|value| !value.is_empty()) {
             MemoMode::Dict
         } else {
             MemoMode::Native
         };
-        (*s).on_incompatible = if no_fallback.as_deref().is_some_and(|v| !v.is_empty()) {
+        (*s).on_incompatible = if no_fallback.as_deref().is_some_and(|value| !value.is_empty()) {
             OnIncompatible::Raise
         } else {
             OnIncompatible::Warn
         };
 
-        // ignored_errors from COPIUM_NO_MEMO_FALLBACK_WARNING
-        Py_XDECREF((*s).ignored_errors);
-        (*s).ignored_errors = PyTuple_New(0);
-        Py_XDECREF((*s).ignored_errors_joined);
-        (*s).ignored_errors_joined = ptr::null_mut();
+        let parsed_ignored_errors = parse_ignored_errors_from_environment();
+        if parsed_ignored_errors.is_null() {
+            return -1;
+        }
+
+        update_suppress_warnings(parsed_ignored_errors)
     }
 }

@@ -1,6 +1,7 @@
 use pyo3_ffi::*;
 use std::ffi::c_char;
 use std::ptr;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(Py_3_14)]
 const ITEMS_CSTR: &[u8] = b"items\0";
@@ -24,6 +25,9 @@ extern "C" {
 }
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
+static mut G_DICTITER_MUTEX: PyMutex = unsafe { std::mem::zeroed() };
+
+#[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 static mut G_DICT_WATCHER_ID: i32 = -1;
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
@@ -33,7 +37,7 @@ static mut G_DICT_WATCHER_REGISTERED: bool = false;
 static mut G_GUARD_LIST_HEAD: *mut DictIterGuard = ptr::null_mut();
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
-unsafe fn dict_watch_count(dict: *mut PyObject) -> i32 {
+unsafe fn dict_watch_count_locked(dict: *mut PyObject) -> i32 {
     let mut count = 0;
     let mut cur = unsafe { G_GUARD_LIST_HEAD };
     while !cur.is_null() {
@@ -52,6 +56,10 @@ unsafe extern "C" fn copium_dict_watcher_cb(
     _key: *mut PyObject,
     _new_value: *mut PyObject,
 ) -> i32 {
+    unsafe {
+        PyMutex_Lock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
+    }
+
     let mut cur_guard = unsafe { G_GUARD_LIST_HEAD };
     while !cur_guard.is_null() {
         let guard = unsafe { &mut *cur_guard };
@@ -60,9 +68,13 @@ unsafe extern "C" fn copium_dict_watcher_cb(
             if cur >= 0 && cur != guard.size0 {
                 guard.size_changed = true;
             }
-            guard.mutated = true;
+            guard.mutated.store(1, Ordering::Release);
         }
         cur_guard = guard.next;
+    }
+
+    unsafe {
+        PyMutex_Unlock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
     }
     0
 }
@@ -110,7 +122,7 @@ pub struct DictIterGuard {
     size0: Py_ssize_t,
 
     #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
-    mutated: bool,
+    mutated: AtomicI32,
 
     #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
     size_changed: bool,
@@ -146,7 +158,7 @@ impl DictIterGuard {
                 dict,
                 pos: 0,
                 size0: PyDict_Size(dict),
-                mutated: false,
+                mutated: AtomicI32::new(0),
                 size_changed: false,
                 prev: ptr::null_mut(),
                 next: ptr::null_mut(),
@@ -201,7 +213,11 @@ impl DictIterGuard {
     #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
     unsafe fn register_watch(&mut self) {
         let self_ptr = self as *mut Self;
-        let need_watch = unsafe { dict_watch_count(self.dict) == 0 };
+        unsafe {
+            PyMutex_Lock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
+        }
+
+        let need_watch = unsafe { dict_watch_count_locked(self.dict) == 0 };
 
         self.next = unsafe { G_GUARD_LIST_HEAD };
         if !unsafe { G_GUARD_LIST_HEAD }.is_null() {
@@ -215,6 +231,10 @@ impl DictIterGuard {
 
         if need_watch && unsafe { G_DICT_WATCHER_REGISTERED } {
             let _ = unsafe { PyDict_Watch(G_DICT_WATCHER_ID, self.dict) };
+        }
+
+        unsafe {
+            PyMutex_Unlock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
         }
     }
 
@@ -233,6 +253,8 @@ impl DictIterGuard {
             self.active = false;
             let dict = self.dict;
 
+            PyMutex_Lock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
+
             if !self.prev.is_null() {
                 unsafe {
                     (*self.prev).next = self.next;
@@ -248,13 +270,14 @@ impl DictIterGuard {
                 }
             }
 
-            let need_unwatch = unsafe { dict_watch_count(dict) == 0 };
+            let need_unwatch = unsafe { dict_watch_count_locked(dict) == 0 };
             if need_unwatch && unsafe { G_DICT_WATCHER_REGISTERED } {
                 let _ = unsafe { PyDict_Unwatch(G_DICT_WATCHER_ID, dict) };
             }
 
             self.prev = ptr::null_mut();
             self.next = ptr::null_mut();
+            PyMutex_Unlock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
         }
 
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
@@ -318,12 +341,15 @@ impl DictIterGuard {
             let mut v: *mut PyObject = ptr::null_mut();
 
             if PyDict_Next(self.dict, &mut self.pos, &mut k, &mut v) != 0 {
-                if self.mutated {
+                if self.mutated.load(Ordering::Acquire) != 0 {
                     let cur = PyDict_Size(self.dict);
                     let size_changed_now = if cur >= 0 {
                         cur != self.size0
                     } else {
-                        self.size_changed
+                        PyMutex_Lock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
+                        let size_changed = self.size_changed;
+                        PyMutex_Unlock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
+                        size_changed
                     };
 
                     PyErr_SetString(
@@ -345,12 +371,15 @@ impl DictIterGuard {
                 return 1;
             }
 
-            if self.mutated {
+            if self.mutated.load(Ordering::Acquire) != 0 {
                 let cur = PyDict_Size(self.dict);
                 let size_changed_now = if cur >= 0 {
                     cur != self.size0
                 } else {
-                    self.size_changed
+                    PyMutex_Lock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
+                    let size_changed = self.size_changed;
+                    PyMutex_Unlock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
+                    size_changed
                 };
 
                 PyErr_SetString(

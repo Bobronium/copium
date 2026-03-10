@@ -39,6 +39,16 @@ pub trait Memo: Sized {
     unsafe fn ensure_memo_is_valid(&mut self) -> i32 {
         0
     }
+
+    #[inline(always)]
+    unsafe fn checkpoint(&mut self) -> Option<MemoCheckpoint> {
+        None
+    }
+
+    #[inline(always)]
+    unsafe fn as_native_memo(&mut self) -> *mut PyMemoObject {
+        ptr::null_mut()
+    }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -514,6 +524,14 @@ impl Memo for PyMemoObject {
 
     unsafe fn as_call_arg(&mut self) -> *mut PyObject {
         self as *mut PyMemoObject as *mut PyObject
+    }
+
+    unsafe fn checkpoint(&mut self) -> Option<MemoCheckpoint> {
+        Some(PyMemoObject::checkpoint(self))
+    }
+
+    unsafe fn as_native_memo(&mut self) -> *mut PyMemoObject {
+        self
     }
 }
 
