@@ -80,7 +80,7 @@ EXPECTED_ERROR_DIVERGENCES = {
     ),
     repr(ValueError("too many values to unpack (expected 2)")): repr(
         ValueError("too many values to unpack (expected 2, got 3)")
-    )
+    ),
 }
 
 

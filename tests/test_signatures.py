@@ -14,7 +14,7 @@ import pytest
 
 import copium
 
-PACKAGE_ROOT = Path(copium.__file__).parent / "copium"
+PACKAGE_ROOT = Path(copium.__file__).parent
 PACKAGE_STUB = PACKAGE_ROOT / "__init__.pyi"
 
 
