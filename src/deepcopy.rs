@@ -2,12 +2,11 @@ use core::intrinsics::{likely, unlikely};
 use pyo3_ffi::*;
 use std::ptr;
 
-use crate::compat;
 use crate::critical_section::with_critical_section_raw;
 use crate::dict_iter::DictIterGuard;
 use crate::ffi_ext::*;
-use crate::memo::{Memo, MemoCheckpoint};
-use crate::recursion;
+use crate::memo::Memo;
+
 use crate::state::STATE;
 use crate::types::*;
 
@@ -60,11 +59,53 @@ macro_rules! protect_stack {
 }
 
 #[inline(always)]
+unsafe fn is_prememo_atomic<M: Memo>(cls: *mut PyTypeObject) -> bool {
+    // NativeMemo
+    if !M::RECALL_CAN_ERROR {
+        return cls.is_literal_immutable();
+    }
+
+    // AnyMemo or DictMemo
+
+    // Python 3.14 checks atomics before checking memo, so we can do it here
+    #[cfg(Py_3_14)]
+    {
+        cls.is_atomic_immutable()
+    }
+    // Python < 3.14 doesn't check for atomic until it first checks memo
+    // since AnyMemo/DiceMemo can error, in order to preserve the semantics
+    // don't short circuit if it's atomic and let memo lookup potentially fail
+    #[cfg(not(Py_3_14))]
+    {
+        let _ = cls;
+        false
+    }
+}
+
+#[inline(always)]
+unsafe fn is_postmemo_atomic<M: Memo>(cls: *mut PyTypeObject) -> bool {
+    if !M::RECALL_CAN_ERROR {
+        return cls.is_builtin_immutable() || cls.is_type_subclass() || cls.is_stdlib_immutable();
+    }
+
+    #[cfg(Py_3_14)]
+    {
+        let _ = cls;
+        false
+    }
+
+    #[cfg(not(Py_3_14))]
+    {
+        cls.is_atomic_immutable()
+    }
+}
+
+#[inline(always)]
 pub unsafe fn deepcopy<M: Memo>(object: *mut PyObject, memo: &mut M) -> PyResult {
     unsafe {
         let cls = object.class();
 
-        if likely(cls.is_literal_immutable()) {
+        if likely(is_prememo_atomic::<M>(cls)) {
             return PyResult::ok(object.newref());
         }
 
@@ -89,7 +130,7 @@ pub unsafe fn deepcopy<M: Memo>(object: *mut PyObject, memo: &mut M) -> PyResult
             return protect_stack!(object.deepcopy(memo, probe));
         }
 
-        if unlikely(cls.is_builtin_immutable() || cls.is_type_subclass()) {
+        if unlikely(is_postmemo_atomic::<M>(cls)) {
             return PyResult::ok(object.newref());
         }
 
@@ -101,10 +142,6 @@ pub unsafe fn deepcopy<M: Memo>(object: *mut PyObject, memo: &mut M) -> PyResult
         }
         if let Some(object) = PyMethodObject::cast_exact(object, cls) {
             return object.deepcopy(memo, probe);
-        }
-
-        if unlikely(cls.is_stdlib_immutable()) {
-            return PyResult::ok(object.newref());
         }
 
         object.deepcopy(memo, probe)
