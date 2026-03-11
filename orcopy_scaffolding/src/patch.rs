@@ -4,6 +4,8 @@ use pyo3::types::PyFunction;
 use pyo3_ffi::*;
 use std::ptr;
 
+use crate::types::PyObjectPtr;
+
 const CAPSULE_NAME: *const std::ffi::c_char = b"copium._original_vectorcall\0".as_ptr().cast();
 
 // ══════════════════════════════════════════════════════════════
@@ -60,10 +62,10 @@ unsafe fn apply_patch(py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObje
         }
 
         if PyObject_SetAttrString(fn_ptr, crate::cstr!("__copium_original__"), capsule) < 0 {
-            Py_DECREF(capsule);
+            capsule.decref();
             return -1;
         }
-        Py_DECREF(capsule);
+        capsule.decref();
 
         if PyObject_SetAttrString(fn_ptr, crate::cstr!("__wrapped__"), target) < 0 {
             PyObject_DelAttrString(fn_ptr, crate::cstr!("__copium_original__"));
@@ -87,7 +89,7 @@ unsafe fn unapply_patch(py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
         }
 
         let raw = PyCapsule_GetPointer(capsule, CAPSULE_NAME);
-        Py_DECREF(capsule);
+        capsule.decref();
         if raw.is_null() {
             return -1;
         }
@@ -134,7 +136,7 @@ unsafe fn init_template() -> i32 {
         if !builtins.is_null()
             && PyDict_SetItemString(globals, crate::cstr!("__builtins__"), builtins) < 0
         {
-            Py_DECREF(globals);
+            globals.decref();
             return -1;
         }
 
@@ -145,7 +147,7 @@ unsafe fn init_template() -> i32 {
             let old_filters = PyObject_GetAttrString(warnings, crate::cstr!("filters"));
             if !old_filters.is_null() {
                 filters_copy = PySequence_List(old_filters);
-                Py_DECREF(old_filters);
+                old_filters.decref();
             } else {
                 PyErr_Clear();
             }
@@ -157,7 +159,7 @@ unsafe fn init_template() -> i32 {
                 PyExc_SyntaxWarning,
             );
             if !ignore.is_null() {
-                Py_DECREF(ignore);
+                ignore.decref();
             } else {
                 PyErr_Clear();
             }
@@ -178,18 +180,18 @@ unsafe fn init_template() -> i32 {
                 PyErr_Clear();
             }
         }
-        Py_XDECREF(filters_copy);
-        Py_XDECREF(warnings);
+        filters_copy.decref_nullable();
+        warnings.decref_nullable();
 
         if res.is_null() {
-            Py_DECREF(globals);
+            globals.decref();
             return -1;
         }
-        Py_DECREF(res);
+        res.decref();
 
         let fn_obj = PyDict_GetItemString(globals, crate::cstr!("deepcopy"));
         if fn_obj.is_null() {
-            Py_DECREF(globals);
+            globals.decref();
             PyErr_SetString(
                 PyExc_RuntimeError,
                 crate::cstr!("copium.patch: template creation failed"),
@@ -198,7 +200,7 @@ unsafe fn init_template() -> i32 {
         }
 
         G_TEMPLATE_CODE = PyObject_GetAttrString(fn_obj, crate::cstr!("__code__"));
-        Py_DECREF(globals);
+        globals.decref();
         if G_TEMPLATE_CODE.is_null() { -1 } else { 0 }
     }
 }
@@ -214,7 +216,7 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
 
         let n = PyTuple_Size(template_consts);
         if n < 0 {
-            Py_DECREF(template_consts);
+            template_consts.decref();
             return ptr::null_mut();
         }
 
@@ -231,7 +233,7 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
         }
 
         if sentinel_idx < 0 {
-            Py_DECREF(template_consts);
+            template_consts.decref();
             PyErr_SetString(
                 PyExc_RuntimeError,
                 crate::cstr!("copium.patch: sentinel not found"),
@@ -241,7 +243,7 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
 
         let new_consts = PyList_New(n);
         if new_consts.is_null() {
-            Py_DECREF(template_consts);
+            template_consts.decref();
             return ptr::null_mut();
         }
 
@@ -252,54 +254,54 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
                 PyTuple_GetItem(template_consts, j)
             };
             if item.is_null() {
-                Py_DECREF(new_consts);
-                Py_DECREF(template_consts);
+                new_consts.decref();
+                template_consts.decref();
                 return ptr::null_mut();
             }
-            if PyList_SetItem(new_consts, j, Py_NewRef(item)) < 0 {
-                Py_DECREF(new_consts);
-                Py_DECREF(template_consts);
+            if PyList_SetItem(new_consts, j, item.newref()) < 0 {
+                new_consts.decref();
+                template_consts.decref();
                 return ptr::null_mut();
             }
         }
-        Py_DECREF(template_consts);
+        template_consts.decref();
 
         let consts_tuple = PyList_AsTuple(new_consts);
-        Py_DECREF(new_consts);
+        new_consts.decref();
         if consts_tuple.is_null() {
             return ptr::null_mut();
         }
 
         let replace = PyObject_GetAttrString(G_TEMPLATE_CODE, crate::cstr!("replace"));
         if replace.is_null() {
-            Py_DECREF(consts_tuple);
+            consts_tuple.decref();
             return ptr::null_mut();
         }
 
         let kwargs = PyDict_New();
         if kwargs.is_null() {
-            Py_DECREF(replace);
-            Py_DECREF(consts_tuple);
+            replace.decref();
+            consts_tuple.decref();
             return ptr::null_mut();
         }
         if PyDict_SetItemString(kwargs, crate::cstr!("co_consts"), consts_tuple) < 0 {
-            Py_DECREF(kwargs);
-            Py_DECREF(replace);
-            Py_DECREF(consts_tuple);
+            kwargs.decref();
+            replace.decref();
+            consts_tuple.decref();
             return ptr::null_mut();
         }
-        Py_DECREF(consts_tuple);
+        consts_tuple.decref();
 
         let empty = PyTuple_New(0);
         if empty.is_null() {
-            Py_DECREF(kwargs);
-            Py_DECREF(replace);
+            kwargs.decref();
+            replace.decref();
             return ptr::null_mut();
         }
         let new_code = PyObject_Call(replace, empty, kwargs);
-        Py_DECREF(empty);
-        Py_DECREF(replace);
-        Py_DECREF(kwargs);
+        empty.decref();
+        replace.decref();
+        kwargs.decref();
         new_code
     }
 }
@@ -327,10 +329,10 @@ unsafe fn apply_patch(_py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObj
         }
 
         if PyObject_SetAttrString(fn_ptr, crate::cstr!("__copium_original__"), current_code) < 0 {
-            Py_DECREF(current_code);
+            current_code.decref();
             return -1;
         }
-        Py_DECREF(current_code);
+        current_code.decref();
 
         if PyObject_SetAttrString(fn_ptr, crate::cstr!("__wrapped__"), target) < 0 {
             cleanup_patch_attrs(fn_ptr);
@@ -344,11 +346,11 @@ unsafe fn apply_patch(_py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObj
         }
 
         if PyObject_SetAttrString(fn_ptr, crate::cstr!("__code__"), new_code) < 0 {
-            Py_DECREF(new_code);
+            new_code.decref();
             cleanup_patch_attrs(fn_ptr);
             return -1;
         }
-        Py_DECREF(new_code);
+        new_code.decref();
         1
     }
 }
@@ -365,10 +367,10 @@ unsafe fn unapply_patch(_py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
         }
 
         if PyObject_SetAttrString(fn_ptr, crate::cstr!("__code__"), original_code) < 0 {
-            Py_DECREF(original_code);
+            original_code.decref();
             return -1;
         }
-        Py_DECREF(original_code);
+        original_code.decref();
 
         cleanup_patch_attrs(fn_ptr);
         0

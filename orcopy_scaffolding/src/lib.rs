@@ -138,7 +138,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
         if memo_arg == Py_None() {
             let tp = obj.class();
             if tp.is_atomic_immutable() {
-                return Py_NewRef(obj);
+                return obj.newref();
             }
 
             if STATE.memo_mode == MemoMode::Native {
@@ -205,24 +205,25 @@ unsafe extern "C" fn py_replace(
         }
 
         let obj = *args;
-        let cls = Py_TYPE(obj) as *mut PyObject;
-        let func = PyObject_GetAttrString(cls, cstr!("__replace__"));
+        let type_pointer = obj.class();
+        let class_object = type_pointer as *mut PyObject;
+        let func = PyObject_GetAttrString(class_object, cstr!("__replace__"));
         if func.is_null() {
             PyErr_Clear();
             PyErr_Format(
                 PyExc_TypeError,
                 cstr!("replace() does not support %.200s objects"),
-                (*Py_TYPE(obj)).tp_name,
+                (*type_pointer).tp_name,
             );
             return ptr::null_mut();
         }
 
         let posargs = PyTuple_New(1);
         if posargs.is_null() {
-            Py_DECREF(func);
+            func.decref();
             return ptr::null_mut();
         }
-        PyTuple_SetItem(posargs, 0, Py_NewRef(obj));
+        PyTuple_SetItem(posargs, 0, obj.newref());
 
         let mut kwargs: *mut PyObject = ptr::null_mut();
         let kwcount = if kwnames.is_null() {
@@ -233,8 +234,8 @@ unsafe extern "C" fn py_replace(
         if kwcount > 0 {
             kwargs = PyDict_New();
             if kwargs.is_null() {
-                Py_DECREF(func);
-                Py_DECREF(posargs);
+                func.decref();
+                posargs.decref();
                 return ptr::null_mut();
             }
             for i in 0..kwcount {
@@ -245,9 +246,9 @@ unsafe extern "C" fn py_replace(
         }
 
         let out = PyObject_Call(func, posargs, kwargs);
-        Py_DECREF(func);
-        Py_DECREF(posargs);
-        Py_XDECREF(kwargs);
+        func.decref();
+        posargs.decref();
+        kwargs.decref_nullable();
         out
     }
 }
@@ -313,12 +314,12 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
             return -1;
         }
 
-        if PyModule_AddObject(module, cstr!("Error"), Py_NewRef(STATE.copy_error)) < 0 {
+        if PyModule_AddObject(module, cstr!("Error"), STATE.copy_error.newref()) < 0 {
             return -1;
         }
 
         let memo_type = ptr::addr_of_mut!(memo::Memo_Type) as *mut PyObject;
-        if PyModule_AddObject(module, cstr!("memo"), Py_NewRef(memo_type)) < 0 {
+        if PyModule_AddObject(module, cstr!("memo"), memo_type.newref()) < 0 {
             return -1;
         }
 
@@ -339,22 +340,22 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
 
         let configure = PyObject_GetAttrString(config_module, cstr!("apply"));
         if configure.is_null() {
-            Py_DECREF(config_module);
+            config_module.decref();
             return -1;
         }
         if PyModule_AddObject(module, cstr!("configure"), configure) < 0 {
-            Py_DECREF(config_module);
-            Py_DECREF(configure);
+            config_module.decref();
+            configure.decref();
             return -1;
         }
 
         let get_config = PyObject_GetAttrString(config_module, cstr!("get"));
-        Py_DECREF(config_module);
+        config_module.decref();
         if get_config.is_null() {
             return -1;
         }
         if PyModule_AddObject(module, cstr!("get_config"), get_config) < 0 {
-            Py_DECREF(get_config);
+            get_config.decref();
             return -1;
         }
 
@@ -405,7 +406,7 @@ pub unsafe fn add_submodule(
         // Always register as "copium.<name>" regardless of internal module nesting
         let canonical = PyUnicode_FromFormat(cstr!("copium.%s"), name);
         if canonical.is_null() {
-            Py_DECREF(submodule);
+            submodule.decref();
             return -1;
         }
 
@@ -424,14 +425,14 @@ pub unsafe fn add_submodule(
                 if !sys_modules.is_null() {
                     PyDict_SetItem(sys_modules, full_name, submodule);
                 }
-                Py_DECREF(full_name);
+                full_name.decref();
             }
-            Py_DECREF(parent_name);
+            parent_name.decref();
         }
-        Py_DECREF(canonical);
+        canonical.decref();
 
         if PyModule_AddObject(parent, name, submodule) < 0 {
-            Py_DECREF(submodule);
+            submodule.decref();
             return -1;
         }
 

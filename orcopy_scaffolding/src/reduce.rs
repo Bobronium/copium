@@ -46,8 +46,8 @@ pub(crate) unsafe fn chain_type_error(msg: *mut PyObject) {
             return;
         }
 
-        Py_XDECREF(cause_type);
-        Py_XDECREF(cause_tb);
+        cause_type.decref_nullable();
+        cause_tb.decref_nullable();
 
         PyErr_SetObject(PyExc_TypeError, new_exc);
         new_exc.decref();
@@ -84,7 +84,7 @@ pub(crate) unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mu
         if has > 0 {
             let four = PyLong_FromLong(4);
             let res = reduce_ex.call_one(four);
-            Py_DECREF(four);
+            four.decref();
             reduce_ex.decref();
             return res;
         }
@@ -316,7 +316,7 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
         if !kwargs.is_dict() {
             coerced_kwargs = PyDict_New();
             if coerced_kwargs.is_null() {
-                Py_XDECREF(coerced_args);
+                coerced_args.decref_nullable();
                 return ptr::null_mut();
             }
             if PyDict_Merge(coerced_kwargs, kwargs, 1) < 0 {
@@ -330,22 +330,22 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
                 if !msg.is_null() {
                     chain_type_error(msg);
                 }
-                Py_XDECREF(coerced_args);
-                Py_DECREF(coerced_kwargs);
+                coerced_args.decref_nullable();
+                coerced_kwargs.decref();
                 return ptr::null_mut();
             }
             kwargs = coerced_kwargs;
         }
 
         let copied_args = deepcopy::deepcopy(args, memo);
-        Py_XDECREF(coerced_args);
+        coerced_args.decref_nullable();
         if copied_args.is_error() {
-            Py_XDECREF(coerced_kwargs);
+            coerced_kwargs.decref_nullable();
             return ptr::null_mut();
         }
 
         let copied_kwargs = deepcopy::deepcopy(kwargs, memo);
-        Py_XDECREF(coerced_kwargs);
+        coerced_kwargs.decref_nullable();
         if copied_kwargs.is_error() {
             copied_args.into_raw().decref();
             return ptr::null_mut();

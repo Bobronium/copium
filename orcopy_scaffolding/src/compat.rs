@@ -3,6 +3,8 @@ use std::ptr;
 
 use pyo3_ffi::*;
 
+use crate::types::PyObjectPtr;
+
 extern "C" {
     pub fn _PyDict_NewPresized(minused: Py_ssize_t) -> *mut PyObject;
     pub fn _PySet_NextEntry(
@@ -31,8 +33,8 @@ pub unsafe fn _PyDict_SetItem_Take2(
 ) -> c_int {
     unsafe {
         let res = PyDict_SetItem(op, key, value);
-        Py_DECREF(key);
-        Py_DECREF(value);
+        key.decref();
+        value.decref();
         res
     }
 }

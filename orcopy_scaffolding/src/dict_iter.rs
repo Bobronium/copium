@@ -3,6 +3,8 @@ use std::ffi::c_char;
 use std::ptr;
 use std::sync::atomic::{AtomicI32, Ordering};
 
+use crate::types::PyObjectPtr;
+
 #[cfg(Py_3_14)]
 const ITEMS_CSTR: &[u8] = b"items\0";
 
@@ -173,10 +175,10 @@ impl DictIterGuard {
             let items_attr = PyObject_GetAttrString(dict, ITEMS_CSTR.as_ptr() as *const c_char);
             if !items_attr.is_null() {
                 let items_view = PyObject_CallNoArgs(items_attr);
-                Py_DECREF(items_attr);
+                items_attr.decref();
                 if !items_view.is_null() {
                     it = PyObject_GetIter(items_view);
-                    Py_DECREF(items_view);
+                    items_view.decref();
                 }
             }
 
@@ -287,7 +289,7 @@ impl DictIterGuard {
             }
             self.active = false;
             if !self.it.is_null() {
-                Py_DECREF(self.it);
+                self.it.decref();
                 self.it = ptr::null_mut();
             }
         }
@@ -325,8 +327,8 @@ impl DictIterGuard {
                     return -1;
                 }
 
-                Py_INCREF(k);
-                Py_INCREF(v);
+                k.incref();
+                v.incref();
                 *key = k;
                 *value = v;
                 return 1;
@@ -364,8 +366,8 @@ impl DictIterGuard {
                     return -1;
                 }
 
-                Py_INCREF(k);
-                Py_INCREF(v);
+                k.incref();
+                v.incref();
                 *key = k;
                 *value = v;
                 return 1;
@@ -413,7 +415,7 @@ impl DictIterGuard {
             }
 
             if item.is_null() || PyTuple_Check(item) == 0 || PyTuple_GET_SIZE(item) != 2 {
-                Py_XDECREF(item);
+                item.decref_nullable();
                 PyErr_SetString(
                     PyExc_RuntimeError,
                     crate::cstr!("dict.items() iterator returned non-pair item"),
@@ -422,9 +424,9 @@ impl DictIterGuard {
                 return -1;
             }
 
-            *key = Py_NewRef(PyTuple_GET_ITEM(item, 0));
-            *value = Py_NewRef(PyTuple_GET_ITEM(item, 1));
-            Py_DECREF(item);
+            *key = PyTuple_GET_ITEM(item, 0).newref();
+            *value = PyTuple_GET_ITEM(item, 1).newref();
+            item.decref();
             1
         }
     }

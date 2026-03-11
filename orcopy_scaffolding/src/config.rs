@@ -4,6 +4,7 @@ use pyo3::types::{PyAny, PyDict};
 use pyo3_ffi::PyObject;
 
 use crate::state::{MemoMode, OnIncompatible, STATE};
+use crate::types::PyObjectPtr;
 
 // ══════════════════════════════════════════════════════════════
 //  copium.config.apply(**kwargs)
@@ -129,7 +130,7 @@ fn apply(
                         .name()
                         .map(|name| name.to_string_lossy().into_owned())
                         .unwrap_or_else(|_| "object".to_owned());
-                    pyo3_ffi::Py_DECREF(new_tuple);
+                    new_tuple.decref();
                     return Err(PyTypeError::new_err(format!(
                         "on_incompatible[{index}] must be a 'str', got '{item_type_name}'"
                     )));
@@ -172,7 +173,7 @@ fn get(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
 
     let sw = unsafe {
         if !s.ignored_errors.is_null() {
-            pyo3_ffi::Py_NewRef(s.ignored_errors)
+            s.ignored_errors.newref()
         } else {
             pyo3_ffi::PyTuple_New(0)
         }

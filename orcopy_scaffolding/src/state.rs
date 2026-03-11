@@ -3,6 +3,7 @@ use pyo3_ffi::*;
 use std::ptr;
 
 use crate::ffi_ext;
+use crate::types::PyObjectPtr;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -99,7 +100,7 @@ unsafe fn load_type_from(module_name: &str, attr: &str) -> *mut PyTypeObject {
             return ptr::null_mut();
         }
         let t = PyObject_GetAttrString(m, format!("{attr}\0").as_ptr() as *const c_char);
-        Py_DECREF(m);
+        m.decref();
         if t.is_null() {
             return ptr::null_mut();
         }
@@ -143,8 +144,8 @@ pub unsafe fn init() -> i32 {
         }
 
         // type pointers from singletons
-        (*s).none_type = Py_TYPE(Py_None());
-        (*s).not_implemented_type = Py_TYPE(ffi_ext::Py_NotImplemented());
+        (*s).none_type = Py_None().class();
+        (*s).not_implemented_type = ffi_ext::Py_NotImplemented().class();
 
         // stdlib types loaded from modules
         (*s).re_pattern_type = load_type_from("re", "Pattern");
@@ -168,22 +169,22 @@ pub unsafe fn init() -> i32 {
         if (*s).copyreg_newobj.is_null() {
             PyErr_Clear();
             (*s).copyreg_newobj = (*s).sentinel; // placeholder
-            Py_INCREF((*s).copyreg_newobj);
+            (*s).copyreg_newobj.incref();
         }
         (*s).copyreg_newobj_ex = PyObject_GetAttrString(copyreg, cstr!("__newobj_ex__"));
         if (*s).copyreg_newobj_ex.is_null() {
             PyErr_Clear();
             (*s).copyreg_newobj_ex = (*s).sentinel;
-            Py_INCREF((*s).copyreg_newobj_ex);
+            (*s).copyreg_newobj_ex.incref();
         }
-        Py_DECREF(copyreg);
+        copyreg.decref();
 
         let copy_mod = PyImport_ImportModule(cstr!("copy"));
         if copy_mod.is_null() {
             return -1;
         }
         (*s).copy_error = PyObject_GetAttrString(copy_mod, cstr!("Error"));
-        Py_DECREF(copy_mod);
+        copy_mod.decref();
         if (*s).copy_error.is_null() {
             return -1;
         }
@@ -216,13 +217,13 @@ unsafe fn parse_ignored_errors_from_environment() -> *mut PyObject {
                 ignored_error_part.len() as isize,
             );
             if item.is_null() {
-                Py_DECREF(tuple);
+                tuple.decref();
                 return ptr::null_mut();
             }
 
             if PyTuple_SetItem(tuple, index as isize, item) < 0 {
-                Py_DECREF(item);
-                Py_DECREF(tuple);
+                item.decref();
+                tuple.decref();
                 return ptr::null_mut();
             }
         }
@@ -237,9 +238,9 @@ pub unsafe fn update_suppress_warnings(new_tuple: *mut PyObject) -> i32 {
 
         let old_ignored_errors = (*s).ignored_errors;
         (*s).ignored_errors = new_tuple;
-        Py_XDECREF(old_ignored_errors);
+        old_ignored_errors.decref_nullable();
 
-        Py_XDECREF((*s).ignored_errors_joined);
+        (*s).ignored_errors_joined.decref_nullable();
         (*s).ignored_errors_joined = ptr::null_mut();
 
         if PyTuple_GET_SIZE(new_tuple) > 0 {
@@ -249,7 +250,7 @@ pub unsafe fn update_suppress_warnings(new_tuple: *mut PyObject) -> i32 {
             }
 
             (*s).ignored_errors_joined = PyUnicode_Join(separator, new_tuple);
-            Py_DECREF(separator);
+            separator.decref();
             if (*s).ignored_errors_joined.is_null() {
                 return -1;
             }

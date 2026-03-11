@@ -5,40 +5,41 @@ use std::ptr;
 use crate::ffi_ext::PyUnicode_FromFormat;
 use crate::memo::{MemoCheckpoint, PyMemoObject};
 use crate::state::{OnIncompatible, STATE};
+use crate::types::PyObjectPtr;
 
 macro_rules! cleanup_traceback_build {
     ($parts:expr, $traceback_module:expr, $format_exception:expr, $traceback_lines:expr, $empty_string:expr, $caller_string:expr) => {{
-        Py_XDECREF($parts);
-        Py_XDECREF($traceback_module);
-        Py_XDECREF($format_exception);
-        Py_XDECREF($traceback_lines);
-        Py_XDECREF($empty_string);
-        Py_XDECREF($caller_string);
+        $parts.decref_nullable();
+        $traceback_module.decref_nullable();
+        $format_exception.decref_nullable();
+        $traceback_lines.decref_nullable();
+        $empty_string.decref_nullable();
+        $caller_string.decref_nullable();
         return ptr::null_mut();
     }};
 }
 
 macro_rules! finish_warning_emit {
     ($status:expr, $caller_info:expr, $traceback_string:expr, $full_message:expr, $module_name:expr, $type_name:expr, $deepcopy_qualified_name:expr, $deepcopy_expression:expr, $deepcopy_expression_with_memo:expr) => {{
-        Py_XDECREF($caller_info);
-        Py_XDECREF($traceback_string);
-        Py_XDECREF($full_message);
-        Py_XDECREF($module_name);
-        Py_XDECREF($type_name);
-        Py_XDECREF($deepcopy_qualified_name);
-        Py_XDECREF($deepcopy_expression);
-        Py_XDECREF($deepcopy_expression_with_memo);
+        $caller_info.decref_nullable();
+        $traceback_string.decref_nullable();
+        $full_message.decref_nullable();
+        $module_name.decref_nullable();
+        $type_name.decref_nullable();
+        $deepcopy_qualified_name.decref_nullable();
+        $deepcopy_expression.decref_nullable();
+        $deepcopy_expression_with_memo.decref_nullable();
         return $status;
     }};
 }
 
 macro_rules! finish_fallback_retry {
     ($result:expr, $dict_memo:expr, $exception_type:expr, $exception_value:expr, $exception_traceback:expr, $error_identifier:expr) => {{
-        Py_XDECREF($dict_memo);
-        Py_XDECREF($exception_type);
-        Py_XDECREF($exception_value);
-        Py_XDECREF($exception_traceback);
-        Py_XDECREF($error_identifier);
+        $dict_memo.decref_nullable();
+        $exception_type.decref_nullable();
+        $exception_value.decref_nullable();
+        $exception_traceback.decref_nullable();
+        $error_identifier.decref_nullable();
         return $result;
     }};
 }
@@ -91,8 +92,8 @@ unsafe fn build_error_identifier(
             result = PyUnicode_FromFormat(crate::cstr!("%U: "), type_name);
         }
 
-        Py_XDECREF(type_name);
-        Py_XDECREF(message);
+        type_name.decref_nullable();
+        message.decref_nullable();
         result
     }
 }
@@ -238,13 +239,13 @@ unsafe fn get_caller_frame_info() -> *mut PyObject {
             return ptr::null_mut();
         }
 
-        Py_INCREF(frame as *mut PyObject);
+        (frame as *mut PyObject).incref();
 
         while !frame.is_null() {
             code = PyFrame_GetCode(frame);
             if code.is_null() {
                 let back = PyFrame_GetBack(frame);
-                Py_DECREF(frame as *mut PyObject);
+                (frame as *mut PyObject).decref();
                 frame = back;
                 continue;
             }
@@ -299,7 +300,7 @@ unsafe fn get_caller_frame_info() -> *mut PyObject {
                     stripped = PyUnicode_FromString(crate::cstr!(""));
                 } else {
                     stripped = PyObject_CallNoArgs(strip_method);
-                    Py_DECREF(strip_method);
+                    strip_method.decref();
                     if stripped.is_null() {
                         PyErr_Clear();
                         stripped = PyUnicode_FromString(crate::cstr!(""));
@@ -314,31 +315,31 @@ unsafe fn get_caller_frame_info() -> *mut PyObject {
                     break;
                 }
 
-                Py_INCREF(filename);
+                filename.incref();
                 if PyTuple_SetItem(result, 0, filename) < 0 {
-                    Py_DECREF(result);
+                    result.decref();
                     result = ptr::null_mut();
                     break;
                 }
                 filename = ptr::null_mut();
 
                 if PyTuple_SetItem(result, 1, line_number_object) < 0 {
-                    Py_DECREF(result);
+                    result.decref();
                     result = ptr::null_mut();
                     break;
                 }
                 line_number_object = ptr::null_mut();
 
-                Py_INCREF(name);
+                name.incref();
                 if PyTuple_SetItem(result, 2, name) < 0 {
-                    Py_DECREF(result);
+                    result.decref();
                     result = ptr::null_mut();
                     break;
                 }
                 name = ptr::null_mut();
 
                 if PyTuple_SetItem(result, 3, stripped) < 0 {
-                    Py_DECREF(result);
+                    result.decref();
                     result = ptr::null_mut();
                     break;
                 }
@@ -346,28 +347,28 @@ unsafe fn get_caller_frame_info() -> *mut PyObject {
                 break;
             }
 
-            Py_XDECREF(filename);
+            filename.decref_nullable();
             filename = ptr::null_mut();
-            Py_XDECREF(name);
+            name.decref_nullable();
             name = ptr::null_mut();
 
-            Py_DECREF(code as *mut PyObject);
+            (code as *mut PyObject).decref();
             code = ptr::null_mut();
 
             let back = PyFrame_GetBack(frame);
-            Py_DECREF(frame as *mut PyObject);
+            (frame as *mut PyObject).decref();
             frame = back;
         }
 
-        Py_XDECREF(linecache_module);
-        Py_XDECREF(getline);
-        Py_XDECREF(line_number_object);
-        Py_XDECREF(line);
-        Py_XDECREF(stripped);
-        Py_XDECREF(code as *mut PyObject);
-        Py_XDECREF(filename);
-        Py_XDECREF(name);
-        Py_XDECREF(frame as *mut PyObject);
+        linecache_module.decref_nullable();
+        getline.decref_nullable();
+        line_number_object.decref_nullable();
+        line.decref_nullable();
+        stripped.decref_nullable();
+        (code as *mut PyObject).decref_nullable();
+        filename.decref_nullable();
+        name.decref_nullable();
+        (frame as *mut PyObject).decref_nullable();
         result
     }
 }
@@ -524,18 +525,18 @@ unsafe fn format_combined_traceback(
                 if PyList_Insert(parts, 0, header) == 0 {
                     let _ = PyList_Insert(parts, 1, caller_string);
                 }
-                Py_DECREF(header);
+                header.decref();
             }
         }
 
         result = PyUnicode_Join(empty_string, parts);
 
-        Py_XDECREF(parts);
-        Py_XDECREF(traceback_module);
-        Py_XDECREF(format_exception);
-        Py_XDECREF(traceback_lines);
-        Py_XDECREF(empty_string);
-        Py_XDECREF(caller_string);
+        parts.decref_nullable();
+        traceback_module.decref_nullable();
+        format_exception.decref_nullable();
+        traceback_lines.decref_nullable();
+        empty_string.decref_nullable();
+        caller_string.decref_nullable();
         result
     }
 }
@@ -550,7 +551,7 @@ unsafe fn emit_fallback_warning(
         let mut caller_info = get_caller_frame_info();
         let mut traceback_string = format_combined_traceback(caller_info, exception_value);
         let mut full_message: *mut PyObject = ptr::null_mut();
-        let type_object = Py_TYPE(object) as *mut PyObject;
+        let type_object = object.class() as *mut PyObject;
         let mut module_name = PyObject_GetAttrString(type_object, crate::cstr!("__module__"));
         let mut type_name = PyObject_GetAttrString(type_object, crate::cstr!("__name__"));
         let mut deepcopy_qualified_name: *mut PyObject = ptr::null_mut();
@@ -805,7 +806,7 @@ pub unsafe fn maybe_retry_with_dict_memo(
         }
 
         if memo.sync_from_dict(dict_memo, dict_size_before) < 0 {
-            Py_XDECREF(result);
+            result.decref_nullable();
             result = ptr::null_mut();
             finish_fallback_retry!(
                 result,
@@ -827,7 +828,7 @@ pub unsafe fn maybe_retry_with_dict_memo(
             }
 
             if emit_fallback_warning(exception_value, object, error_identifier) < 0 {
-                Py_XDECREF(result);
+                result.decref_nullable();
                 result = ptr::null_mut();
             }
         }

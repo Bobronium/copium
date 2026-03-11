@@ -1,6 +1,8 @@
 use pyo3_ffi::*;
 use std::ptr;
 
+use crate::types::PyObjectPtr;
+
 static mut ABOUT_METHODS: [PyMethodDef; 1] = [PyMethodDef::zeroed()];
 
 static mut ABOUT_MODULE_DEF: PyModuleDef = PyModuleDef {
@@ -31,13 +33,13 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
         // VersionInfo namedtuple
         let collections = PyImport_ImportModule(crate::cstr!("collections"));
         if collections.is_null() {
-            Py_DECREF(module);
+            module.decref();
             return -1;
         }
         let namedtuple = PyObject_GetAttrString(collections, crate::cstr!("namedtuple"));
-        Py_DECREF(collections);
+        collections.decref();
         if namedtuple.is_null() {
-            Py_DECREF(module);
+            module.decref();
             return -1;
         }
 
@@ -53,8 +55,8 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             crate::cstr!("local"),
         );
         if vi_cls.is_null() {
-            Py_DECREF(namedtuple);
-            Py_DECREF(module);
+            namedtuple.decref();
+            module.decref();
             return -1;
         }
 
@@ -85,7 +87,7 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
         }
 
         // __commit_id__
-        PyModule_AddObject(module, crate::cstr!("__commit_id__"), Py_NewRef(Py_None()));
+        PyModule_AddObject(module, crate::cstr!("__commit_id__"), Py_None().newref());
 
         // __build_hash__
         PyModule_AddStringConstant(
@@ -102,9 +104,9 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             crate::cstr!("name"),
             crate::cstr!("email"),
         );
-        Py_DECREF(namedtuple);
+        namedtuple.decref();
         if author_cls.is_null() {
-            Py_DECREF(module);
+            module.decref();
             return -1;
         }
 

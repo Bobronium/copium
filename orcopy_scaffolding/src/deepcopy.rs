@@ -273,11 +273,7 @@ impl PyDeepCopy for *mut PyDictObject {
                     return PyResult::error();
                 }
 
-                let kraw = key_copy.into_raw();
-                let vraw = val_copy.into_raw();
-                let rc = copied.set_item(kraw, vraw);
-                kraw.decref();
-                vraw.decref();
+                let rc = copied.set_item_steal_two(key_copy.into_raw(), val_copy.into_raw());
 
                 if rc < 0 {
                     memo.forget(self as _, &probe);

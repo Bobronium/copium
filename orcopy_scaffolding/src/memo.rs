@@ -145,7 +145,7 @@ impl MemoTable {
             if entry.key == 0 {
                 entry.key = key;
                 entry.value = value;
-                unsafe { Py_INCREF(value) };
+                unsafe { value.incref() };
                 self.used += 1;
                 self.filled += 1;
                 return;
@@ -154,8 +154,8 @@ impl MemoTable {
                 let old = entry.value;
                 entry.value = value;
                 unsafe {
-                    Py_INCREF(value);
-                    Py_XDECREF(old);
+                    value.incref();
+                    old.decref_nullable();
                 }
                 return;
             }
@@ -163,6 +163,7 @@ impl MemoTable {
         }
     }
 
+    #[inline(always)]
     pub fn lookup_h(&self, key: usize, hash: usize) -> *mut PyObject {
         if self.slots.is_null() {
             return ptr::null_mut();
@@ -203,7 +204,7 @@ impl MemoTable {
                 let at = first_tomb.unwrap_or(idx);
                 let slot = unsafe { &mut *self.slots.add(at) };
                 slot.key = key;
-                unsafe { Py_INCREF(value) };
+                unsafe { value.incref() };
                 slot.value = value;
                 self.used += 1;
                 self.filled += 1;
@@ -216,9 +217,9 @@ impl MemoTable {
             } else if entry.key == key {
                 let old = entry.value;
                 unsafe {
-                    Py_INCREF(value);
+                    value.incref();
                     entry.value = value;
-                    Py_XDECREF(old);
+                    old.decref_nullable();
                 }
                 return 0;
             }
@@ -241,7 +242,7 @@ impl MemoTable {
             }
             if entry.key != TOMBSTONE && entry.key == key {
                 entry.key = TOMBSTONE;
-                unsafe { Py_XDECREF(entry.value) };
+                unsafe { entry.value.decref_nullable() };
                 entry.value = ptr::null_mut();
                 self.used -= 1;
                 return 0;
@@ -258,7 +259,7 @@ impl MemoTable {
         for i in 0..self.size {
             let entry = unsafe { &*self.slots.add(i) };
             if entry.key != 0 && entry.key != TOMBSTONE {
-                unsafe { Py_XDECREF(entry.value) };
+                unsafe { entry.value.decref_nullable() };
             }
         }
         unsafe { ptr::write_bytes(self.slots, 0, self.size) };
@@ -283,7 +284,7 @@ impl Drop for MemoTable {
         for i in 0..self.size {
             let entry = unsafe { &*self.slots.add(i) };
             if entry.key != 0 && entry.key != TOMBSTONE {
-                unsafe { Py_XDECREF(entry.value) };
+                unsafe { entry.value.decref_nullable() };
             }
         }
 
@@ -306,13 +307,13 @@ impl KeepaliveVec {
     }
 
     pub fn append(&mut self, obj: *mut PyObject) {
-        unsafe { Py_INCREF(obj) };
+        unsafe { obj.incref() };
         self.items.push(obj);
     }
 
     pub fn clear(&mut self) {
         for &item in &self.items {
-            unsafe { Py_DECREF(item) };
+            unsafe { item.decref() };
         }
         self.items.clear();
     }
@@ -392,7 +393,7 @@ impl PyMemoObject {
         self.undo_log.shrink_if_large();
         self.table.reset();
         if !self.dict_proxy.is_null() {
-            unsafe { Py_DECREF(self.dict_proxy) };
+            unsafe { self.dict_proxy.decref() };
             self.dict_proxy = ptr::null_mut();
         }
     }
@@ -435,15 +436,15 @@ impl PyMemoObject {
                 if entry.key != 0 && entry.key != TOMBSTONE {
                     let pykey = PyLong_FromVoidPtr(entry.key as *mut c_void);
                     if pykey.is_null() {
-                        Py_DECREF(dict);
+                        dict.decref();
                         return ptr::null_mut();
                     }
                     if PyDict_SetItem(dict, pykey, entry.value) < 0 {
-                        Py_DECREF(pykey);
-                        Py_DECREF(dict);
+                        pykey.decref();
+                        dict.decref();
                         return ptr::null_mut();
                     }
-                    Py_DECREF(pykey);
+                    pykey.decref();
                 }
             }
 
@@ -497,7 +498,7 @@ impl Memo for PyMemoObject {
         let hash = hash_pointer(key);
         let found = self.table.lookup_h(key, hash);
         if !found.is_null() {
-            unsafe { Py_INCREF(found) };
+            unsafe { found.incref() };
         }
         (hash, found)
     }
@@ -563,7 +564,7 @@ unsafe fn keepalive_list_new(owner: *mut PyMemoObject) -> *mut PyObject {
             return ptr::null_mut();
         }
         (*obj).owner = owner;
-        Py_INCREF(owner as *mut PyObject);
+        (owner as *mut PyObject).incref();
         PyObject_GC_Track(obj as *mut c_void);
         obj as *mut PyObject
     }
@@ -572,7 +573,7 @@ unsafe fn keepalive_list_new(owner: *mut PyMemoObject) -> *mut PyObject {
 unsafe fn memo_keepalive_proxy(self_: *mut PyMemoObject) -> *mut PyObject {
     unsafe {
         if !(*self_).dict_proxy.is_null() {
-            return Py_NewRef((*self_).dict_proxy);
+            return (*self_).dict_proxy.newref();
         }
 
         let proxy = keepalive_list_new(self_);
@@ -581,7 +582,7 @@ unsafe fn memo_keepalive_proxy(self_: *mut PyMemoObject) -> *mut PyObject {
         }
 
         (*self_).dict_proxy = proxy;
-        Py_NewRef(proxy)
+        proxy.newref()
     }
 }
 
@@ -589,7 +590,7 @@ unsafe extern "C" fn keepalive_list_dealloc(obj: *mut PyObject) {
     unsafe {
         let self_ = obj as *mut PyKeepaliveListObject;
         PyObject_GC_UnTrack(self_ as *mut c_void);
-        Py_XDECREF((*self_).owner as *mut PyObject);
+        ((*self_).owner as *mut PyObject).decref_nullable();
         PyObject_GC_Del(self_ as *mut c_void);
     }
 }
@@ -611,7 +612,7 @@ unsafe extern "C" fn keepalive_list_traverse(
 unsafe extern "C" fn keepalive_list_clear(obj: *mut PyObject) -> std::ffi::c_int {
     unsafe {
         let self_ = obj as *mut PyKeepaliveListObject;
-        Py_CLEAR(&mut (*self_).owner as *mut *mut PyMemoObject as *mut *mut PyObject);
+        (&mut (*self_).owner as *mut *mut PyMemoObject).clear();
         0
     }
 }
@@ -648,7 +649,7 @@ unsafe extern "C" fn keepalive_list_getitem(
             return ptr::null_mut();
         }
 
-        Py_NewRef(items[i as usize])
+        items[i as usize].newref()
     }
 }
 
@@ -668,12 +669,12 @@ unsafe extern "C" fn keepalive_list_iter(obj: *mut PyObject) -> *mut PyObject {
         }
 
         for (i, &item) in items.iter().enumerate() {
-            Py_INCREF(item);
+            item.incref();
             PyList_SetItem(list, i as Py_ssize_t, item);
         }
 
         let it = PyObject_GetIter(list);
-        Py_DECREF(list);
+        list.decref();
         it
     }
 }
@@ -685,12 +686,12 @@ unsafe extern "C" fn keepalive_list_repr(obj: *mut PyObject) -> *mut PyObject {
             return ptr::null_mut();
         }
         let inner = PyObject_Repr(list);
-        Py_DECREF(list);
+        list.decref();
         if inner.is_null() {
             return ptr::null_mut();
         }
         let wrapped = PyUnicode_FromFormat(cstr!("keepalive(%U)"), inner);
-        Py_DECREF(inner);
+        inner.decref();
         wrapped
     }
 }
@@ -703,7 +704,7 @@ unsafe extern "C" fn keepalive_list_append(obj: *mut PyObject, arg: *mut PyObjec
             return ptr::null_mut();
         }
         (*(*self_).owner).keepalive.append(arg);
-        Py_NewRef(Py_None())
+        Py_None().newref()
     }
 }
 
@@ -715,7 +716,7 @@ unsafe extern "C" fn keepalive_list_clear_py(obj: *mut PyObject, _: *mut PyObjec
             return ptr::null_mut();
         }
         (*(*self_).owner).keepalive.clear();
-        Py_NewRef(Py_None())
+        Py_None().newref()
     }
 }
 
@@ -808,7 +809,7 @@ pub unsafe fn get_memo() -> (*mut PyMemoObject, bool) {
             return (fresh, true);
         }
 
-        if Py_REFCNT(tss as *mut PyObject) == 1 {
+        if tss.refcount() == 1 {
             return (tss, true);
         }
 
@@ -818,7 +819,7 @@ pub unsafe fn get_memo() -> (*mut PyMemoObject, bool) {
 
 pub unsafe fn cleanup_memo(memo: *mut PyMemoObject, is_tss: bool) {
     unsafe {
-        if is_tss && Py_REFCNT(memo as *mut PyObject) == 1 {
+        if is_tss && memo.refcount() == 1 {
             (*memo).reset();
             return;
         }
@@ -833,7 +834,7 @@ pub unsafe fn cleanup_memo(memo: *mut PyMemoObject, is_tss: bool) {
         }
 
         PyObject_GC_Track(memo as *mut c_void);
-        Py_DECREF(memo as *mut PyObject);
+        memo.decref();
     }
 }
 
@@ -868,30 +869,30 @@ impl DictMemo {
 
             let existing = self.dict.get_item(pykey);
             if !existing.is_null() {
-                Py_INCREF(existing);
+                existing.incref();
                 self.keepalive = existing as *mut PyListObject;
-                Py_DECREF(pykey);
+                pykey.decref();
                 return 0;
             }
             if !PyErr_Occurred().is_null() {
-                Py_DECREF(pykey);
+                pykey.decref();
                 return -1;
             }
 
             let list = py_list_new(0);
             if list.is_null() {
-                Py_DECREF(pykey);
+                pykey.decref();
                 return -1;
             }
 
             if self.dict.set_item(pykey, list as *mut PyObject) < 0 {
                 list.decref();
-                Py_DECREF(pykey);
+                pykey.decref();
                 return -1;
             }
 
             self.keepalive = list as *mut PyListObject; // dict owns one ref, we own one ref
-            Py_DECREF(pykey);
+            pykey.decref();
             0
         }
     }
@@ -911,9 +912,9 @@ impl Memo for DictMemo {
 
             let found = self.dict.get_item(pykey);
             if !found.is_null() {
-                Py_INCREF(found);
+                found.incref();
             }
-            Py_DECREF(pykey);
+            pykey.decref();
             ((), found)
         }
     }
@@ -932,7 +933,7 @@ impl Memo for DictMemo {
             }
 
             let rc = self.dict.set_item(pykey, copy);
-            Py_DECREF(pykey);
+            pykey.decref();
             if rc < 0 {
                 return -1;
             }
@@ -1003,32 +1004,32 @@ impl AnyMemo {
                 ptr::null_mut::<PyObject>(),
             );
             if existing.is_null() {
-                Py_DECREF(pykey);
+                pykey.decref();
                 return -1;
             }
 
             if existing != s.sentinel {
                 self.keepalive = existing;
-                Py_DECREF(pykey);
+                pykey.decref();
                 return 0;
             }
 
-            Py_DECREF(existing);
+            existing.decref();
 
             let list = PyList_New(0);
             if list.is_null() {
-                Py_DECREF(pykey);
+                pykey.decref();
                 return -1;
             }
 
             if PyObject_SetItem(self.object, pykey, list) < 0 {
-                Py_DECREF(list);
-                Py_DECREF(pykey);
+                list.decref();
+                pykey.decref();
                 return -1;
             }
 
             self.keepalive = list;
-            Py_DECREF(pykey);
+            pykey.decref();
             0
         }
     }
@@ -1053,13 +1054,13 @@ impl Memo for AnyMemo {
                 s.sentinel,
                 ptr::null_mut::<PyObject>(),
             );
-            Py_DECREF(pykey);
+            pykey.decref();
 
             if found.is_null() {
                 return ((), ptr::null_mut()); // error set
             }
             if found == s.sentinel {
-                Py_DECREF(found);
+                found.decref();
                 return ((), ptr::null_mut()); // not found, no error
             }
 
@@ -1080,7 +1081,7 @@ impl Memo for AnyMemo {
             }
 
             let rc = PyObject_SetItem(self.object, pykey, copy);
-            Py_DECREF(pykey);
+            pykey.decref();
             if rc < 0 {
                 return -1;
             }
@@ -1108,7 +1109,7 @@ impl Memo for AnyMemo {
 impl Drop for AnyMemo {
     fn drop(&mut self) {
         if !self.keepalive.is_null() {
-            unsafe { Py_DECREF(self.keepalive) };
+            unsafe { self.keepalive.decref() };
         }
     }
 }
@@ -1133,7 +1134,7 @@ unsafe extern "C" fn memo_finalize(obj: *mut PyObject) {
         (*self_).table.clear();
         (*self_).keepalive.clear();
         if !(*self_).dict_proxy.is_null() {
-            Py_DECREF((*self_).dict_proxy);
+            (*self_).dict_proxy.decref();
             (*self_).dict_proxy = ptr::null_mut();
         }
     }
@@ -1186,7 +1187,7 @@ unsafe extern "C" fn memo_clear_gc(obj: *mut PyObject) -> std::ffi::c_int {
         (*self_).table.clear();
         (*self_).keepalive.clear();
         if !(*self_).dict_proxy.is_null() {
-            Py_DECREF((*self_).dict_proxy);
+            (*self_).dict_proxy.decref();
             (*self_).dict_proxy = ptr::null_mut();
         }
         0
@@ -1206,36 +1207,36 @@ unsafe extern "C" fn memo_repr(obj: *mut PyObject) -> *mut PyObject {
         if !(*self_).keepalive.items.is_empty() {
             let py_key = PyLong_FromVoidPtr(self_ as *mut c_void);
             if py_key.is_null() {
-                Py_DECREF(dict);
+                dict.decref();
                 return ptr::null_mut();
             }
 
             let proxy = memo_keepalive_proxy(self_);
             if proxy.is_null() {
-                Py_DECREF(py_key);
-                Py_DECREF(dict);
+                py_key.decref();
+                dict.decref();
                 return ptr::null_mut();
             }
 
             if PyDict_SetItem(dict, py_key, proxy) < 0 {
-                Py_DECREF(proxy);
-                Py_DECREF(py_key);
-                Py_DECREF(dict);
+                proxy.decref();
+                py_key.decref();
+                dict.decref();
                 return ptr::null_mut();
             }
 
-            Py_DECREF(proxy);
-            Py_DECREF(py_key);
+            proxy.decref();
+            py_key.decref();
         }
 
         let inner = PyObject_Repr(dict);
-        Py_DECREF(dict);
+        dict.decref();
         if inner.is_null() {
             return ptr::null_mut();
         }
 
         let wrapped = PyUnicode_FromFormat(cstr!("memo(%U)"), inner);
-        Py_DECREF(inner);
+        inner.decref();
         wrapped
     }
 }
@@ -1256,11 +1257,11 @@ unsafe extern "C" fn memo_iter(obj: *mut PyObject) -> *mut PyObject {
                 if entry.key != 0 && entry.key != TOMBSTONE {
                     let py_key = PyLong_FromVoidPtr(entry.key as *mut c_void);
                     if py_key.is_null() || PyList_Append(list, py_key) < 0 {
-                        Py_XDECREF(py_key);
-                        Py_DECREF(list);
+                        py_key.decref_nullable();
+                        list.decref();
                         return ptr::null_mut();
                     }
-                    Py_DECREF(py_key);
+                    py_key.decref();
                 }
             }
         }
@@ -1268,15 +1269,15 @@ unsafe extern "C" fn memo_iter(obj: *mut PyObject) -> *mut PyObject {
         if !(*self_).keepalive.items.is_empty() {
             let py_key = PyLong_FromVoidPtr(self_ as *mut c_void);
             if py_key.is_null() || PyList_Append(list, py_key) < 0 {
-                Py_XDECREF(py_key);
-                Py_DECREF(list);
+                py_key.decref_nullable();
+                list.decref();
                 return ptr::null_mut();
             }
-            Py_DECREF(py_key);
+            py_key.decref();
         }
 
         let it = PyObject_GetIter(list);
-        Py_DECREF(list);
+        list.decref();
         it
     }
 }
@@ -1322,7 +1323,7 @@ unsafe extern "C" fn memo_mp_subscript(obj: *mut PyObject, pykey: *mut PyObject)
             return ptr::null_mut();
         }
 
-        Py_NewRef(found)
+        found.newref()
     }
 }
 
@@ -1367,10 +1368,10 @@ unsafe extern "C" fn memo_mp_ass_subscript(
                     break;
                 }
                 (*self_).keepalive.append(item);
-                Py_DECREF(item);
+                item.decref();
             }
 
-            Py_DECREF(it);
+            it.decref();
 
             if !PyErr_Occurred().is_null() {
                 return -1;
@@ -1432,10 +1433,10 @@ unsafe extern "C" fn memo_py_clear(obj: *mut PyObject, _: *mut PyObject) -> *mut
         (*self_).table.clear();
         (*self_).keepalive.clear();
         if !(*self_).dict_proxy.is_null() {
-            Py_DECREF((*self_).dict_proxy);
+            (*self_).dict_proxy.decref();
             (*self_).dict_proxy = ptr::null_mut();
         }
-        Py_NewRef(Py_None())
+        Py_None().newref()
     }
 }
 
@@ -1465,14 +1466,14 @@ unsafe extern "C" fn memo_py_get(
 
         let found = (*self_).table.lookup_h(key, hash_pointer(key));
         if !found.is_null() {
-            return Py_NewRef(found);
+            return found.newref();
         }
 
         if nargs == 2 {
-            return Py_NewRef(*args.add(1));
+            return (*args.add(1)).newref();
         }
 
-        Py_NewRef(Py_None())
+        Py_None().newref()
     }
 }
 
@@ -1507,7 +1508,7 @@ unsafe extern "C" fn memo_py_values(obj: *mut PyObject, _: *mut PyObject) -> *mu
             for i in 0..(*self_).table.size {
                 let entry = &*(*self_).table.slots.add(i);
                 if entry.key != 0 && entry.key != TOMBSTONE {
-                    Py_INCREF(entry.value);
+                    entry.value.incref();
                     PyList_SetItem(list, idx, entry.value);
                     idx += 1;
                 }
@@ -1517,7 +1518,7 @@ unsafe extern "C" fn memo_py_values(obj: *mut PyObject, _: *mut PyObject) -> *mu
         if !(*self_).keepalive.items.is_empty() {
             let proxy = memo_keepalive_proxy(self_);
             if proxy.is_null() {
-                Py_DECREF(list);
+                list.decref();
                 return ptr::null_mut();
             }
             PyList_SetItem(list, idx, proxy);
@@ -1547,7 +1548,7 @@ unsafe extern "C" fn memo_py_keys(obj: *mut PyObject, _: *mut PyObject) -> *mut 
                 if entry.key != 0 && entry.key != TOMBSTONE {
                     let py_key = PyLong_FromVoidPtr(entry.key as *mut c_void);
                     if py_key.is_null() {
-                        Py_DECREF(list);
+                        list.decref();
                         return ptr::null_mut();
                     }
                     PyList_SetItem(list, idx, py_key);
@@ -1559,7 +1560,7 @@ unsafe extern "C" fn memo_py_keys(obj: *mut PyObject, _: *mut PyObject) -> *mut 
         if !(*self_).keepalive.items.is_empty() {
             let py_key = PyLong_FromVoidPtr(self_ as *mut c_void);
             if py_key.is_null() {
-                Py_DECREF(list);
+                list.decref();
                 return ptr::null_mut();
             }
             PyList_SetItem(list, idx, py_key);
@@ -1589,17 +1590,17 @@ unsafe extern "C" fn memo_py_items(obj: *mut PyObject, _: *mut PyObject) -> *mut
                 if entry.key != 0 && entry.key != TOMBSTONE {
                     let py_key = PyLong_FromVoidPtr(entry.key as *mut c_void);
                     if py_key.is_null() {
-                        Py_DECREF(list);
+                        list.decref();
                         return ptr::null_mut();
                     }
                     let pair = PyTuple_New(2);
                     if pair.is_null() {
-                        Py_DECREF(py_key);
-                        Py_DECREF(list);
+                        py_key.decref();
+                        list.decref();
                         return ptr::null_mut();
                     }
                     PyTuple_SetItem(pair, 0, py_key);
-                    Py_INCREF(entry.value);
+                    entry.value.incref();
                     PyTuple_SetItem(pair, 1, entry.value);
                     PyList_SetItem(list, idx, pair);
                     idx += 1;
@@ -1610,20 +1611,20 @@ unsafe extern "C" fn memo_py_items(obj: *mut PyObject, _: *mut PyObject) -> *mut
         if !(*self_).keepalive.items.is_empty() {
             let py_key = PyLong_FromVoidPtr(self_ as *mut c_void);
             if py_key.is_null() {
-                Py_DECREF(list);
+                list.decref();
                 return ptr::null_mut();
             }
             let proxy = memo_keepalive_proxy(self_);
             if proxy.is_null() {
-                Py_DECREF(py_key);
-                Py_DECREF(list);
+                py_key.decref();
+                list.decref();
                 return ptr::null_mut();
             }
             let pair = PyTuple_New(2);
             if pair.is_null() {
-                Py_DECREF(py_key);
-                Py_DECREF(proxy);
-                Py_DECREF(list);
+                py_key.decref();
+                proxy.decref();
+                list.decref();
                 return ptr::null_mut();
             }
             PyTuple_SetItem(pair, 0, py_key);
@@ -1665,7 +1666,7 @@ unsafe extern "C" fn memo_py_setdefault(
 
         let found = (*self_).table.lookup_h(key, hash_pointer(key));
         if !found.is_null() {
-            return Py_NewRef(found);
+            return found.newref();
         }
 
         let default_value = if nargs == 2 { *args.add(1) } else { Py_None() };
@@ -1673,7 +1674,7 @@ unsafe extern "C" fn memo_py_setdefault(
             return ptr::null_mut();
         }
 
-        Py_NewRef(default_value)
+        default_value.newref()
     }
 }
 
@@ -1683,10 +1684,10 @@ unsafe extern "C" fn memo_py_del(obj: *mut PyObject, _: *mut PyObject) -> *mut P
         (*self_).table.clear();
         (*self_).keepalive.clear();
         if !(*self_).dict_proxy.is_null() {
-            Py_DECREF((*self_).dict_proxy);
+            (*self_).dict_proxy.decref();
             (*self_).dict_proxy = ptr::null_mut();
         }
-        Py_NewRef(Py_None())
+        Py_None().newref()
     }
 }
 

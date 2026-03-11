@@ -1,6 +1,8 @@
 use core::ffi::c_char;
 use pyo3_ffi::*;
 
+use crate::types::PyObjectPtr;
+
 #[cfg(Py_GIL_DISABLED)]
 use core::sync::atomic::Ordering;
 
@@ -80,7 +82,7 @@ pub unsafe fn tp_flags_of(tp: *mut PyTypeObject) -> u64 {
 #[inline(always)]
 pub unsafe fn PySequence_Fast_GET_ITEM(o: *mut PyObject, i: Py_ssize_t) -> *mut PyObject {
     unsafe {
-        if (tp_flags_of(Py_TYPE(o)) & Py_TPFLAGS_LIST_SUBCLASS) != 0 {
+        if (tp_flags_of(o.class()) & Py_TPFLAGS_LIST_SUBCLASS) != 0 {
             *(*(o as *mut PyListObject)).ob_item.add(i as usize)
         } else {
             *(*(o as *mut PyTupleObject)).ob_item.as_ptr().add(i as usize)
@@ -95,11 +97,11 @@ pub unsafe fn PySequence_Fast_GET_ITEM(o: *mut PyObject, i: Py_ssize_t) -> *mut 
 #[inline(always)]
 pub unsafe fn PyVectorcall_Function(callable: *mut PyObject) -> Option<vectorcallfunc> {
     unsafe {
-        let tp = Py_TYPE(callable);
-        if tp_flags_of(tp) & Py_TPFLAGS_HAVE_VECTORCALL == 0 {
+        let type_pointer = callable.class();
+        if tp_flags_of(type_pointer) & Py_TPFLAGS_HAVE_VECTORCALL == 0 {
             return None;
         }
-        let offset = (*tp).tp_vectorcall_offset;
+        let offset = (*type_pointer).tp_vectorcall_offset;
         debug_assert!(offset > 0);
         let slot = (callable as *const u8).add(offset as usize) as *const *const ();
         let ptr = *slot;
@@ -116,9 +118,9 @@ pub unsafe fn PyVectorcall_Function(callable: *mut PyObject) -> Option<vectorcal
 #[inline(always)]
 pub unsafe fn set_fn_vectorcall(fn_obj: *mut PyObject, vc: vectorcallfunc) {
     unsafe {
-        let tp = Py_TYPE(fn_obj);
-        debug_assert!(tp_flags_of(tp) & Py_TPFLAGS_HAVE_VECTORCALL != 0);
-        let offset = (*tp).tp_vectorcall_offset;
+        let type_pointer = fn_obj.class();
+        debug_assert!(tp_flags_of(type_pointer) & Py_TPFLAGS_HAVE_VECTORCALL != 0);
+        let offset = (*type_pointer).tp_vectorcall_offset;
         debug_assert!(offset > 0);
         let slot = (fn_obj as *mut u8).add(offset as usize) as *mut vectorcallfunc;
         *slot = vc;

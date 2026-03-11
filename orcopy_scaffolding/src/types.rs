@@ -53,6 +53,7 @@ pub unsafe trait PyObjectPtr {
     unsafe fn refcount(self) -> Py_ssize_t;
     unsafe fn incref(self);
     unsafe fn decref(self);
+    unsafe fn decref_nullable(self);
     unsafe fn newref(self) -> *mut PyObject;
     unsafe fn class(self) -> *mut PyTypeObject;
     unsafe fn getattr(self, name: *mut PyObject) -> *mut PyObject;
@@ -91,6 +92,12 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
         Py_DECREF(self as *mut PyObject)
     }
     #[inline(always)]
+    unsafe fn decref_nullable(self) {
+        if !self.is_null() {
+            self.decref();
+        }
+    }
+    #[inline(always)]
     unsafe fn newref(self) -> *mut PyObject {
         Py_NewRef(self as *mut PyObject)
     }
@@ -98,15 +105,15 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     unsafe fn class(self) -> *mut PyTypeObject {
         (*(self as *mut PyObject)).ob_type
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn getattr(self, name: *mut PyObject) -> *mut PyObject {
         PyObject_GetAttr(self as *mut PyObject, name)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn get_optional_attr(self, name: *mut PyObject, out: &mut *mut PyObject) -> c_int {
         compat::PyObject_GetOptionalAttr(self as *mut PyObject, name, out)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn call(self) -> *mut PyObject {
         PyObject_CallNoArgs(self as *mut PyObject)
     }
@@ -114,19 +121,19 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     unsafe fn call_one(self, arg: *mut PyObject) -> *mut PyObject {
         PyObject_CallOneArg(self as *mut PyObject, arg)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn call_with(self, args: *mut PyObject) -> *mut PyObject {
         PyObject_CallObject(self as *mut PyObject, args)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn set_attr(self, name: *mut PyObject, value: *mut PyObject) -> c_int {
         PyObject_SetAttr(self as *mut PyObject, name, value)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn set_item_obj(self, key: *mut PyObject, value: *mut PyObject) -> c_int {
         PyObject_SetItem(self as *mut PyObject, key, value)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn get_iter(self) -> *mut PyObject {
         PyObject_GetIter(self as *mut PyObject)
     }
@@ -156,39 +163,56 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     }
 }
 
+pub unsafe trait PyObjectSlotPtr {
+    unsafe fn clear(self);
+}
+
+unsafe impl<T: PyTypeInfo> PyObjectSlotPtr for *mut *mut T {
+    #[inline(always)]
+    unsafe fn clear(self) {
+        if self.is_null() {
+            return;
+        }
+
+        let old_value = *self;
+        *self = ptr::null_mut();
+        old_value.decref_nullable();
+    }
+}
+
 // ── Constructors ───────────────────────────────────────────
 
-#[inline]
+#[inline(always)]
 pub unsafe fn py_list_new(n: Py_ssize_t) -> *mut PyListObject {
     PyList_New(n) as _
 }
 
-#[inline]
+#[inline(always)]
 pub unsafe fn py_tuple_new(n: Py_ssize_t) -> *mut PyTupleObject {
     PyTuple_New(n) as _
 }
 
-#[inline]
+#[inline(always)]
 pub unsafe fn py_dict_new(n: Py_ssize_t) -> *mut PyDictObject {
     compat::_PyDict_NewPresized(n) as _
 }
 
-#[inline]
+#[inline(always)]
 pub unsafe fn py_set_new() -> *mut PySetObject {
     PySet_New(ptr::null_mut()) as _
 }
 
-#[inline]
+#[inline(always)]
 pub unsafe fn frozenset_from(iterable: *mut PyObject) -> *mut PyObject {
     PyFrozenSet_New(iterable)
 }
 
-#[inline]
+#[inline(always)]
 pub unsafe fn py_bytearray_new(n: Py_ssize_t) -> *mut PyByteArrayObject {
     PyByteArray_FromStringAndSize(ptr::null(), n) as _
 }
 
-#[inline]
+#[inline(always)]
 pub unsafe fn py_method_new(
     func: *mut PyObject,
     self_: *mut PyObject,
@@ -252,20 +276,26 @@ pub unsafe trait PyMapPtr {
     unsafe fn len(self) -> Py_ssize_t;
     /// Does NOT steal references.
     unsafe fn set_item(self, k: *mut PyObject, v: *mut PyObject) -> c_int;
+    /// Steals both key and value references.
+    unsafe fn set_item_steal_two(self, k: *mut PyObject, v: *mut PyObject) -> c_int;
     /// Returns borrowed ref or null.
     unsafe fn get_item(self, k: *mut PyObject) -> *mut PyObject;
 }
 
 unsafe impl PyMapPtr for *mut PyDictObject {
-    #[inline]
+    #[inline(always)]
     unsafe fn len(self) -> Py_ssize_t {
         PyDict_Size(self as _)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn set_item(self, k: *mut PyObject, v: *mut PyObject) -> c_int {
         PyDict_SetItem(self as _, k, v)
     }
-    #[inline]
+    #[inline(always)]
+    unsafe fn set_item_steal_two(self, k: *mut PyObject, v: *mut PyObject) -> c_int {
+        compat::_PyDict_SetItem_Take2(self as _, k, v)
+    }
+    #[inline(always)]
     unsafe fn get_item(self, k: *mut PyObject) -> *mut PyObject {
         PyDict_GetItemWithError(self as _, k)
     }
@@ -282,11 +312,11 @@ pub unsafe trait PySetPtr {
 }
 
 unsafe impl PySetPtr for *mut PySetObject {
-    #[inline]
+    #[inline(always)]
     unsafe fn len(self) -> Py_ssize_t {
         PySet_Size(self as _)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn next_entry(
         self,
         pos: &mut Py_ssize_t,
@@ -298,11 +328,11 @@ unsafe impl PySetPtr for *mut PySetObject {
 }
 
 unsafe impl PySetPtr for *mut PyFrozensetObject {
-    #[inline]
+    #[inline(always)]
     unsafe fn len(self) -> Py_ssize_t {
         PySet_Size(self as _)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn next_entry(
         self,
         pos: &mut Py_ssize_t,
@@ -318,7 +348,7 @@ pub unsafe trait PyMutSetPtr {
 }
 
 unsafe impl PyMutSetPtr for *mut PySetObject {
-    #[inline]
+    #[inline(always)]
     unsafe fn add_item(self, item: *mut PyObject) -> c_int {
         PySet_Add(self as _, item)
     }
@@ -332,11 +362,11 @@ pub unsafe trait PyBufPtr {
 }
 
 unsafe impl PyBufPtr for *mut PyByteArrayObject {
-    #[inline]
+    #[inline(always)]
     unsafe fn len(self) -> Py_ssize_t {
         PyByteArray_Size(self as _)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn as_ptr(self) -> *mut c_char {
         PyByteArray_AsString(self as _)
     }
@@ -350,11 +380,11 @@ pub unsafe trait PyBoundMethodPtr {
 }
 
 unsafe impl PyBoundMethodPtr for *mut ffi_ext::PyMethodObject {
-    #[inline]
+    #[inline(always)]
     unsafe fn function(self) -> *mut PyObject {
         ffi_ext::PyMethod_GET_FUNCTION(self as _)
     }
-    #[inline]
+    #[inline(always)]
     unsafe fn self_obj(self) -> *mut PyObject {
         ffi_ext::PyMethod_GET_SELF(self as _)
     }

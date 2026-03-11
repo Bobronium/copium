@@ -3,8 +3,7 @@ use std::ptr;
 
 use crate::deepcopy;
 use crate::memo::PyMemoObject;
-use crate::types;
-use crate::types::PyTypeObjectPtr;
+use crate::types::{PyObjectPtr, PyTypeObjectPtr};
 
 unsafe extern "C" fn py_replicate(
     _self: *mut PyObject,
@@ -39,14 +38,14 @@ unsafe extern "C" fn py_replicate(
             return PyList_New(0);
         }
 
-        let tp = Py_TYPE(obj);
-        if tp.is_atomic_immutable() {
+        let type_pointer = obj.class();
+        if type_pointer.is_atomic_immutable() {
             let out = PyList_New(n as Py_ssize_t);
             if out.is_null() {
                 return ptr::null_mut();
             }
             for i in 0..n as Py_ssize_t {
-                PyList_SET_ITEM(out, i, Py_NewRef(obj));
+                PyList_SET_ITEM(out, i, obj.newref());
             }
             return out;
         }
@@ -61,7 +60,7 @@ unsafe extern "C" fn py_replicate(
             let copy = deepcopy::deepcopy(obj, &mut *memo);
             (*memo).reset();
             if copy.is_error() {
-                Py_DECREF(out);
+                out.decref();
                 return ptr::null_mut();
             }
             PyList_SetItem(out, i, copy.into_raw());
@@ -118,7 +117,7 @@ unsafe extern "C" fn py_repeatcall(
         for i in 0..n as Py_ssize_t {
             let item = PyObject_CallNoArgs(func);
             if item.is_null() {
-                Py_DECREF(out);
+                out.decref();
                 return ptr::null_mut();
             }
             PyList_SetItem(out, i, item);
