@@ -1,7 +1,12 @@
 [build-system]
-requires = ["setuptools>=68", "setuptools-scm>=8.0", "wheel"]
-build-backend = "tools.build_system.backend"
-backend-path = ["."]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+features = ["pyo3-ffi/extension-module"]
+module-name = "copium.__init__"
+python-source = "src/"
+data = "wheel-data/"
 
 [tool.setuptools]
 include-package-data = true
@@ -27,7 +32,7 @@ test-sources = ["tests", "pyproject.toml"]
 environment = { CL = "/experimental:c11atomics" }
 
 [project]
-name = "ccopium"
+name = "copium"
 dynamic = ["version"]
 description = "Fast drop-in replacement for copy.deepcopy()"
 readme = "README.md"
@@ -60,10 +65,10 @@ autopatch = [
     "copium-autopatch==0.1.0"
 ]
 dev = [
-    "ccopium[lint]",
-    "ccopium[typecheck]",
-    "ccopium[test]",
-    "ccopium[docs]",
+    "copium[lint]",
+    "copium[typecheck]",
+    "copium[test]",
+    "copium[docs]",
 ]
 lint = [
     "ruff>=0.5",
