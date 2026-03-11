@@ -3,10 +3,6 @@ from typing import Literal, Sequence, TypedDict, overload
 __all__ = ["apply", "get"]
 
 @overload
-def apply() -> None:
-    """Reset all settings to environment variable defaults."""
-
-@overload
 def apply(
     *,
     memo: Literal["native"],
