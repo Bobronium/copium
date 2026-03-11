@@ -407,14 +407,14 @@ def _sources_fingerprint() -> str:
         h.update(b"ERROR:backend")
 
     # .pth file
-    pth = PROJECT_ROOT / "src" / "_copium.pth"
+    pth = PROJECT_ROOT / "src" / "_ccopium.pth"
     if pth.exists():
         try:
-            h.update(b"_copium.pth")
+            h.update(b"_ccopium.pth")
             h.update(pth.read_bytes())
         except OSError as e:
             error(f"Failed to read _copium.pth for fingerprint: {e!r}")
-            h.update(b"ERROR:_copium.pth")
+            h.update(b"ERROR:_ccopium.pth")
 
     digest = h.hexdigest()
     echo(f"Computed sources fingerprint: {digest[:12]}... from {count} source files")
@@ -544,7 +544,7 @@ def _get_c_extensions(
 
     return [
         Extension(
-            "copium",
+            "ccopium",
             sources=["src/copium.c"],
             include_dirs=[str(python_include), str(python_include / "internal")],
             define_macros=define_macros,

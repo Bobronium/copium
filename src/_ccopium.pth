@@ -1,0 +1,1 @@
+import os, sys; os.environ.get('CCOPIUM_PATCH_ENABLE') and not os.environ.get('CCOPIUM_PATCH_DISABLE') and __import__('ccopium.patch').patch.enable()

@@ -27,7 +27,7 @@ test-sources = ["tests", "pyproject.toml"]
 environment = { CL = "/experimental:c11atomics" }
 
 [project]
-name = "copium"
+name = "ccopium"
 dynamic = ["version"]
 description = "Fast drop-in replacement for copy.deepcopy()"
 readme = "README.md"
@@ -60,10 +60,10 @@ autopatch = [
     "copium-autopatch==0.1.0"
 ]
 dev = [
-    "copium[lint]",
-    "copium[typecheck]",
-    "copium[test]",
-    "copium[docs]",
+    "ccopium[lint]",
+    "ccopium[typecheck]",
+    "ccopium[test]",
+    "ccopium[docs]",
 ]
 lint = [
     "ruff>=0.5",
