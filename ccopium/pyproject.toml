@@ -237,7 +237,7 @@ disable_error_code = ["no-untyped-def"]
 
 [tool.uv.workspace]
 members = [
-    "datamodelzoo",
+    "../datamodelzoo",
 ]
 
 [tool.uv.sources]

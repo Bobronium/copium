@@ -80,6 +80,7 @@ setuptools_build_meta = SetuptoolsBackend()
 
 # Project paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+REPOSITORY_ROOT = PROJECT_ROOT.parent
 CACHE_ROOT = PROJECT_ROOT / ".build-cache"
 CACHE_ROOT.mkdir(exist_ok=True)
 
@@ -157,7 +158,7 @@ def _get_version_info(build_hash: str | None = None) -> dict[str, Any]:
         from setuptools_scm import get_version
 
         base_version = get_version(
-            root=str(PROJECT_ROOT),
+            root=str(REPOSITORY_ROOT),
             version_scheme="guess-next-dev",
             local_scheme="no-local-version",
         )
