@@ -1,5 +1,6 @@
 use pyo3_ffi::*;
 use std::ffi::c_char;
+use std::hint::{likely, unlikely};
 use std::ptr;
 use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -43,7 +44,7 @@ unsafe fn dict_watch_count_locked(dict: *mut PyObject) -> i32 {
     let mut count = 0;
     let mut cur = unsafe { G_GUARD_LIST_HEAD };
     while !cur.is_null() {
-        if unsafe { (*cur).dict == dict } {
+        if likely(unsafe { (*cur).dict == dict }) {
             count += 1;
         }
         cur = unsafe { (*cur).next };
@@ -65,9 +66,9 @@ unsafe extern "C" fn copium_dict_watcher_cb(
     let mut cur_guard = unsafe { G_GUARD_LIST_HEAD };
     while !cur_guard.is_null() {
         let guard = unsafe { &mut *cur_guard };
-        if guard.dict == dict {
+        if likely(guard.dict == dict) {
             let cur = unsafe { PyDict_Size(dict) };
-            if cur >= 0 && cur != guard.size0 {
+            if unlikely(cur >= 0 && cur != guard.size0) {
                 guard.size_changed = true;
             }
             guard.mutated.store(1, Ordering::Release);
@@ -101,12 +102,6 @@ unsafe fn dict_used(dict: *mut PyObject) -> Py_ssize_t {
     unsafe { (*(dict as *mut PyDictObjectCompat)).ma_used }
 }
 
-/// Safe dict iteration guard.
-///
-/// Restored semantics:
-/// - pre-3.14: PyDict_Next + ma_version_tag / ma_used checks
-/// - 3.14+ with GIL: PyDict_Next + dict watcher mutation detection
-/// - 3.14+ free-threaded: dict.items() iterator path
 pub struct DictIterGuard {
     #[cfg(any(not(Py_3_14), Py_3_14))]
     dict: *mut PyObject,
@@ -173,10 +168,10 @@ impl DictIterGuard {
             let mut it: *mut PyObject = ptr::null_mut();
 
             let items_attr = PyObject_GetAttrString(dict, ITEMS_CSTR.as_ptr() as *const c_char);
-            if !items_attr.is_null() {
+            if likely(!items_attr.is_null()) {
                 let items_view = PyObject_CallNoArgs(items_attr);
                 items_attr.decref();
-                if !items_view.is_null() {
+                if likely(!items_view.is_null()) {
                     it = PyObject_GetIter(items_view);
                     items_view.decref();
                 }
@@ -198,12 +193,10 @@ impl DictIterGuard {
 
         #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
         unsafe {
-            if self.active {
-                return;
+            if likely(!self.active) {
+                self.active = true;
+                self.register_watch();
             }
-
-            self.active = true;
-            self.register_watch();
         }
 
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
@@ -222,7 +215,7 @@ impl DictIterGuard {
         let need_watch = unsafe { dict_watch_count_locked(self.dict) == 0 };
 
         self.next = unsafe { G_GUARD_LIST_HEAD };
-        if !unsafe { G_GUARD_LIST_HEAD }.is_null() {
+        if unlikely(!unsafe { G_GUARD_LIST_HEAD }.is_null()) {
             unsafe {
                 (*G_GUARD_LIST_HEAD).prev = self_ptr;
             }
@@ -231,7 +224,7 @@ impl DictIterGuard {
             G_GUARD_LIST_HEAD = self_ptr;
         }
 
-        if need_watch && unsafe { G_DICT_WATCHER_REGISTERED } {
+        if unlikely(need_watch && unsafe { G_DICT_WATCHER_REGISTERED }) {
             let _ = unsafe { PyDict_Watch(G_DICT_WATCHER_ID, self.dict) };
         }
 
@@ -248,7 +241,7 @@ impl DictIterGuard {
 
         #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
         unsafe {
-            if !self.active {
+            if unlikely(!self.active) {
                 return;
             }
 
@@ -257,7 +250,7 @@ impl DictIterGuard {
 
             PyMutex_Lock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
 
-            if !self.prev.is_null() {
+            if likely(!self.prev.is_null()) {
                 unsafe {
                     (*self.prev).next = self.next;
                 }
@@ -266,14 +259,14 @@ impl DictIterGuard {
                     G_GUARD_LIST_HEAD = self.next;
                 }
             }
-            if !self.next.is_null() {
+            if likely(!self.next.is_null()) {
                 unsafe {
                     (*self.next).prev = self.prev;
                 }
             }
 
             let need_unwatch = unsafe { dict_watch_count_locked(dict) == 0 };
-            if need_unwatch && unsafe { G_DICT_WATCHER_REGISTERED } {
+            if unlikely(need_unwatch && unsafe { G_DICT_WATCHER_REGISTERED }) {
                 let _ = unsafe { PyDict_Unwatch(G_DICT_WATCHER_ID, dict) };
             }
 
@@ -284,11 +277,11 @@ impl DictIterGuard {
 
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
         unsafe {
-            if !self.active {
+            if unlikely(!self.active) {
                 return;
             }
             self.active = false;
-            if !self.it.is_null() {
+            if likely(!self.it.is_null()) {
                 self.it.decref();
                 self.it = ptr::null_mut();
             }
@@ -296,11 +289,7 @@ impl DictIterGuard {
     }
 
     /// Returns 1 if yielded (key/value are new refs), 0 if exhausted, -1 on error.
-    pub unsafe fn next(
-        &mut self,
-        key: &mut *mut PyObject,
-        value: &mut *mut PyObject,
-    ) -> i32 {
+    pub unsafe fn next(&mut self, key: &mut *mut PyObject, value: &mut *mut PyObject) -> i32 {
         *key = ptr::null_mut();
         *value = ptr::null_mut();
 
@@ -309,11 +298,11 @@ impl DictIterGuard {
             let mut k: *mut PyObject = ptr::null_mut();
             let mut v: *mut PyObject = ptr::null_mut();
 
-            if PyDict_Next(self.dict, &mut self.pos, &mut k, &mut v) != 0 {
+            if likely(PyDict_Next(self.dict, &mut self.pos, &mut k, &mut v) != 0) {
                 let ver_now = dict_version_tag(self.dict);
-                if ver_now != self.ver0 {
+                if unlikely(ver_now != self.ver0) {
                     let used_now = dict_used(self.dict);
-                    if used_now != self.used0 {
+                    if unlikely(used_now != self.used0) {
                         PyErr_SetString(
                             PyExc_RuntimeError,
                             crate::cstr!("dictionary changed size during iteration"),
@@ -342,10 +331,10 @@ impl DictIterGuard {
             let mut k: *mut PyObject = ptr::null_mut();
             let mut v: *mut PyObject = ptr::null_mut();
 
-            if PyDict_Next(self.dict, &mut self.pos, &mut k, &mut v) != 0 {
-                if self.mutated.load(Ordering::Acquire) != 0 {
+            if likely(PyDict_Next(self.dict, &mut self.pos, &mut k, &mut v) != 0) {
+                if unlikely(self.mutated.load(Ordering::Acquire) != 0) {
                     let cur = PyDict_Size(self.dict);
-                    let size_changed_now = if cur >= 0 {
+                    let size_changed_now = if likely(cur >= 0) {
                         cur != self.size0
                     } else {
                         PyMutex_Lock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
@@ -356,7 +345,7 @@ impl DictIterGuard {
 
                     PyErr_SetString(
                         PyExc_RuntimeError,
-                        if size_changed_now {
+                        if unlikely(size_changed_now) {
                             crate::cstr!("dictionary changed size during iteration")
                         } else {
                             crate::cstr!("dictionary keys changed during iteration")
@@ -373,9 +362,9 @@ impl DictIterGuard {
                 return 1;
             }
 
-            if self.mutated.load(Ordering::Acquire) != 0 {
+            if unlikely(self.mutated.load(Ordering::Acquire) != 0) {
                 let cur = PyDict_Size(self.dict);
-                let size_changed_now = if cur >= 0 {
+                let size_changed_now = if likely(cur >= 0) {
                     cur != self.size0
                 } else {
                     PyMutex_Lock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
@@ -386,7 +375,7 @@ impl DictIterGuard {
 
                 PyErr_SetString(
                     PyExc_RuntimeError,
-                    if size_changed_now {
+                    if unlikely(size_changed_now) {
                         crate::cstr!("dictionary changed size during iteration")
                     } else {
                         crate::cstr!("dictionary keys changed during iteration")
@@ -402,19 +391,19 @@ impl DictIterGuard {
 
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
         unsafe {
-            if self.it.is_null() {
+            if unlikely(self.it.is_null()) {
                 return -1;
             }
 
             let mut item: *mut PyObject = ptr::null_mut();
             let result = PyIter_NextItem(self.it, &mut item);
 
-            if result != 1 {
+            if unlikely(result != 1) {
                 self.cleanup();
                 return result;
             }
 
-            if item.is_null() || PyTuple_Check(item) == 0 || PyTuple_GET_SIZE(item) != 2 {
+            if unlikely(item.is_null() || PyTuple_Check(item) == 0 || PyTuple_GET_SIZE(item) != 2) {
                 item.decref_nullable();
                 PyErr_SetString(
                     PyExc_RuntimeError,
@@ -462,25 +451,24 @@ pub unsafe fn dict_iter_module_cleanup() {}
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 pub unsafe fn dict_iter_module_init() -> i32 {
-    if unsafe { G_DICT_WATCHER_REGISTERED } {
-        return 0;
+    if likely(unsafe { !G_DICT_WATCHER_REGISTERED }) {
+        let watcher_id = unsafe { PyDict_AddWatcher(Some(copium_dict_watcher_cb)) };
+        if unlikely(watcher_id < 0) {
+            return -1;
+        }
+
+        unsafe {
+            G_DICT_WATCHER_ID = watcher_id;
+            G_DICT_WATCHER_REGISTERED = true;
+        }
     }
 
-    let watcher_id = unsafe { PyDict_AddWatcher(Some(copium_dict_watcher_cb)) };
-    if watcher_id < 0 {
-        return -1;
-    }
-
-    unsafe {
-        G_DICT_WATCHER_ID = watcher_id;
-        G_DICT_WATCHER_REGISTERED = true;
-    }
     0
 }
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 pub unsafe fn dict_iter_module_cleanup() {
-    if unsafe { G_DICT_WATCHER_REGISTERED } {
+    if likely(unsafe { G_DICT_WATCHER_REGISTERED }) {
         let _ = unsafe { PyDict_ClearWatcher(G_DICT_WATCHER_ID) };
         unsafe {
             G_DICT_WATCHER_REGISTERED = false;
