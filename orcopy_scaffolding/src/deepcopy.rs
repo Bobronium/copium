@@ -1,3 +1,4 @@
+use core::intrinsics::{likely, unlikely};
 use pyo3_ffi::*;
 use std::ptr;
 
@@ -52,7 +53,7 @@ unsafe fn dispatch<T, M: Memo>(object: *mut T, memo: &mut M, probe: M::Probe) ->
 where
     *mut T: PyDeepCopy,
 {
-    if unsafe { recursion::enter() } < 0 {
+    if unlikely(recursion::enter() < 0) {
         return PyResult::error();
     }
     let result = unsafe { object.deepcopy(memo, probe) };
@@ -65,26 +66,15 @@ pub unsafe fn deepcopy<M: Memo>(object: *mut PyObject, memo: &mut M) -> PyResult
     unsafe {
         let cls = object.class();
 
-        if cls.is_literal_immutable() || cls.is_builtin_immutable() || cls.is_type_subclass() {
+        if likely(cls.is_literal_immutable()) {
             return PyResult::ok(object.newref());
         }
 
-        deepcopy_cold(object, cls, memo)
-    }
-}
-
-#[inline(never)]
-unsafe fn deepcopy_cold<M: Memo>(
-    object: *mut PyObject,
-    cls: *mut PyTypeObject,
-    memo: &mut M,
-) -> PyResult {
-    unsafe {
         let (probe, found) = memo.recall(object);
         if !found.is_null() {
             return PyResult::ok(found);
         }
-        if M::RECALL_CAN_ERROR && !PyErr_Occurred().is_null() {
+        if M::RECALL_CAN_ERROR && unlikely(!PyErr_Occurred().is_null()) {
             return PyResult::error();
         }
 
@@ -100,6 +90,11 @@ unsafe fn deepcopy_cold<M: Memo>(
         if cls == PySetObject::type_ptr() {
             return dispatch(object as *mut PySetObject, memo, probe);
         }
+
+        if unlikely(cls.is_builtin_immutable() || cls.is_type_subclass()) {
+            return PyResult::ok(object.newref());
+        }
+
         if cls == PyFrozensetObject::type_ptr() {
             return dispatch(object as *mut PyFrozensetObject, memo, probe);
         }
@@ -110,7 +105,7 @@ unsafe fn deepcopy_cold<M: Memo>(
             return (object as *mut PyMethodObject).deepcopy(memo, probe);
         }
 
-        if cls.is_stdlib_immutable() {
+        if unlikely(cls.is_stdlib_immutable()) {
             return PyResult::ok(object.newref());
         }
 
@@ -121,7 +116,7 @@ unsafe fn deepcopy_cold<M: Memo>(
 impl PyDeepCopy for *mut PyListObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
-            let sz = self.len();
+            let sz = self.length();
             let copied = check!(py_list_new(sz));
 
             for i in 0..sz {
@@ -138,7 +133,7 @@ impl PyDeepCopy for *mut PyListObject {
 
             for i in 0..sz {
                 let item = self.get_owned_check_bounds(i);
-                if item.is_null() {
+                if unlikely(item.is_null()) {
                     PyErr_SetString(
                         PyExc_RuntimeError,
                         crate::cstr!("list changed size during iteration"),
@@ -151,7 +146,7 @@ impl PyDeepCopy for *mut PyListObject {
                 let item_copy = deepcopy(item, memo);
                 item.decref();
 
-                if item_copy.is_error() {
+                if unlikely(item_copy.is_error()) {
                     memo.forget(self as _, &probe);
                     copied.decref();
                     return PyResult::error();
@@ -160,17 +155,17 @@ impl PyDeepCopy for *mut PyListObject {
                 let raw = item_copy.into_raw();
                 let mut size_changed = false;
                 with_critical_section_raw(copied as _, || {
-                    if copied.len() != sz {
+                    if unlikely(copied.length() != sz) {
                         size_changed = true;
                     } else {
                         #[cfg(not(any(Py_3_12, Py_3_13, Py_3_14)))]
-                        let old_item = copied.get_borrowed(i);
+                        let old_item = copied.get_borrowed_unchecked(i);
                         copied.set_slot_steal_unchecked(i, raw);
                         #[cfg(not(any(Py_3_12, Py_3_13, Py_3_14)))]
                         old_item.decref();
                     }
                 });
-                if size_changed {
+                if unlikely(size_changed) {
                     raw.decref();
                     PyErr_SetString(
                         PyExc_RuntimeError,
@@ -190,14 +185,14 @@ impl PyDeepCopy for *mut PyListObject {
 impl PyDeepCopy for *mut PyTupleObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
-            let sz = self.len();
+            let sz = self.length();
             let copied = check!(py_tuple_new(sz));
 
             let mut all_same = true;
             for i in 0..sz {
                 let item = self.get_borrowed_unchecked(i);
                 let item_copy = deepcopy(item, memo);
-                if item_copy.is_error() {
+                if unlikely(item_copy.is_error()) {
                     copied.decref();
                     return PyResult::error();
                 }
@@ -213,8 +208,8 @@ impl PyDeepCopy for *mut PyTupleObject {
                 return PyResult::ok(self.newref());
             }
 
-            let (_, existing) = memo.recall(self as _);
-            if !existing.is_null() {
+            let existing = memo.recall_probed(self as _, &probe);
+            if unlikely(!existing.is_null()) {
                 copied.decref();
                 return PyResult::ok(existing);
             }
@@ -257,7 +252,7 @@ impl PyDeepCopy for *mut PyDictObject {
 
                 let key_copy = deepcopy(key, memo);
                 key.decref();
-                if key_copy.is_error() {
+                if unlikely(key_copy.is_error()) {
                     value.decref();
                     memo.forget(self as _, &probe);
                     copied.decref();
@@ -266,7 +261,7 @@ impl PyDeepCopy for *mut PyDictObject {
 
                 let val_copy = deepcopy(value, memo);
                 value.decref();
-                if val_copy.is_error() {
+                if unlikely(val_copy.is_error()) {
                     key_copy.into_raw().decref();
                     memo.forget(self as _, &probe);
                     copied.decref();
@@ -275,7 +270,7 @@ impl PyDeepCopy for *mut PyDictObject {
 
                 let rc = copied.set_item_steal_two(key_copy.into_raw(), val_copy.into_raw());
 
-                if rc < 0 {
+                if unlikely(rc < 0) {
                     memo.forget(self as _, &probe);
                     copied.decref();
                     return PyResult::error();

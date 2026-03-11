@@ -150,7 +150,7 @@ pub(crate) unsafe fn validate_reduce_tuple(
         }
 
         let tup = reduce_result as *mut PyTupleObject;
-        let size = tup.len();
+        let size = tup.length();
         if size < 2 || size > 5 {
             PyErr_SetString(
                 PyExc_TypeError,
@@ -225,7 +225,7 @@ unsafe fn reconstruct_newobj<M: Memo>(
 ) -> *mut PyObject {
     unsafe {
         let tup = argtup as *mut PyTupleObject;
-        let nargs = tup.len();
+        let nargs = tup.length();
         if nargs < 1 {
             PyErr_SetString(
                 PyExc_TypeError,
@@ -270,11 +270,11 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
 ) -> *mut PyObject {
     unsafe {
         let tup = argtup as *mut PyTupleObject;
-        if tup.len() != 3 {
+        if tup.length() != 3 {
             ffi_ext::PyErr_Format(
                 PyExc_TypeError,
                 crate::cstr!("__newobj_ex__ requires 3 arguments, got %zd"),
-                tup.len(),
+                tup.length(),
             );
             return ptr::null_mut();
         }
@@ -367,7 +367,7 @@ unsafe fn reconstruct_callable<M: Memo>(
 ) -> *mut PyObject {
     unsafe {
         let tup = argtup as *mut PyTupleObject;
-        let nargs = tup.len();
+        let nargs = tup.length();
 
         if nargs == 0 {
             return callable.call();
@@ -605,7 +605,7 @@ unsafe fn apply_state_tuple<M: Memo>(
         let mut dict_state = state;
         let mut slotstate: *mut PyObject = ptr::null_mut();
 
-        if state.is_tuple() && (state as *mut PyTupleObject).len() == 2 {
+        if state.is_tuple() && (state as *mut PyTupleObject).length() == 2 {
             let tup = state as *mut PyTupleObject;
             dict_state = tup.get_borrowed_unchecked(0);
             slotstate = tup.get_borrowed_unchecked(1);
@@ -696,7 +696,7 @@ unsafe fn apply_dictitems<M: Memo>(
             }
 
             let (mut key, mut value);
-            if pair.is_tuple() && (pair as *mut PyTupleObject).len() == 2 {
+            if pair.is_tuple() && (pair as *mut PyTupleObject).length() == 2 {
                 let ptup = pair as *mut PyTupleObject;
                 key = ptup.get_borrowed_unchecked(0).newref();
                 value = ptup.get_borrowed_unchecked(1).newref();

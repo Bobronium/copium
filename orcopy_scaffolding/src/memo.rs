@@ -1,5 +1,6 @@
 use pyo3_ffi::*;
 use std::ffi::c_void;
+use std::hint::{likely, unlikely};
 use std::ptr;
 
 use crate::state::STATE;
@@ -18,6 +19,11 @@ pub trait Memo: Sized {
     /// When found is non-null, it is a new reference.
     /// When RECALL_CAN_ERROR is true, caller must check PyErr_Occurred() on null.
     unsafe fn recall(&mut self, object: *mut PyObject) -> (Self::Probe, *mut PyObject);
+
+    unsafe fn recall_probed(&mut self, object: *mut PyObject, probe: &Self::Probe) -> *mut PyObject {
+        let _ = probe;
+        self.recall(object).1
+    }
 
     /// Store (original → copy) mapping. Returns 0 on success, -1 on error.
     unsafe fn memoize(
@@ -96,7 +102,7 @@ impl MemoTable {
     }
 
     fn ensure(&mut self) -> i32 {
-        if !self.slots.is_null() {
+        if likely(!self.slots.is_null()) {
             return 0;
         }
         self.resize(1)
@@ -165,7 +171,7 @@ impl MemoTable {
 
     #[inline(always)]
     pub fn lookup_h(&self, key: usize, hash: usize) -> *mut PyObject {
-        if self.slots.is_null() {
+        if unlikely(self.slots.is_null()) {
             return ptr::null_mut();
         }
 
@@ -177,18 +183,18 @@ impl MemoTable {
             if entry.key == 0 {
                 return ptr::null_mut();
             }
-            if entry.key != TOMBSTONE && entry.key == key {
+            if likely(entry.key != TOMBSTONE) && entry.key == key {
                 return entry.value; // borrowed
             }
             idx = (idx + 1) & mask;
         }
     }
-
+    #[inline]
     pub fn insert_h(&mut self, key: usize, value: *mut PyObject, hash: usize) -> i32 {
-        if self.ensure() < 0 {
+        if unlikely(self.ensure() < 0) {
             return -1;
         }
-        if self.filled * 10 >= self.size * 7 {
+        if unlikely(self.filled * 10 >= self.size * 7) {
             if self.resize(self.used + 1) < 0 {
                 return -1;
             }
@@ -200,7 +206,7 @@ impl MemoTable {
 
         loop {
             let entry = unsafe { &mut *self.slots.add(idx) };
-            if entry.key == 0 {
+            if likely(entry.key == 0) {
                 let at = first_tomb.unwrap_or(idx);
                 let slot = unsafe { &mut *self.slots.add(at) };
                 slot.key = key;
@@ -210,11 +216,11 @@ impl MemoTable {
                 self.filled += 1;
                 return 0;
             }
-            if entry.key == TOMBSTONE {
+            if unlikely(entry.key == TOMBSTONE) {
                 if first_tomb.is_none() {
                     first_tomb = Some(idx);
                 }
-            } else if entry.key == key {
+            } else if unlikely(entry.key == key) {
                 let old = entry.value;
                 unsafe {
                     value.incref();
@@ -258,7 +264,7 @@ impl MemoTable {
 
         for i in 0..self.size {
             let entry = unsafe { &*self.slots.add(i) };
-            if entry.key != 0 && entry.key != TOMBSTONE {
+            if likely(entry.key != 0 && entry.key != TOMBSTONE) {
                 unsafe { entry.value.decref_nullable() };
             }
         }
@@ -397,11 +403,12 @@ impl PyMemoObject {
             self.dict_proxy = ptr::null_mut();
         }
     }
-
+    #[inline(always)]
     pub fn checkpoint(&self) -> MemoCheckpoint {
         self.undo_log.keys.len()
     }
 
+    #[cold]
     pub fn rollback(&mut self, cp: MemoCheckpoint) {
         for i in cp..self.undo_log.keys.len() {
             let key = self.undo_log.keys[i];
@@ -420,6 +427,7 @@ impl PyMemoObject {
     }
 
     /// Export table contents to a Python dict for __deepcopy__ fallback.
+    #[cold]
     pub unsafe fn to_dict(&self) -> *mut PyObject {
         unsafe {
             let dict = PyDict_New();
@@ -452,7 +460,7 @@ impl PyMemoObject {
         }
     }
 
-    /// Sync new entries from dict back into table.
+    #[cold]
     pub unsafe fn sync_from_dict(&mut self, dict: *mut PyObject, orig_size: Py_ssize_t) -> i32 {
         unsafe {
             let cur_size = PyDict_Size(dict);
@@ -496,11 +504,18 @@ impl Memo for PyMemoObject {
     unsafe fn recall(&mut self, object: *mut PyObject) -> (usize, *mut PyObject) {
         let key = object as usize;
         let hash = hash_pointer(key);
-        let found = self.table.lookup_h(key, hash);
+        let found = self.recall_probed(object, &hash);
+        (hash, found)
+    }
+
+    #[inline(always)]
+    unsafe fn recall_probed(&mut self, object: *mut PyObject, probe: &usize) -> *mut PyObject {
+        let key = object as usize;
+        let found = self.table.lookup_h(key, *probe);
         if !found.is_null() {
             unsafe { found.incref() };
         }
-        (hash, found)
+        found
     }
 
     #[inline(always)]
@@ -511,14 +526,14 @@ impl Memo for PyMemoObject {
         probe: &usize,
     ) -> i32 {
         let key = original as usize;
-        if self.table.insert_h(key, copy, *probe) < 0 {
+        if unlikely(self.table.insert_h(key, copy, *probe) < 0) {
             return -1;
         }
         self.keepalive.append(original);
         0
     }
 
-    #[inline(always)]
+    #[cold]
     unsafe fn forget(&mut self, original: *mut PyObject, probe: &usize) {
         let _ = self.table.remove_h(original as usize, *probe);
     }
@@ -797,10 +812,11 @@ pub unsafe fn pymemo_alloc() -> *mut PyMemoObject {
     }
 }
 
+#[inline(always)]
 pub unsafe fn get_memo() -> (*mut PyMemoObject, bool) {
     unsafe {
         let tss = TSS_MEMO;
-        if tss.is_null() {
+        if unlikely(tss.is_null()) {
             let fresh = pymemo_alloc();
             if fresh.is_null() {
                 return (ptr::null_mut(), false);
@@ -809,7 +825,7 @@ pub unsafe fn get_memo() -> (*mut PyMemoObject, bool) {
             return (fresh, true);
         }
 
-        if tss.refcount() == 1 {
+        if likely(tss.refcount() == 1) {
             return (tss, true);
         }
 
@@ -817,9 +833,10 @@ pub unsafe fn get_memo() -> (*mut PyMemoObject, bool) {
     }
 }
 
+#[inline(always)]
 pub unsafe fn cleanup_memo(memo: *mut PyMemoObject, is_tss: bool) {
     unsafe {
-        if is_tss && memo.refcount() == 1 {
+        if likely(is_tss && memo.refcount() == 1) {
             (*memo).reset();
             return;
         }

@@ -1,5 +1,9 @@
 #![feature(thread_local)]
+#![feature(core_intrinsics)]
+#![feature(likely_unlikely)]
+
 use core::ffi::{c_char, c_void};
+use std::hint::{likely, unlikely};
 use pyo3_ffi::*;
 use std::ptr;
 
@@ -53,15 +57,15 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
             PyTuple_Size(kwnames)
         };
 
-        if kwcount == 0 {
-            if nargs < 1 {
+        if likely(kwcount == 0) {
+            if unlikely(nargs < 1) {
                 PyErr_SetString(
                     PyExc_TypeError,
                     cstr!("deepcopy() missing 1 required positional argument: 'x'"),
                 );
                 return ptr::null_mut();
             }
-            if nargs > 2 {
+            if unlikely(nargs > 2) {
                 PyErr_Format(
                     PyExc_TypeError,
                     cstr!("deepcopy() takes from 1 to 2 positional arguments but %zd were given"),
@@ -75,7 +79,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
             }
         } else {
             // ── Keyword argument handling ────────────────────
-            if nargs > 2 {
+            if unlikely(nargs > 2) {
                 PyErr_Format(
                     PyExc_TypeError,
                     cstr!("deepcopy() takes from 1 to 2 positional arguments but %zd were given"),
@@ -125,7 +129,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
                 }
             }
 
-            if obj.is_null() {
+            if unlikely(obj.is_null()) {
                 PyErr_SetString(
                     PyExc_TypeError,
                     cstr!("deepcopy() missing 1 required positional argument: 'x'"),
@@ -135,15 +139,15 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
         }
 
         // ── Dispatch based on memo type ─────────────────────
-        if memo_arg == Py_None() {
+        if likely(memo_arg == Py_None()) {
             let tp = obj.class();
             if tp.is_atomic_immutable() {
                 return obj.newref();
             }
 
-            if STATE.memo_mode == MemoMode::Native {
+            if likely(STATE.memo_mode == MemoMode::Native) {
                 let (pm, is_tss) = memo::get_memo();
-                if pm.is_null() {
+                if unlikely(pm.is_null()) {
                     return ptr::null_mut();
                 }
                 let result = deepcopy::deepcopy(obj, &mut *pm);
@@ -163,7 +167,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
             return result.into_raw();
         }
 
-        if PyDict_CheckExact(memo_arg) != 0 {
+        if memo_arg.is_dict() {
             let mut m = DictMemo::new(memo_arg as _);
             let result = deepcopy::deepcopy(obj, &mut m);
             return result.into_raw();

@@ -67,7 +67,7 @@ pub unsafe fn copy(object: *mut PyObject) -> PyResult {
 impl PyCopy for *mut PyListObject {
     unsafe fn copy(self) -> PyResult {
         unsafe {
-            let size = self.len();
+            let size = self.length();
             let copied = check!(py_list_new(size));
 
             for index in 0..size {
@@ -133,7 +133,7 @@ unsafe fn reconstruct_shallow_instance(
     arguments: *mut PyObject,
 ) -> *mut PyObject {
     unsafe {
-        if (arguments as *mut PyTupleObject).len() == 0 {
+        if (arguments as *mut PyTupleObject).length() == 0 {
             callable.call()
         } else {
             callable.call_with(arguments)
@@ -311,7 +311,7 @@ unsafe fn apply_state_tuple(instance: *mut PyObject, state: *mut PyObject) -> c_
         let mut dict_state = state;
         let mut slot_state: *mut PyObject = ptr::null_mut();
 
-        if state.is_tuple() && (state as *mut PyTupleObject).len() == 2 {
+        if state.is_tuple() && (state as *mut PyTupleObject).length() == 2 {
             let tuple = state as *mut PyTupleObject;
             dict_state = tuple.get_borrowed_unchecked(0);
             slot_state = tuple.get_borrowed_unchecked(1);
@@ -384,7 +384,7 @@ unsafe fn apply_dictitems(instance: *mut PyObject, dictitems: *mut PyObject) -> 
                 break;
             }
 
-            let (key, value) = if pair.is_tuple() && (pair as *mut PyTupleObject).len() == 2 {
+            let (key, value) = if pair.is_tuple() && (pair as *mut PyTupleObject).length() == 2 {
                 let pair_tuple = pair as *mut PyTupleObject;
                 (
                     pair_tuple.get_borrowed_unchecked(0).newref(),
