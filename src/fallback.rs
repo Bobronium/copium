@@ -107,8 +107,7 @@ unsafe fn error_is_ignored(error_identifier: *mut PyObject) -> bool {
         let ignored_error_count = PyTuple_GET_SIZE(STATE.ignored_errors);
         for index in 0..ignored_error_count {
             let suffix = PyTuple_GET_ITEM(STATE.ignored_errors, index);
-            let matched =
-                PyUnicode_Tailmatch(error_identifier, suffix, 0, PY_SSIZE_T_MAX, 1);
+            let matched = PyUnicode_Tailmatch(error_identifier, suffix, 0, PY_SSIZE_T_MAX, 1);
             if matched == 1 {
                 return true;
             }
@@ -141,10 +140,7 @@ unsafe fn extract_deepcopy_expression(line: *mut PyObject) -> *mut PyObject {
         let mut expression_start = deepcopy_start;
         while expression_start > 0 {
             let previous = line_bytes[expression_start - 1];
-            if previous == b'.'
-                || previous == b'_'
-                || previous.is_ascii_alphanumeric()
-            {
+            if previous == b'.' || previous == b'_' || previous.is_ascii_alphanumeric() {
                 expression_start -= 1;
             } else {
                 break;
@@ -615,11 +611,8 @@ unsafe fn emit_fallback_warning(
             }
         }
 
-        deepcopy_qualified_name = PyUnicode_FromFormat(
-            crate::cstr!("%U.%U.__deepcopy__"),
-            module_name,
-            type_name,
-        );
+        deepcopy_qualified_name =
+            PyUnicode_FromFormat(crate::cstr!("%U.%U.__deepcopy__"), module_name, type_name);
         if deepcopy_qualified_name.is_null() {
             status = -1;
             finish_warning_emit!(
@@ -651,8 +644,7 @@ unsafe fn emit_fallback_warning(
         }
 
         if deepcopy_expression.is_null() {
-            deepcopy_expression =
-                PyUnicode_FromFormat(crate::cstr!("deepcopy(%U())"), type_name);
+            deepcopy_expression = PyUnicode_FromFormat(crate::cstr!("deepcopy(%U())"), type_name);
             if deepcopy_expression.is_null() {
                 status = -1;
                 finish_warning_emit!(
@@ -673,10 +665,8 @@ unsafe fn emit_fallback_warning(
             deepcopy_expression_with_memo = make_expression_with_memo(deepcopy_expression);
             if deepcopy_expression_with_memo.is_null() {
                 PyErr_Clear();
-                deepcopy_expression_with_memo = PyUnicode_FromFormat(
-                    crate::cstr!("deepcopy(%U(), memo={})"),
-                    type_name,
-                );
+                deepcopy_expression_with_memo =
+                    PyUnicode_FromFormat(crate::cstr!("deepcopy(%U(), memo={})"), type_name);
                 if deepcopy_expression_with_memo.is_null() {
                     status = -1;
                     finish_warning_emit!(
@@ -696,7 +686,7 @@ unsafe fn emit_fallback_warning(
 
         full_message = PyUnicode_FromFormat(
             crate::cstr!(
-                "\n\nSeems like 'copium.memo' was rejected inside '%U':\n\n%U\ncopium was able to recover from this error, but this is slow.\n\nFix:\n\n  Per Python docs, '%U' should treat memo as an opaque object.\n  See: https://docs.python.org/3/library/copy.html#object.__deepcopy__\n\nWorkarounds:\n\n     local  change %U to %U\n            -> copium uses dict memo in this call (recommended)\n\n    global  `copium.configure(memo=\"dict\")` or export COPIUM_USE_DICT_MEMO=1\n            -> copium uses dict memo everywhere (~1.3-2x slowdown, still faster than stdlib)\n\n explosive  `copium.configure(on_incompatible=\"raise\")` or export COPIUM_NO_MEMO_FALLBACK=1\n            -> '%U' raises the error above. Useful if you want to handle it yourself.\n\n    silent  `copium.configure(suppress_warnings=[%R])` or export COPIUM_NO_MEMO_FALLBACK_WARNING='%U'\n            -> disables this warning for '%U', it stays slow to deepcopy\n"
+                "\n\nSeems like 'copium.memo' was rejected inside '%U':\n\n%U\ncopium was able to recover from this error, but this is slow.\n\nFix:\n\n  Per Python docs, '%U' should treat memo as an opaque object.\n  See: https://docs.python.org/3/library/copy.html#object.__deepcopy__\n\nWorkarounds:\n\n     local  change %U to %U\n            -> copium uses dict memo in this call (recommended)\n\n    global  `copium.config.apply(memo=\"dict\")` or export COPIUM_USE_DICT_MEMO=1\n            -> copium uses dict memo everywhere (~1.3-2x slowdown, still faster than stdlib)\n\n explosive  `copium.config.apply(on_incompatible=\"raise\")` or export COPIUM_NO_MEMO_FALLBACK=1\n            -> '%U' raises the error above. Useful if you want to handle it yourself.\n\n    silent  `copium.config.apply(suppress_warnings=[%R])` or export COPIUM_NO_MEMO_FALLBACK_WARNING='%U'\n            -> disables this warning for '%U', it stays slow to deepcopy\n"
             ),
             deepcopy_qualified_name,
             traceback_string,
