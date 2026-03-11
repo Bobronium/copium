@@ -22,6 +22,15 @@ pub unsafe trait PyTypeInfo: Sized {
     fn check_exact(obj: *mut PyObject) -> bool {
         unsafe { obj.class() == Self::type_ptr() }
     }
+
+    #[inline(always)]
+    unsafe fn cast_exact(object: *mut PyObject, cls: *mut PyTypeObject) -> Option<*mut Self> {
+        if Self::is(cls) {
+            Some(object as *mut Self)
+        } else {
+            None
+        }
+    }
 }
 
 macro_rules! pytype {

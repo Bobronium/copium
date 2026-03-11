@@ -48,17 +48,15 @@ trait PyDeepCopy {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult;
 }
 
-#[inline(always)]
-unsafe fn dispatch<T, M: Memo>(object: *mut T, memo: &mut M, probe: M::Probe) -> PyResult
-where
-    *mut T: PyDeepCopy,
-{
-    if unlikely(recursion::enter() < 0) {
-        return PyResult::error();
-    }
-    let result = unsafe { object.deepcopy(memo, probe) };
-    recursion::leave();
-    result
+macro_rules! protect_stack {
+    ($expr:expr) => {{
+        if unlikely(crate::recursion::enter() < 0) {
+            return PyResult::error();
+        }
+        let result = $expr;
+        crate::recursion::leave();
+        result
+    }};
 }
 
 #[inline(always)]
@@ -78,31 +76,31 @@ pub unsafe fn deepcopy<M: Memo>(object: *mut PyObject, memo: &mut M) -> PyResult
             return PyResult::error();
         }
 
-        if cls == PyTupleObject::type_ptr() {
-            return dispatch(object as *mut PyTupleObject, memo, probe);
+        if let Some(object) = PyTupleObject::cast_exact(object, cls) {
+            return protect_stack!(object.deepcopy(memo, probe));
         }
-        if cls == PyDictObject::type_ptr() {
-            return dispatch(object as *mut PyDictObject, memo, probe);
+        if let Some(object) = PyDictObject::cast_exact(object, cls) {
+            return protect_stack!(object.deepcopy(memo, probe));
         }
-        if cls == PyListObject::type_ptr() {
-            return dispatch(object as *mut PyListObject, memo, probe);
+        if let Some(object) = PyListObject::cast_exact(object, cls) {
+            return protect_stack!(object.deepcopy(memo, probe));
         }
-        if cls == PySetObject::type_ptr() {
-            return dispatch(object as *mut PySetObject, memo, probe);
+        if let Some(object) = PySetObject::cast_exact(object, cls) {
+            return protect_stack!(object.deepcopy(memo, probe));
         }
 
         if unlikely(cls.is_builtin_immutable() || cls.is_type_subclass()) {
             return PyResult::ok(object.newref());
         }
 
-        if cls == PyFrozensetObject::type_ptr() {
-            return dispatch(object as *mut PyFrozensetObject, memo, probe);
+        if let Some(object) = PyFrozensetObject::cast_exact(object, cls) {
+            return protect_stack!(object.deepcopy(memo, probe));
         }
-        if cls == PyByteArrayObject::type_ptr() {
-            return (object as *mut PyByteArrayObject).deepcopy(memo, probe);
+        if let Some(object) = PyByteArrayObject::cast_exact(object, cls) {
+            return object.deepcopy(memo, probe);
         }
-        if cls == PyMethodObject::type_ptr() {
-            return (object as *mut PyMethodObject).deepcopy(memo, probe);
+        if let Some(object) = PyMethodObject::cast_exact(object, cls) {
+            return object.deepcopy(memo, probe);
         }
 
         if unlikely(cls.is_stdlib_immutable()) {
