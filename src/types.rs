@@ -1,6 +1,7 @@
 use core::intrinsics::unlikely;
 use std::os::raw::{c_char, c_int};
 use std::ptr;
+use libc::c_ulong;
 use pyo3::types::PyTuple;
 use pyo3_ffi::*;
 
@@ -149,23 +150,23 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     }
     #[inline(always)]
     unsafe fn is_type(self) -> bool {
-        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_TYPE_SUBCLASS) != 0
+        (crate::ffi_ext::tp_flags_of(self.class()) & (Py_TPFLAGS_TYPE_SUBCLASS as c_ulong)) != 0
     }
     #[inline(always)]
     unsafe fn is_tuple(self) -> bool {
-        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_TUPLE_SUBCLASS) != 0
+        (crate::ffi_ext::tp_flags_of(self.class()) & (Py_TPFLAGS_TUPLE_SUBCLASS as c_ulong)) != 0
     }
     #[inline(always)]
     unsafe fn is_dict(self) -> bool {
-        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_DICT_SUBCLASS) != 0
+        (crate::ffi_ext::tp_flags_of(self.class()) & (Py_TPFLAGS_DICT_SUBCLASS as c_ulong)) != 0
     }
     #[inline(always)]
     unsafe fn is_unicode(self) -> bool {
-        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_UNICODE_SUBCLASS) != 0
+        (crate::ffi_ext::tp_flags_of(self.class()) & (Py_TPFLAGS_UNICODE_SUBCLASS as c_ulong)) != 0
     }
     #[inline(always)]
     unsafe fn is_bytes(self) -> bool {
-        (crate::ffi_ext::tp_flags_of(self.class()) & Py_TPFLAGS_BYTES_SUBCLASS) != 0
+        (crate::ffi_ext::tp_flags_of(self.class()) & (Py_TPFLAGS_BYTES_SUBCLASS as c_ulong)) != 0
     }
     #[inline(always)]
     unsafe fn is_none(self) -> bool {
@@ -442,7 +443,7 @@ unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
 
     #[inline(always)]
     unsafe fn is_type_subclass(self) -> bool {
-        (crate::ffi_ext::tp_flags_of(self) & Py_TPFLAGS_TYPE_SUBCLASS) != 0
+        (crate::ffi_ext::tp_flags_of(self) & (Py_TPFLAGS_TYPE_SUBCLASS as c_ulong)) != 0
     }
 
     #[inline(always)]

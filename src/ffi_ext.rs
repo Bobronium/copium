@@ -1,4 +1,5 @@
 use core::ffi::c_char;
+use libc::c_ulong;
 use pyo3_ffi::*;
 
 use crate::types::PyObjectPtr;
@@ -71,20 +72,20 @@ pub unsafe fn PySequence_Fast_GET_SIZE(o: *mut PyObject) -> Py_ssize_t {
 
 #[cfg(Py_GIL_DISABLED)]
 #[inline(always)]
-pub unsafe fn tp_flags_of(tp: *mut PyTypeObject) -> u64 {
+pub unsafe fn tp_flags_of(tp: *mut PyTypeObject) -> c_ulong {
     unsafe { (*tp).tp_flags.load(Ordering::Relaxed) }
 }
 
 #[cfg(not(Py_GIL_DISABLED))]
 #[inline(always)]
-pub unsafe fn tp_flags_of(tp: *mut PyTypeObject) -> u64 {
+pub unsafe fn tp_flags_of(tp: *mut PyTypeObject) -> c_ulong {
     unsafe { (*tp).tp_flags }
 }
 
 #[inline(always)]
 pub unsafe fn PySequence_Fast_GET_ITEM(o: *mut PyObject, i: Py_ssize_t) -> *mut PyObject {
     unsafe {
-        if (tp_flags_of(o.class()) & Py_TPFLAGS_LIST_SUBCLASS) != 0 {
+        if (tp_flags_of(o.class()) & (Py_TPFLAGS_LIST_SUBCLASS as c_ulong)) != 0 {
             *(*(o as *mut PyListObject)).ob_item.add(i as usize)
         } else {
             *(*(o as *mut PyTupleObject))
