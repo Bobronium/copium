@@ -70,7 +70,9 @@ unsafe fn is_prememo_atomic<M: Memo>(cls: *mut PyTypeObject) -> bool {
     // Python 3.14 checks atomics before checking memo, so we can do it here
     #[cfg(Py_3_14)]
     {
-        cls.is_atomic_immutable()
+        cls.is_literal_immutable()
+            || cls.is_builtin_immutable()
+            || cls.is_type_subclass()
     }
     // Python < 3.14 doesn't check for atomic until it first checks memo
     // since AnyMemo/DiceMemo can error, in order to preserve the semantics
@@ -90,8 +92,7 @@ unsafe fn is_postmemo_atomic<M: Memo>(cls: *mut PyTypeObject) -> bool {
 
     #[cfg(Py_3_14)]
     {
-        let _ = cls;
-        false
+        cls.is_stdlib_immutable()
     }
 
     #[cfg(not(Py_3_14))]
