@@ -19,7 +19,7 @@ except ImportError:
 import copium
 
 if TYPE_CHECKING:
-    from copium import _CopiumConfig
+    from copium.config import _CopiumConfig
 
     NoneType: TypeAlias = None
 else:
@@ -33,12 +33,12 @@ else:
 
 @pytest.mark.typecheck
 def test_config() -> None:
-    assert_type(copium.configure(), NoneType)
-    assert_type(copium.configure(memo="dict"), NoneType)
-    assert_type(copium.configure(memo="native"), NoneType)
-    assert_type(copium.configure(memo="native", on_incompatible="warn"), NoneType)
+    assert_type(copium.config.apply(), NoneType)
+    assert_type(copium.config.apply(memo="dict"), NoneType)
+    assert_type(copium.config.apply(memo="native"), NoneType)
+    assert_type(copium.config.apply(memo="native", on_incompatible="warn"), NoneType)
     assert_type(
-        copium.configure(memo="native", on_incompatible="warn", suppress_warnings=["TypeError"]),
+        copium.config.apply(memo="native", on_incompatible="warn", suppress_warnings=["TypeError"]),
         NoneType,
     )
     with pytest.raises(
@@ -48,6 +48,6 @@ def test_config() -> None:
             " remove them or use `memo='native'`"
         ),
     ):
-        assert_never(copium.configure(memo="dict", on_incompatible="warn"))  # type: ignore[misc,type-assertion-failure,call-overload,unused-ignore]
+        assert_never(copium.config.apply(memo="dict", on_incompatible="warn"))  # type: ignore[misc,type-assertion-failure,call-overload,unused-ignore]
 
-    assert_type(copium.get_config(), _CopiumConfig)
+    assert_type(copium.config.get(), _CopiumConfig)
