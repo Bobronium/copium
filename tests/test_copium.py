@@ -399,7 +399,6 @@ def test_explicit_dictionary_memo_reference_balance():
     assert reference_count_after_copying == reference_count_before_copying
 
 
-
 def test_no_extra_refs_post_deepcopy(copy):
     original = [object(), object(), object()]
     original_refcounts_before_copying = [sys.getrefcount(obj) for obj in original]

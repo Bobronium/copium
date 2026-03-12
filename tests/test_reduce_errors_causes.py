@@ -57,8 +57,7 @@ class SlotStateNoItems:
         ),
         pytest.param(
             DictStateNotMapping(),
-            "dict state from DictStateNotMapping.__reduce__"
-            " must be a dict or mapping, got list",
+            "dict state from DictStateNotMapping.__reduce__ must be a dict or mapping, got list",
             id="dict-state-not-mapping",
         ),
         pytest.param(
@@ -75,5 +74,7 @@ def test_reduce_chained_type_error(obj, cause_message):
 
     cause = exc_info.value.__cause__
     assert cause is not None, f"expected chained __cause__, got bare {exc_info.value!r}"
-    assert isinstance(cause, TypeError), f"expected TypeError cause, got {type(cause).__name__}: {cause}"
+    assert isinstance(cause, TypeError), (
+        f"expected TypeError cause, got {type(cause).__name__}: {cause}"
+    )
     assert str(cause) == str(cause_message)

@@ -636,7 +636,6 @@ def copium_is_editable() -> bool:
 
 
 @pytest.mark.subprocess(environ=env(COPIUM_PATCH_ENABLE="1"))
-@pytest.mark.xfail(True, reason="Can't figure out how to put .pth file in wheel with maturin yet...")
 @pytest.mark.xfail(
     copium_is_editable() and os.getenv("COPIUM_LOCAL_DEVELOPMENT"),
     reason=".pth files in editable installs are broken at the moment.",
