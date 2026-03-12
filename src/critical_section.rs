@@ -66,7 +66,7 @@ impl Drop for CS2Guard {
 }
 
 #[inline(always)]
-pub fn with_critical_section_raw<F, R>(object: *mut PyObject, f: F) -> R
+pub fn with_critical_section_raw<F, R>(_object: *mut PyObject, f: F) -> R
 where
     F: FnOnce() -> R,
 {

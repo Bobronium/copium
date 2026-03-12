@@ -2,7 +2,6 @@ use pyo3_ffi::*;
 use std::ptr;
 
 use crate::deepcopy;
-use crate::memo::PyMemoObject;
 use crate::types::{PyObjectPtr, PyTypeObjectPtr};
 
 unsafe extern "C" fn py_replicate(
@@ -56,7 +55,7 @@ unsafe extern "C" fn py_replicate(
         }
 
         for i in 0..n as Py_ssize_t {
-            let mut memo = crate::memo::pymemo_alloc();
+            let memo = crate::memo::pymemo_alloc();
             let copy = deepcopy::deepcopy(obj, &mut *memo);
             (*memo).reset();
             if copy.is_error() {

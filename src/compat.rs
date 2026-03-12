@@ -1,9 +1,7 @@
 use std::os::raw::c_int;
-use std::ptr;
 
 use pyo3_ffi::*;
 
-use crate::types::PyObjectPtr;
 
 extern "C" {
     pub fn _PyDict_NewPresized(minused: Py_ssize_t) -> *mut PyObject;

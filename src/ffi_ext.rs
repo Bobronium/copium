@@ -51,7 +51,7 @@ pub unsafe fn Py_NotImplemented() -> *mut PyObject {
 
 #[inline(always)]
 pub unsafe fn Py_None() -> *mut PyObject {
-    unsafe { std::ptr::addr_of_mut!(_Py_NoneStruct) }
+    std::ptr::addr_of_mut!(_Py_NoneStruct)
 }
 
 // ── Variadic FFI not reliably in pyo3-ffi ───────────────────

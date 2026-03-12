@@ -33,13 +33,13 @@ pub(crate) unsafe extern "C" fn copium_deepcopy_vectorcall(
 unsafe fn is_patched(fn_ptr: *mut PyObject) -> bool {
     unsafe {
         crate::ffi_ext::PyVectorcall_Function(fn_ptr)
-            .map(|f| f as usize == copium_deepcopy_vectorcall as usize)
+            .map(|f| f as usize == copium_deepcopy_vectorcall as *const () as usize)
             .unwrap_or(false)
     }
 }
 
 #[cfg(Py_3_12)]
-unsafe fn apply_patch(py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObject) -> i32 {
+unsafe fn apply_patch(_py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObject) -> i32 {
     unsafe {
         let original_vc = match crate::ffi_ext::PyVectorcall_Function(fn_ptr) {
             Some(f) => f,
@@ -79,7 +79,7 @@ unsafe fn apply_patch(py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObje
 }
 
 #[cfg(Py_3_12)]
-unsafe fn unapply_patch(py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
+unsafe fn unapply_patch(_py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
     unsafe {
         let capsule = PyObject_GetAttrString(fn_ptr, crate::cstr!("__copium_original__"));
         if capsule.is_null() {

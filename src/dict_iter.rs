@@ -1,5 +1,4 @@
 use pyo3_ffi::*;
-use std::ffi::c_char;
 use std::hint::{likely, unlikely};
 use std::ptr;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -267,7 +266,7 @@ impl DictIterGuard {
 
             let need_unwatch = unsafe { dict_watch_count_locked(dict) == 0 };
             if unlikely(need_unwatch && unsafe { G_DICT_WATCHER_REGISTERED }) {
-                let _ = unsafe { PyDict_Unwatch(G_DICT_WATCHER_ID, dict) };
+                let _ = PyDict_Unwatch(G_DICT_WATCHER_ID, dict) ;
             }
 
             self.prev = ptr::null_mut();

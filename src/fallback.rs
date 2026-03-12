@@ -544,7 +544,7 @@ unsafe fn emit_fallback_warning(
 ) -> i32 {
     unsafe {
         let mut status = 0;
-        let mut caller_info = get_caller_frame_info();
+        let caller_info = get_caller_frame_info();
         let mut traceback_string = format_combined_traceback(caller_info, exception_value);
         let mut full_message: *mut PyObject = ptr::null_mut();
         let type_object = object.class() as *mut PyObject;
@@ -757,11 +757,13 @@ pub unsafe fn maybe_retry_with_dict_memo(
             return ptr::null_mut();
         }
 
+        #[allow(deprecated)]
         PyErr_Fetch(
             &mut exception_type,
             &mut exception_value,
             &mut exception_traceback,
         );
+        #[allow(deprecated)]
         PyErr_NormalizeException(
             &mut exception_type,
             &mut exception_value,

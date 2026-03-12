@@ -26,9 +26,12 @@ pub(crate) unsafe fn chain_type_error(msg: *mut PyObject) {
         let mut cause_type: *mut PyObject = ptr::null_mut();
         let mut cause_val: *mut PyObject = ptr::null_mut();
         let mut cause_tb: *mut PyObject = ptr::null_mut();
+
+        #[allow(deprecated)]
         PyErr_Fetch(&mut cause_type, &mut cause_val, &mut cause_tb);
 
         if !cause_val.is_null() {
+            #[allow(deprecated)]
             PyErr_NormalizeException(&mut cause_type, &mut cause_val, &mut cause_tb);
         }
 
@@ -36,12 +39,14 @@ pub(crate) unsafe fn chain_type_error(msg: *mut PyObject) {
         msg.decref();
 
         if new_exc.is_null() {
+            #[allow(deprecated)]
             PyErr_Restore(cause_type, cause_val, cause_tb);
             return;
         }
 
         if !cause_val.is_null() {
             PyException_SetCause(cause_val, new_exc);
+            #[allow(deprecated)]
             PyErr_Restore(cause_type, cause_val, cause_tb);
             return;
         }

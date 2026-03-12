@@ -1,9 +1,8 @@
 use core::intrinsics::unlikely;
+use libc::c_ulong;
+use pyo3_ffi::*;
 use std::os::raw::{c_char, c_int};
 use std::ptr;
-use libc::c_ulong;
-use pyo3::types::PyTuple;
-use pyo3_ffi::*;
 
 use crate::compat;
 use crate::ffi_ext;
@@ -17,7 +16,7 @@ pub unsafe trait PyTypeInfo: Sized {
     fn type_ptr() -> *mut PyTypeObject;
     #[inline(always)]
     fn is(tp: *mut PyTypeObject) -> bool {
-        unsafe { tp == Self::type_ptr() }
+        tp == Self::type_ptr()
     }
 
     #[inline(always)]
@@ -40,7 +39,7 @@ macro_rules! pytype {
         unsafe impl PyTypeInfo for $rust {
             #[inline(always)]
             fn type_ptr() -> *mut PyTypeObject {
-                unsafe { std::ptr::addr_of_mut!($ffi) }
+                std::ptr::addr_of_mut!($ffi)
             }
         }
     )+}
@@ -89,7 +88,6 @@ pub unsafe trait PyObjectPtr {
 unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     #[inline(always)]
     unsafe fn as_pyobject(self) -> *mut PyObject {
-
         self as _
     }
     #[inline(always)]
