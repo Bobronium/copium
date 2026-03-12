@@ -25,10 +25,11 @@ extern "C" {
 /// PyMethod_Function is a macro in CPython; access via struct layout.
 #[repr(C)]
 pub struct PyMethodObject {
-    pub ob_refcnt: pyo3_ffi::Py_ssize_t,
-    pub ob_type: *mut PyTypeObject,
+    pub ob_base: PyObject,
     pub im_func: *mut PyObject,
     pub im_self: *mut PyObject,
+    pub im_weakreflist: *mut PyObject,
+    pub vectorcall: vectorcallfunc,
 }
 
 #[inline(always)]
