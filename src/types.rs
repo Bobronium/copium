@@ -8,6 +8,7 @@ use pyo3_ffi::*;
 use crate::compat;
 use crate::ffi_ext;
 use crate::ffi_ext::*;
+use crate::memo::{Memo_Type, PyMemoObject};
 use crate::state::STATE;
 
 // ── Type identity (on the type, not the pointer) ───────────
@@ -55,6 +56,7 @@ pytype! {
     PyByteArrayObject => PyByteArray_Type,
     PyFrozensetObject => PyFrozenSet_Type,
     PyMethodObject    => PyMethod_Type,
+    PyMemoObject      => Memo_Type,
 }
 
 // ── PyAnyPtr — pointer methods on every *mut T ─────────────

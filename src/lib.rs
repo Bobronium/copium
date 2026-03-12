@@ -27,7 +27,8 @@ mod critical_section;
 
 use memo::{AnyMemo, DictMemo};
 use state::{MemoMode, STATE};
-use crate::types::{py_dict_new, PyObjectPtr, PyTypeObjectPtr};
+use crate::memo::PyMemoObject;
+use crate::types::{py_dict_new, PyObjectPtr, PyTypeObjectPtr, PyTypeInfo};
 // ══════════════════════════════════════════════════════════════
 //  copy(obj, /) — METH_O
 // ══════════════════════════════════════════════════════════════
@@ -167,8 +168,15 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
             return result.into_raw();
         }
 
-        if memo_arg.is_dict() {
-            let mut m = DictMemo::new(memo_arg as _);
+        let memo_type = memo_arg.class();
+
+        if let Some(memo) = PyMemoObject::cast_exact(memo_arg, memo_type) {
+            let result = deepcopy::deepcopy(obj, &mut *memo);
+            return result.into_raw();
+        }
+
+        if let Some(memo) = PyDictObject::cast_exact(memo_arg, memo_type) {
+            let mut m = DictMemo::new(memo);
             let result = deepcopy::deepcopy(obj, &mut m);
             return result.into_raw();
         }

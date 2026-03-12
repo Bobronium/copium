@@ -789,11 +789,6 @@ unsafe fn init_keepalive_methods() {
     }
 }
 
-unsafe impl PyTypeInfo for PyMemoObject {
-    fn type_ptr() -> *mut PyTypeObject {
-        unsafe { ptr::addr_of_mut!(Memo_Type) }
-    }
-}
 
 // ── TSS ────────────────────────────────────────────────────
 
