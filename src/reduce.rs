@@ -83,9 +83,12 @@ pub(crate) unsafe fn try_reduce_via_registry(
 
 pub(crate) unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mut PyObject {
     unsafe {
-        let s = &STATE;
+        let state_pointer = ptr::addr_of!(STATE);
+        let reduce_ex_name = (*state_pointer).s_reduce_ex;
+        let reduce_name = (*state_pointer).s_reduce;
+        let copy_error = (*state_pointer).copy_error;
         let mut reduce_ex: *mut PyObject = ptr::null_mut();
-        let has = obj.get_optional_attr(s.s_reduce_ex, &mut reduce_ex);
+        let has = obj.get_optional_attr(reduce_ex_name, &mut reduce_ex);
         if has > 0 {
             let four = PyLong_FromLong(4);
             let res = reduce_ex.call_one(four);
@@ -97,7 +100,7 @@ pub(crate) unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mu
             return ptr::null_mut();
         }
         let mut reduce: *mut PyObject = ptr::null_mut();
-        let has = obj.get_optional_attr(s.s_reduce, &mut reduce);
+        let has = obj.get_optional_attr(reduce_name, &mut reduce);
         if has > 0 {
             let res = reduce.call();
             reduce.decref();
@@ -107,7 +110,7 @@ pub(crate) unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mu
             return ptr::null_mut();
         }
         PyErr_SetString(
-            s.copy_error,
+            copy_error,
             crate::cstr!("un(deep)copyable object (no reduce protocol)"),
         );
         ptr::null_mut()
@@ -789,7 +792,9 @@ pub unsafe fn reconstruct<M: Memo>(
     probe: M::Probe,
 ) -> *mut PyObject {
     unsafe {
-        let s = &STATE;
+        let state_pointer = ptr::addr_of!(STATE);
+        let copyreg_new_object = (*state_pointer).copyreg_newobj;
+        let copyreg_new_object_with_state = (*state_pointer).copyreg_newobj_ex;
 
         let mut reduce_result = try_reduce_via_registry(original, tp);
         if reduce_result.is_null() {
@@ -816,9 +821,9 @@ pub unsafe fn reconstruct<M: Memo>(
             ReduceKind::Tuple => {}
         }
 
-        let instance = if parts.callable == s.copyreg_newobj {
+        let instance = if parts.callable == copyreg_new_object {
             reconstruct_newobj(parts.argtup, memo)
-        } else if parts.callable == s.copyreg_newobj_ex {
+        } else if parts.callable == copyreg_new_object_with_state {
             reconstruct_newobj_ex(parts.argtup, memo, tp)
         } else {
             reconstruct_callable(parts.callable, parts.argtup, memo)

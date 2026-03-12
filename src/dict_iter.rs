@@ -1,14 +1,18 @@
+#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+use crate::c_char;
 use pyo3_ffi::*;
 use std::hint::{likely, unlikely};
 use std::ptr;
-use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::types::PyObjectPtr;
 
-#[cfg(Py_3_14)]
+#[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
+use std::sync::atomic::{AtomicI32, Ordering};
+
+#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
 const ITEMS_CSTR: &[u8] = b"items\0";
 
-#[cfg(Py_3_14)]
+#[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 extern "C" {
     fn PyDict_AddWatcher(
         callback: Option<
@@ -23,6 +27,10 @@ extern "C" {
     fn PyDict_ClearWatcher(watcher_id: i32) -> i32;
     fn PyDict_Watch(watcher_id: i32, dict: *mut PyObject) -> i32;
     fn PyDict_Unwatch(watcher_id: i32, dict: *mut PyObject) -> i32;
+}
+
+#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+extern "C" {
     fn PyIter_NextItem(iter: *mut PyObject, item: *mut *mut PyObject) -> i32;
 }
 
@@ -250,22 +258,16 @@ impl DictIterGuard {
             PyMutex_Lock(std::ptr::addr_of_mut!(G_DICTITER_MUTEX));
 
             if likely(!self.prev.is_null()) {
-                unsafe {
-                    (*self.prev).next = self.next;
-                }
+                (*self.prev).next = self.next;
             } else {
-                unsafe {
-                    G_GUARD_LIST_HEAD = self.next;
-                }
+                G_GUARD_LIST_HEAD = self.next;
             }
             if likely(!self.next.is_null()) {
-                unsafe {
-                    (*self.next).prev = self.prev;
-                }
+                (*self.next).prev = self.prev;
             }
 
-            let need_unwatch = unsafe { dict_watch_count_locked(dict) == 0 };
-            if unlikely(need_unwatch && unsafe { G_DICT_WATCHER_REGISTERED }) {
+            let need_unwatch = dict_watch_count_locked(dict) == 0;
+            if unlikely(need_unwatch && G_DICT_WATCHER_REGISTERED) {
                 let _ = PyDict_Unwatch(G_DICT_WATCHER_ID, dict) ;
             }
 

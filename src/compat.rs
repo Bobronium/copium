@@ -1,7 +1,12 @@
+#![allow(non_snake_case)]
+// These shims intentionally mirror CPython C API names.
+
 use std::os::raw::c_int;
 
 use pyo3_ffi::*;
 
+#[cfg(not(Py_3_13))]
+use crate::types::PyObjectPtr;
 
 extern "C" {
     pub fn _PyDict_NewPresized(minused: Py_ssize_t) -> *mut PyObject;
@@ -30,10 +35,10 @@ pub unsafe fn _PyDict_SetItem_Take2(
     value: *mut PyObject,
 ) -> c_int {
     unsafe {
-        let res = PyDict_SetItem(op, key, value);
+        let status = PyDict_SetItem(op, key, value);
         key.decref();
         value.decref();
-        res
+        status
     }
 }
 

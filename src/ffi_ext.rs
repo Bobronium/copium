@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 use core::ffi::c_char;
 use libc::c_ulong;
 use pyo3_ffi::*;
@@ -46,7 +47,7 @@ extern "C" {
 
 #[inline(always)]
 pub unsafe fn Py_NotImplemented() -> *mut PyObject {
-    unsafe { std::ptr::addr_of_mut!(_Py_NotImplementedStruct) }
+    std::ptr::addr_of_mut!(_Py_NotImplementedStruct)
 }
 
 #[inline(always)]

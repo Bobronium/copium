@@ -159,7 +159,7 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
         };
         EXTRA_METHODS[2] = PyMethodDef::zeroed();
 
-        EXTRA_MODULE_DEF.m_methods = EXTRA_METHODS.as_mut_ptr();
+        EXTRA_MODULE_DEF.m_methods = ptr::addr_of_mut!(EXTRA_METHODS).cast::<PyMethodDef>();
 
         let module = PyModule_Create(std::ptr::addr_of_mut!(EXTRA_MODULE_DEF));
         if module.is_null() {

@@ -1,5 +1,5 @@
-use core::intrinsics::{likely, unlikely};
 use pyo3_ffi::*;
+use std::hint::{likely, unlikely};
 use std::ptr;
 
 use crate::critical_section::with_critical_section_raw;
@@ -491,9 +491,10 @@ impl PyDeepCopy for *mut PyMethodObject {
 impl PyDeepCopy for *mut PyObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
-            let s = &STATE;
+            let state_pointer = ptr::addr_of!(STATE);
+            let deepcopy_name = (*state_pointer).s_deepcopy;
             let mut dunder: *mut PyObject = ptr::null_mut();
-            let has = self.get_optional_attr(s.s_deepcopy, &mut dunder);
+            let has = self.get_optional_attr(deepcopy_name, &mut dunder);
             if has < 0 {
                 return PyResult::error();
             }

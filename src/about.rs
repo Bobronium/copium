@@ -19,7 +19,7 @@ static mut ABOUT_MODULE_DEF: PyModuleDef = PyModuleDef {
 
 pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
     unsafe {
-        ABOUT_MODULE_DEF.m_methods = ABOUT_METHODS.as_mut_ptr();
+        ABOUT_MODULE_DEF.m_methods = ptr::addr_of_mut!(ABOUT_METHODS).cast::<PyMethodDef>();
 
         let module = PyModule_Create(std::ptr::addr_of_mut!(ABOUT_MODULE_DEF));
         if module.is_null() {

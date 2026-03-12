@@ -22,14 +22,6 @@ trait PyCopy {
     unsafe fn copy(self) -> PyResult;
 }
 
-#[inline(always)]
-unsafe fn dispatch<T>(object: *mut T) -> PyResult
-where
-    *mut T: PyCopy,
-{
-    unsafe { object.copy() }
-}
-
 pub unsafe fn copy(object: *mut PyObject) -> PyResult {
     unsafe {
         let class = object.class();

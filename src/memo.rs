@@ -557,6 +557,7 @@ impl Drop for PyMemoObject {
     }
 }
 
+#[allow(non_upper_case_globals)]
 pub static mut Memo_Type: PyTypeObject = unsafe { std::mem::zeroed() };
 static mut MEMO_MAPPING: PyMappingMethods = unsafe { std::mem::zeroed() };
 static mut MEMO_SEQUENCE: PySequenceMethods = unsafe { std::mem::zeroed() };
@@ -785,7 +786,7 @@ unsafe fn init_keepalive_methods() {
         (*tp).tp_traverse = Some(keepalive_list_traverse);
         (*tp).tp_clear = Some(keepalive_list_clear);
         (*tp).tp_iter = Some(keepalive_list_iter);
-        (*tp).tp_methods = KEEPALIVE_LIST_METHODS_TABLE.as_mut_ptr();
+        (*tp).tp_methods = ptr::addr_of_mut!(KEEPALIVE_LIST_METHODS_TABLE).cast::<PyMethodDef>();
     }
 }
 
@@ -1002,7 +1003,9 @@ impl AnyMemo {
                 return 0;
             }
 
-            let s = &STATE;
+            let state_pointer = ptr::addr_of!(STATE);
+            let get_method_name = (*state_pointer).s_get;
+            let sentinel = (*state_pointer).sentinel;
             let pykey = PyLong_FromVoidPtr(self.object as *mut c_void);
             if pykey.is_null() {
                 return -1;
@@ -1010,9 +1013,9 @@ impl AnyMemo {
 
             let existing = PyObject_CallMethodObjArgs(
                 self.object,
-                s.s_get,
+                get_method_name,
                 pykey,
-                s.sentinel,
+                sentinel,
                 ptr::null_mut::<PyObject>(),
             );
             if existing.is_null() {
@@ -1020,7 +1023,7 @@ impl AnyMemo {
                 return -1;
             }
 
-            if existing != s.sentinel {
+            if existing != sentinel {
                 self.keepalive = existing;
                 pykey.decref();
                 return 0;
@@ -1053,7 +1056,9 @@ impl Memo for AnyMemo {
 
     unsafe fn recall(&mut self, object: *mut PyObject) -> ((), *mut PyObject) {
         unsafe {
-            let s = &STATE;
+            let state_pointer = ptr::addr_of!(STATE);
+            let get_method_name = (*state_pointer).s_get;
+            let sentinel = (*state_pointer).sentinel;
             let pykey = PyLong_FromVoidPtr(object as *mut c_void);
             if pykey.is_null() {
                 return ((), ptr::null_mut());
@@ -1061,9 +1066,9 @@ impl Memo for AnyMemo {
 
             let found = PyObject_CallMethodObjArgs(
                 self.object,
-                s.s_get,
+                get_method_name,
                 pykey,
-                s.sentinel,
+                sentinel,
                 ptr::null_mut::<PyObject>(),
             );
             pykey.decref();
@@ -1071,7 +1076,7 @@ impl Memo for AnyMemo {
             if found.is_null() {
                 return ((), ptr::null_mut()); // error set
             }
-            if found == s.sentinel {
+            if found == sentinel {
                 found.decref();
                 return ((), ptr::null_mut()); // not found, no error
             }
@@ -1810,7 +1815,7 @@ pub unsafe fn memo_ready_type() -> i32 {
         (*tp).tp_traverse = Some(memo_traverse);
         (*tp).tp_clear = Some(memo_clear_gc);
         (*tp).tp_iter = Some(memo_iter);
-        (*tp).tp_methods = MEMO_METHODS_TABLE.as_mut_ptr();
+        (*tp).tp_methods = ptr::addr_of_mut!(MEMO_METHODS_TABLE).cast::<PyMethodDef>();
         (*tp).tp_finalize = Some(memo_finalize);
 
         PyType_Ready(tp)

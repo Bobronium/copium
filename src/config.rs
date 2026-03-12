@@ -77,7 +77,7 @@ fn apply(
         return Ok(());
     }
 
-    let state = unsafe { std::ptr::addr_of_mut!(STATE) };
+    let state = std::ptr::addr_of_mut!(STATE);
     let mut memo_is_dict = false;
 
     if let Some(memo) = memo {
@@ -151,12 +151,15 @@ fn apply(
 //  copium.config.get()
 #[pyfunction]
 fn get(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
-    let s = unsafe { &STATE };
+    let state_pointer = std::ptr::addr_of!(STATE);
+    let memo_mode = unsafe { (*state_pointer).memo_mode };
+    let on_incompatible = unsafe { (*state_pointer).on_incompatible };
+    let ignored_errors = unsafe { (*state_pointer).ignored_errors };
     let dict = PyDict::new(py);
 
     dict.set_item(
         "memo",
-        match s.memo_mode {
+        match memo_mode {
             MemoMode::Dict => "dict",
             MemoMode::Native => "native",
         },
@@ -164,7 +167,7 @@ fn get(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
 
     dict.set_item(
         "on_incompatible",
-        match s.on_incompatible {
+        match on_incompatible {
             OnIncompatible::Raise => "raise",
             OnIncompatible::Silent => "silent",
             OnIncompatible::Warn => "warn",
@@ -172,8 +175,8 @@ fn get(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     )?;
 
     let sw = unsafe {
-        if !s.ignored_errors.is_null() {
-            s.ignored_errors.newref()
+        if !ignored_errors.is_null() {
+            ignored_errors.newref()
         } else {
             pyo3_ffi::PyTuple_New(0)
         }

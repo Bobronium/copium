@@ -1,13 +1,13 @@
-use core::intrinsics::unlikely;
 use libc::c_ulong;
 use pyo3_ffi::*;
+use std::hint::unlikely;
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 use crate::compat;
 use crate::ffi_ext;
 use crate::ffi_ext::*;
-use crate::memo::{Memo_Type, PyMemoObject};
+use crate::memo::{PyMemoObject, Memo_Type};
 use crate::state::STATE;
 
 // ── Type identity (on the type, not the pointer) ───────────
@@ -17,11 +17,6 @@ pub unsafe trait PyTypeInfo: Sized {
     #[inline(always)]
     fn is(tp: *mut PyTypeObject) -> bool {
         tp == Self::type_ptr()
-    }
-
-    #[inline(always)]
-    fn check_exact(obj: *mut PyObject) -> bool {
-        unsafe { obj.class() == Self::type_ptr() }
     }
 
     #[inline(always)]
@@ -61,7 +56,6 @@ pytype! {
 // ── PyAnyPtr — pointer methods on every *mut T ─────────────
 
 pub unsafe trait PyObjectPtr {
-    unsafe fn as_pyobject(self) -> *mut PyObject;
     unsafe fn refcount(self) -> Py_ssize_t;
     unsafe fn incref(self);
     unsafe fn decref(self);
@@ -74,7 +68,6 @@ pub unsafe trait PyObjectPtr {
     unsafe fn call_one(self, arg: *mut PyObject) -> *mut PyObject;
     unsafe fn call_with(self, args: *mut PyObject) -> *mut PyObject;
     unsafe fn set_attr(self, name: *mut PyObject, value: *mut PyObject) -> c_int;
-    unsafe fn set_item_obj(self, key: *mut PyObject, value: *mut PyObject) -> c_int;
     unsafe fn get_iter(self) -> *mut PyObject;
 
     unsafe fn is_type(self) -> bool;
@@ -86,10 +79,6 @@ pub unsafe trait PyObjectPtr {
 }
 
 unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
-    #[inline(always)]
-    unsafe fn as_pyobject(self) -> *mut PyObject {
-        self as _
-    }
     #[inline(always)]
     unsafe fn refcount(self) -> Py_ssize_t {
         Py_REFCNT(self as *mut PyObject)
@@ -139,10 +128,6 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     #[inline(always)]
     unsafe fn set_attr(self, name: *mut PyObject, value: *mut PyObject) -> c_int {
         PyObject_SetAttr(self as *mut PyObject, name, value)
-    }
-    #[inline(always)]
-    unsafe fn set_item_obj(self, key: *mut PyObject, value: *mut PyObject) -> c_int {
-        PyObject_SetItem(self as *mut PyObject, key, value)
     }
     #[inline(always)]
     unsafe fn get_iter(self) -> *mut PyObject {
@@ -437,8 +422,11 @@ unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
 
     #[inline(always)]
     unsafe fn is_stdlib_immutable(self) -> bool {
-        let s = &STATE;
-        (self == s.re_pattern_type) || (self == s.decimal_type) || (self == s.fraction_type)
+        let state_pointer = std::ptr::addr_of!(STATE);
+        let regex_pattern_type = (*state_pointer).re_pattern_type;
+        let decimal_type = (*state_pointer).decimal_type;
+        let fraction_type = (*state_pointer).fraction_type;
+        (self == regex_pattern_type) || (self == decimal_type) || (self == fraction_type)
     }
 
     #[inline(always)]

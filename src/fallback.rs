@@ -65,7 +65,6 @@ unsafe fn build_error_identifier(
     unsafe {
         let mut type_name: *mut PyObject = ptr::null_mut();
         let mut message: *mut PyObject = ptr::null_mut();
-        let mut result: *mut PyObject = ptr::null_mut();
 
         if !exception_type.is_null() && PyType_Check(exception_type) != 0 {
             type_name = PyObject_GetAttrString(exception_type, crate::cstr!("__name__"));
@@ -86,11 +85,11 @@ unsafe fn build_error_identifier(
             }
         }
 
-        if !message.is_null() && PyUnicode_GET_LENGTH(message) > 0 {
-            result = PyUnicode_FromFormat(crate::cstr!("%U: %U"), type_name, message);
+        let result = if !message.is_null() && PyUnicode_GET_LENGTH(message) > 0 {
+            PyUnicode_FromFormat(crate::cstr!("%U: %U"), type_name, message)
         } else {
-            result = PyUnicode_FromFormat(crate::cstr!("%U: "), type_name);
-        }
+            PyUnicode_FromFormat(crate::cstr!("%U: "), type_name)
+        };
 
         type_name.decref_nullable();
         message.decref_nullable();
@@ -374,15 +373,13 @@ unsafe fn format_combined_traceback(
     exception_value: *mut PyObject,
 ) -> *mut PyObject {
     unsafe {
-        let mut result: *mut PyObject = ptr::null_mut();
         let mut parts: *mut PyObject = ptr::null_mut();
-        let mut traceback_module: *mut PyObject = ptr::null_mut();
+        let traceback_module = PyImport_ImportModule(crate::cstr!("traceback"));
         let mut format_exception: *mut PyObject = ptr::null_mut();
         let mut traceback_lines: *mut PyObject = ptr::null_mut();
         let mut empty_string: *mut PyObject = ptr::null_mut();
         let mut caller_string: *mut PyObject = ptr::null_mut();
 
-        traceback_module = PyImport_ImportModule(crate::cstr!("traceback"));
         if traceback_module.is_null() {
             cleanup_traceback_build!(
                 parts,
@@ -525,7 +522,7 @@ unsafe fn format_combined_traceback(
             }
         }
 
-        result = PyUnicode_Join(empty_string, parts);
+        let result = PyUnicode_Join(empty_string, parts);
 
         parts.decref_nullable();
         traceback_module.decref_nullable();
@@ -741,7 +738,6 @@ pub unsafe fn maybe_retry_with_dict_memo(
 ) -> *mut PyObject {
     unsafe {
         let mut result: *mut PyObject = ptr::null_mut();
-        let mut dict_memo: *mut PyObject = ptr::null_mut();
         let mut exception_type: *mut PyObject = ptr::null_mut();
         let mut exception_value: *mut PyObject = ptr::null_mut();
         let mut exception_traceback: *mut PyObject = ptr::null_mut();
@@ -772,7 +768,7 @@ pub unsafe fn maybe_retry_with_dict_memo(
 
         memo.rollback(checkpoint);
 
-        dict_memo = memo.to_dict();
+        let dict_memo = memo.to_dict();
         if dict_memo.is_null() {
             finish_fallback_retry!(
                 result,

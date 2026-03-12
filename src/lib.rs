@@ -1,11 +1,10 @@
 #![feature(thread_local)]
-#![feature(core_intrinsics)]
 #![feature(likely_unlikely)]
 
 use core::ffi::{c_char, c_void};
-use std::hint::{likely, unlikely};
 use pyo3_ffi::*;
 use std::ptr;
+use std::hint::{likely, unlikely};
 
 #[macro_use]
 mod ffi_ext;
@@ -456,8 +455,8 @@ pub unsafe fn add_submodule(
 pub unsafe extern "C" fn PyInit_copium() -> *mut PyObject {
     unsafe {
         init_methods();
-        MODULE_DEF.m_methods = MAIN_METHODS.as_mut_ptr();
-        MODULE_DEF.m_slots = MODULE_SLOTS.as_mut_ptr();
+        MODULE_DEF.m_methods = ptr::addr_of_mut!(MAIN_METHODS).cast::<PyMethodDef>();
+        MODULE_DEF.m_slots = ptr::addr_of_mut!(MODULE_SLOTS).cast::<PyModuleDef_Slot>();
         PyModuleDef_Init(std::ptr::addr_of_mut!(MODULE_DEF))
     }
 }
