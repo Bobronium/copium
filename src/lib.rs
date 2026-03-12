@@ -384,6 +384,23 @@ unsafe extern "C" fn orcopium_free(_: *mut c_void) {
     }
 }
 
+#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+static mut MODULE_SLOTS: [PyModuleDef_Slot; 3] = [
+    PyModuleDef_Slot {
+        slot: Py_mod_exec,
+        value: orcopium_exec as *mut _,
+    },
+    PyModuleDef_Slot {
+        slot: Py_mod_gil,
+        value: Py_MOD_GIL_NOT_USED,
+    },
+    PyModuleDef_Slot {
+        slot: 0,
+        value: ptr::null_mut(),
+    },
+];
+
+#[cfg(not(all(Py_3_14, Py_GIL_DISABLED)))]
 static mut MODULE_SLOTS: [PyModuleDef_Slot; 2] = [
     PyModuleDef_Slot {
         slot: Py_mod_exec,
