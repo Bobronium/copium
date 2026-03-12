@@ -1,16 +1,13 @@
-#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
-use crate::c_char;
 use pyo3_ffi::*;
 use std::hint::{likely, unlikely};
 use std::ptr;
 
+#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+use crate::state::STATE;
 use crate::types::PyObjectPtr;
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 use std::sync::atomic::{AtomicI32, Ordering};
-
-#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
-const ITEMS_CSTR: &[u8] = b"items\0";
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 extern "C" {
@@ -145,6 +142,26 @@ pub struct DictIterGuard {
 }
 
 impl DictIterGuard {
+    #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+    unsafe fn new_dict_items_iterator(dict: *mut PyObject) -> *mut PyObject {
+        unsafe {
+            let arguments = [dict];
+            let dict_items_view = (STATE.dict_items_vectorcall)(
+                STATE.dict_items_descriptor,
+                arguments.as_ptr(),
+                1,
+                ptr::null_mut(),
+            );
+            if unlikely(dict_items_view.is_null()) {
+                return ptr::null_mut();
+            }
+
+            let iterator = PyObject_GetIter(dict_items_view);
+            dict_items_view.decref();
+            iterator
+        }
+    }
+
     pub unsafe fn new(dict: *mut PyObject) -> Self {
         #[cfg(not(Py_3_14))]
         unsafe {
@@ -172,21 +189,9 @@ impl DictIterGuard {
 
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
         unsafe {
-            let mut it: *mut PyObject = ptr::null_mut();
-
-            let items_attr = PyObject_GetAttrString(dict, ITEMS_CSTR.as_ptr() as *const c_char);
-            if likely(!items_attr.is_null()) {
-                let items_view = PyObject_CallNoArgs(items_attr);
-                items_attr.decref();
-                if likely(!items_view.is_null()) {
-                    it = PyObject_GetIter(items_view);
-                    items_view.decref();
-                }
-            }
-
             Self {
                 dict,
-                it,
+                it: Self::new_dict_items_iterator(dict),
                 active: true,
             }
         }

@@ -48,6 +48,12 @@ pub struct ModuleState {
     pub copyreg_newobj: *mut PyObject,
     pub copyreg_newobj_ex: *mut PyObject,
 
+    #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+    pub dict_items_descriptor: *mut PyObject,
+
+    #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+    pub dict_items_vectorcall: vectorcallfunc,
+
     // configuration
     pub memo_mode: MemoMode,
     pub on_incompatible: OnIncompatible,
@@ -79,6 +85,10 @@ pub static mut STATE: ModuleState = ModuleState {
     copy_error: ptr::null_mut(),
     copyreg_newobj: ptr::null_mut(),
     copyreg_newobj_ex: ptr::null_mut(),
+    #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+    dict_items_descriptor: ptr::null_mut(),
+    #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+    dict_items_vectorcall: uninitialized_dict_items_vectorcall,
     memo_mode: MemoMode::Native,
     on_incompatible: OnIncompatible::Warn,
     ignored_errors: ptr::null_mut(),
@@ -89,6 +99,22 @@ macro_rules! intern {
     ($s:literal) => {
         PyUnicode_InternFromString(cstr!($s))
     };
+}
+
+#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+unsafe extern "C" fn uninitialized_dict_items_vectorcall(
+    _callable: *mut PyObject,
+    _arguments: *const *mut PyObject,
+    _number_of_arguments: usize,
+    _keyword_names: *mut PyObject,
+) -> *mut PyObject {
+    unsafe {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            cstr!("copium: dict.items() vectorcall cache was not initialized"),
+        );
+        ptr::null_mut()
+    }
 }
 
 unsafe fn load_type_from(module_name: &str, attr: &str) -> *mut PyTypeObject {
@@ -189,8 +215,40 @@ pub unsafe fn init() -> i32 {
             return -1;
         }
 
+        #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+        {
+            let dict_items_descriptor =
+                PyObject_GetAttrString(ptr::addr_of_mut!(PyDict_Type) as *mut PyObject, cstr!("items"));
+            if dict_items_descriptor.is_null() {
+                return -1;
+            }
+
+            let Some(dict_items_vectorcall) = ffi_ext::PyVectorcall_Function(dict_items_descriptor)
+            else {
+                dict_items_descriptor.decref();
+                PyErr_SetString(
+                    PyExc_TypeError,
+                    cstr!("copium: failed to cache dict.items() vectorcall"),
+                );
+                return -1;
+            };
+
+            (*s).dict_items_descriptor = dict_items_descriptor;
+            (*s).dict_items_vectorcall = dict_items_vectorcall;
+        }
+
         // config from env
         load_config_from_env()
+    }
+}
+
+pub unsafe fn cleanup() {
+    #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+    unsafe {
+        let state_pointer = std::ptr::addr_of_mut!(STATE);
+        (*state_pointer).dict_items_descriptor.decref_nullable();
+        (*state_pointer).dict_items_descriptor = ptr::null_mut();
+        (*state_pointer).dict_items_vectorcall = uninitialized_dict_items_vectorcall;
     }
 }
 

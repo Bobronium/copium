@@ -381,6 +381,7 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
 unsafe extern "C" fn orcopium_free(_: *mut c_void) {
     unsafe {
         dict_iter::dict_iter_module_cleanup();
+        state::cleanup();
     }
 }
 
