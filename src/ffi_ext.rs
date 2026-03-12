@@ -9,6 +9,7 @@ use core::sync::atomic::Ordering;
 
 // ── Symbols not (reliably) in pyo3-ffi ──────────────────────
 
+#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub static mut _Py_NoneStruct: PyObject;
     pub static mut _Py_NotImplementedStruct: PyObject;
@@ -40,6 +41,7 @@ pub unsafe fn PyMethod_GET_SELF(m: *mut PyObject) -> *mut PyObject {
     unsafe { (*(m as *mut PyMethodObject)).im_self }
 }
 
+#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub fn PyMethod_New(func: *mut PyObject, self_: *mut PyObject) -> *mut PyObject;
 }
@@ -56,6 +58,7 @@ pub unsafe fn Py_None() -> *mut PyObject {
 
 // ── Variadic FFI not reliably in pyo3-ffi ───────────────────
 
+#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub fn PyErr_Format(exception: *mut PyObject, format: *const c_char, ...) -> *mut PyObject;
     pub fn PyUnicode_FromFormat(format: *const c_char, ...) -> *mut PyObject;
