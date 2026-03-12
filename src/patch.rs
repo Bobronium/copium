@@ -73,7 +73,7 @@ unsafe fn apply_patch(py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObje
             return -1;
         }
 
-        crate::ffi_ext::set_fn_vectorcall(fn_ptr, copium_deepcopy_vectorcall);
+        crate::ffi_ext::PyFunction_SetVectorcall(fn_ptr, copium_deepcopy_vectorcall);
         1
     }
 }
@@ -95,7 +95,7 @@ unsafe fn unapply_patch(py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
         }
         let original_vc = std::mem::transmute::<*mut std::ffi::c_void, vectorcallfunc>(raw);
 
-        crate::ffi_ext::set_fn_vectorcall(fn_ptr, original_vc);
+        crate::ffi_ext::PyFunction_SetVectorcall(fn_ptr, original_vc);
 
         PyObject_DelAttrString(fn_ptr, crate::cstr!("__copium_original__"));
         PyErr_Clear();

@@ -39,7 +39,6 @@ pub unsafe fn PyMethod_GET_SELF(m: *mut PyObject) -> *mut PyObject {
     unsafe { (*(m as *mut PyMethodObject)).im_self }
 }
 
-/// PyMethod_New IS an exported function.
 extern "C" {
     pub fn PyMethod_New(func: *mut PyObject, self_: *mut PyObject) -> *mut PyObject;
 }
@@ -60,6 +59,9 @@ extern "C" {
     pub fn PyErr_Format(exception: *mut PyObject, format: *const c_char, ...) -> *mut PyObject;
     pub fn PyUnicode_FromFormat(format: *const c_char, ...) -> *mut PyObject;
     pub fn PySequence_Fast(o: *mut PyObject, m: *const c_char) -> *mut PyObject;
+    #[cfg(Py_3_12)]
+    pub fn PyFunction_SetVectorcall(callable: *mut PyObject, vc: vectorcallfunc);
+    pub fn PyVectorcall_Function(callable: *mut PyObject) -> Option<vectorcallfunc>;
 }
 
 #[inline(always)]
@@ -85,45 +87,11 @@ pub unsafe fn PySequence_Fast_GET_ITEM(o: *mut PyObject, i: Py_ssize_t) -> *mut 
         if (tp_flags_of(o.class()) & Py_TPFLAGS_LIST_SUBCLASS) != 0 {
             *(*(o as *mut PyListObject)).ob_item.add(i as usize)
         } else {
-            *(*(o as *mut PyTupleObject)).ob_item.as_ptr().add(i as usize)
+            *(*(o as *mut PyTupleObject))
+                .ob_item
+                .as_ptr()
+                .add(i as usize)
         }
-    }
-}
-
-// ── Vectorcall helpers (static inline in CPython — must be reimplemented) ──
-
-/// Equivalent to CPython's static inline PyVectorcall_Function.
-/// Reads the vectorcall slot via tp_vectorcall_offset.
-#[inline(always)]
-pub unsafe fn PyVectorcall_Function(callable: *mut PyObject) -> Option<vectorcallfunc> {
-    unsafe {
-        let type_pointer = callable.class();
-        if tp_flags_of(type_pointer) & Py_TPFLAGS_HAVE_VECTORCALL == 0 {
-            return None;
-        }
-        let offset = (*type_pointer).tp_vectorcall_offset;
-        debug_assert!(offset > 0);
-        let slot = (callable as *const u8).add(offset as usize) as *const *const ();
-        let ptr = *slot;
-        if ptr.is_null() {
-            return None;
-        }
-        Some(std::mem::transmute::<*const (), vectorcallfunc>(ptr))
-    }
-}
-
-/// Equivalent to CPython's static inline PyFunction_SetVectorcall (3.12+).
-/// Writes the vectorcall slot via tp_vectorcall_offset.
-#[cfg(Py_3_12)]
-#[inline(always)]
-pub unsafe fn set_fn_vectorcall(fn_obj: *mut PyObject, vc: vectorcallfunc) {
-    unsafe {
-        let type_pointer = fn_obj.class();
-        debug_assert!(tp_flags_of(type_pointer) & Py_TPFLAGS_HAVE_VECTORCALL != 0);
-        let offset = (*type_pointer).tp_vectorcall_offset;
-        debug_assert!(offset > 0);
-        let slot = (fn_obj as *mut u8).add(offset as usize) as *mut vectorcallfunc;
-        *slot = vc;
     }
 }
 
