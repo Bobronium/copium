@@ -38,11 +38,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python.version }}
-          architecture: ${{ matrix.build.archs == 'AMD64' && 'x64' || matrix.build.archs == 'ARM64' && 'arm64' || matrix.build.archs == 'x86_64' && 'x64' || matrix.build.archs }}
-
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
         with:
