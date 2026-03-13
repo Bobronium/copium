@@ -23,6 +23,6 @@ windows-sys = { version = "0.59", features = [
 [profile.release]
 lto = "fat"
 codegen-units = 1
-strip = "symbols"
+strip = "debuginfo"
 [build-dependencies]
 pyo3-build-config = "0.28.2"
