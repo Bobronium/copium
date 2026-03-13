@@ -38,17 +38,46 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python.version }}
+          architecture: ${{ matrix.build.archs == 'AMD64' && 'x64' || matrix.build.archs == 'ARM64' && 'arm64' || matrix.build.archs == 'x86_64' && 'x64' || matrix.build.archs }}
+
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.2.1
-        env:
-          CIBW_BUILD: "${{ matrix.python.tag }}-*"
-          CIBW_ARCHS: "${{ matrix.build.archs }}"
-          CIBW_BUILD_VERBOSITY: 1
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.build.platform == 'windows' && (matrix.build.archs == 'AMD64' && 'x64' || matrix.build.archs == 'ARM64' && 'aarch64') || matrix.build.archs }}
+          manylinux: ${{ matrix.build.platform == 'linux' && 'auto' || 'off' }}
+          args: --release --out wheelhouse --interpreter python
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+
+      - name: Find compatible wheel for tests
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        id: wheel
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
+
+          if [[ -z "$wheel" ]]; then
+            echo "No compatible wheel found for tests"
+            exit 1
+          fi
+
+          echo "Found: $wheel"
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Test built wheel
+        run: |
+          uv venv --python ${{ matrix.python.label }} --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.wheel.outputs.path }}"
+          uv run pytest -vvv
 
       - uses: actions/upload-artifact@v4
         with:
@@ -79,21 +108,6 @@ jobs:
         with:
           mode: simulation
           run: uv run --with "${{ steps.bench_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
-
-      - name: Find compatible wheel for shuffle tests
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        id: wheel
-        shell: bash
-        run: |
-          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
-
-          if [[ -z "$wheel" ]]; then
-            echo "No compatible wheel found for shuffle tests"
-            exit 1
-          fi
-
-          echo "Found: $wheel"
-          echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Setup venv for shuffle tests
         if: ${{ matrix.build.os != 'windows-11-arm' }}
