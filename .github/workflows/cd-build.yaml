@@ -65,12 +65,15 @@ jobs:
           CL: ${{ runner.os == 'Windows' && '/experimental:c11atomics' || '' }}
           MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '10.12' || '' }}
 
+      - name: Clear sccache wrapper
+        # this is required due to maturin failing to find sccache later during getting metadata on uv sync.
+        if: runner.os == 'Linux'
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+
       - uses: actions/upload-artifact@v4
         with:
           name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
           path: dist/*.whl
-
-      # -- Wheel validation (replaces cibuildwheel implicit test) --
 
       - name: Find built wheel
         if: ${{ matrix.build.os != 'windows-11-arm' }}
@@ -98,8 +101,6 @@ jobs:
         if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -vvv
 
-      # -- Codspeed benchmarks (Linux x86_64, pinned Python versions) --
-
       - name: Setup venv for codspeed
         if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
         run: |
@@ -112,8 +113,6 @@ jobs:
         with:
           mode: simulation
           run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
-
-      # -- Shuffle tests --
 
       - name: Setup venv for shuffle tests
         if: ${{ matrix.build.os != 'windows-11-arm' }}
@@ -137,8 +136,6 @@ jobs:
       - name: "Test: Shuffle D"
         if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
-
-      # -- CPython test_copy --
 
       - name: "Cache CPython test suite"
         if: ${{ matrix.build.os != 'windows-11-arm' }}
