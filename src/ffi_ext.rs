@@ -10,16 +10,15 @@ use core::sync::atomic::Ordering;
 
 // ── Symbols not (reliably) in pyo3-ffi ──────────────────────
 
+pub use pyo3_ffi::{
+    Py_NotImplemented, Py_None, PyEllipsis_Type, PyProperty_Type, _PyWeakref_RefType,
+};
+
+#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
-    pub static mut _Py_NoneStruct: PyObject;
-    pub static mut _Py_NotImplementedStruct: PyObject;
-    pub static mut _Py_EllipsisObject: PyObject;
     pub static mut PyMethod_Type: PyTypeObject;
     pub static mut _PyNone_Type: PyTypeObject;
     pub static mut _PyNotImplemented_Type: PyTypeObject;
-    pub static mut PyEllipsis_Type: PyTypeObject;
-    pub static mut PyProperty_Type: PyTypeObject;
-    pub static mut _PyWeakref_RefType: PyTypeObject;
 }
 
 /// PyMethod_Function is a macro in CPython; access via struct layout.
@@ -42,22 +41,14 @@ pub unsafe fn PyMethod_GET_SELF(m: *mut PyObject) -> *mut PyObject {
     unsafe { (*(m as *mut PyMethodObject)).im_self }
 }
 
+#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub fn PyMethod_New(func: *mut PyObject, self_: *mut PyObject) -> *mut PyObject;
 }
 
-#[inline(always)]
-pub unsafe fn Py_NotImplemented() -> *mut PyObject {
-    std::ptr::addr_of_mut!(_Py_NotImplementedStruct)
-}
-
-#[inline(always)]
-pub unsafe fn Py_None() -> *mut PyObject {
-    std::ptr::addr_of_mut!(_Py_NoneStruct)
-}
-
 // ── Variadic FFI not reliably in pyo3-ffi ───────────────────
 
+#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub fn PyErr_Format(exception: *mut PyObject, format: *const c_char, ...) -> *mut PyObject;
     pub fn PyUnicode_FromFormat(format: *const c_char, ...) -> *mut PyObject;
