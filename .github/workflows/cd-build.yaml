@@ -47,7 +47,7 @@ jobs:
           enable-cache: true
 
       - name: Install Python (non-Linux)
-        if: runner.os != 'Linux'
+        if: runner.os != 'Linux' && matrix.build.os != 'windows-11-arm'
         shell: bash
         run: |
           uv python install ${{ matrix.python.version }}
