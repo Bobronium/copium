@@ -30,6 +30,10 @@ jobs:
           - { tag: "cp313", version: "3.13.9",  label: "3.13" }
           - { tag: "cp314", version: "3.14.0",  label: "3.14" }
 
+        exclude:
+          - { build: { os: windows-11-arm }, python: { tag: "cp310" } }
+          - { build: { os: windows-11-arm }, python: { tag: "cp311" } }
+
     runs-on: ${{ matrix.build.os }}
 
     name: "Python ${{ matrix.python.label }} - ${{ matrix.build.platform_label }} - ${{ matrix.build.arch_label }}"
