@@ -11,8 +11,6 @@ use core::sync::atomic::Ordering;
 // ── Symbols not (reliably) in pyo3-ffi ──────────────────────
 
 extern "C" {
-    #[cfg(windows)]
-    static __imp__Py_NoneStruct: *mut PyObject; // check if it's available or not
     pub static mut _Py_NoneStruct: PyObject;
     pub static mut _Py_NotImplementedStruct: PyObject;
     pub static mut _Py_EllipsisObject: PyObject;
