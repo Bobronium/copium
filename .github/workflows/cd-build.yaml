@@ -4,6 +4,9 @@ on:
   workflow_call:
   workflow_dispatch:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   wheels:
     strategy:
@@ -12,20 +15,20 @@ jobs:
       matrix:
         build:
           # Linux
-          - { os: ubuntu-latest,    target: x86_64,  manylinux: auto, wheel_arch: manylinux*_x86_64,  arch_label: "x86_64",        platform_label: "Linux" }
-          - { os: ubuntu-24.04-arm, target: aarch64, manylinux: auto, wheel_arch: manylinux*_aarch64, arch_label: "ARM64",         platform_label: "Linux" }
+          - { os: ubuntu-latest,    rust_target: x86_64-unknown-linux-gnu,    manylinux: auto, wheel_arch: "manylinux*_x86_64",  arch_label: "x86_64",        platform_label: "Linux" }
+          - { os: ubuntu-24.04-arm, rust_target: aarch64-unknown-linux-gnu,   manylinux: auto, wheel_arch: "manylinux*_aarch64", arch_label: "ARM64",         platform_label: "Linux" }
           # Windows
-          - { os: windows-latest,   target: x86_64,  manylinux: auto, wheel_arch: win_amd64,          arch_label: "x64",           platform_label: "Windows" }
-          - { os: windows-11-arm,   target: aarch64, manylinux: auto, wheel_arch: win_arm64,          arch_label: "ARM64",         platform_label: "Windows" }
+          - { os: windows-latest,   rust_target: x86_64-pc-windows-msvc,                       wheel_arch: "win_amd64",          arch_label: "x64",           platform_label: "Windows" }
+          - { os: windows-11-arm,   rust_target: aarch64-pc-windows-msvc,                      wheel_arch: "win_arm64",          arch_label: "ARM64",         platform_label: "Windows" }
           # macOS
-          - { os: macos-15,         target: aarch64, manylinux: auto, wheel_arch: macosx*_arm64,      arch_label: "Apple Silicon", platform_label: "macOS" }
-          - { os: macos-15-intel,   target: x86_64,  manylinux: auto, wheel_arch: macosx*_x86_64,     arch_label: "Intel",         platform_label: "macOS" }
+          - { os: macos-15,         rust_target: aarch64-apple-darwin,                          wheel_arch: "macosx*_arm64",      arch_label: "Apple Silicon", platform_label: "macOS" }
+          - { os: macos-15-intel,   rust_target: x86_64-apple-darwin,                           wheel_arch: "macosx*_x86_64",     arch_label: "Intel",         platform_label: "macOS" }
         python:
-          - { tag: "cp310", label: "3.10" }
-          - { tag: "cp311", label: "3.11" }
-          - { tag: "cp312", label: "3.12" }
-          - { tag: "cp313", label: "3.13" }
-          - { tag: "cp314", label: "3.14" }
+          - { tag: "cp310", version: "3.10.11", label: "3.10" }
+          - { tag: "cp311", version: "3.11.9",  label: "3.11" }
+          - { tag: "cp312", version: "3.12.10", label: "3.12" }
+          - { tag: "cp313", version: "3.13.9",  label: "3.13" }
+          - { tag: "cp314", version: "3.14.0",  label: "3.14" }
 
     runs-on: ${{ matrix.build.os }}
 
@@ -43,46 +46,64 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Setup Python
+      - name: Install Python (non-Linux)
         if: runner.os != 'Linux'
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python.label }}
-          allow-prereleases: true
+        shell: bash
+        run: |
+          uv python install ${{ matrix.python.version }}
+          echo "PYTHON=$(uv python find ${{ matrix.python.version }})" >> "$GITHUB_ENV"
 
       - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.build.target }}
-          manylinux: ${{ matrix.build.manylinux }}
-          args: --release --out wheelhouse -i python${{ matrix.python.label }}
+          target: ${{ matrix.build.rust_target }}
+          manylinux: ${{ matrix.build.manylinux || 'auto' }}
+          args: --release --out dist -i ${{ env.PYTHON || matrix.python.label }}
           rust-toolchain: nightly
-          rustup-components: rustfmt clippy
           sccache: 'true'
         env:
           CL: ${{ runner.os == 'Windows' && '/experimental:c11atomics' || '' }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '10.12' || '' }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
-          path: ./wheelhouse/*.whl
+          path: dist/*.whl
 
-      - name: Find wheel for benchmarks
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
-        id: bench_wheel
+      # -- Wheel validation (replaces cibuildwheel implicit test) --
+
+      - name: Find built wheel
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        id: wheel
         shell: bash
         run: |
-          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-manylinux*.whl" -type f | head -n1)
+          wheel=$(find dist -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
+
           if [[ -z "$wheel" ]]; then
-            echo "No wheel found"
+            echo "No compatible wheel found"
             exit 1
           fi
+
+          echo "Found: $wheel"
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup test environment
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: |
+          uv venv --python ${{ matrix.python.label }} --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.wheel.outputs.path }}"
+
+      - name: "Test: Built wheel"
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
+        run: uv run --no-sync pytest tests/ -vvv
+
+      # -- Codspeed benchmarks (Linux x86_64, pinned Python versions) --
 
       - name: Setup venv for codspeed
         if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
         run: |
-          uv venv --python ${{ matrix.python.label }} --clear
+          uv venv --python ${{ matrix.python.version }} --clear
           uv sync --extra test --no-install-project
 
       - name: Run codspeed benchmarks
@@ -90,22 +111,9 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
-          run: uv run --with "${{ steps.bench_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
+          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
 
-      - name: Find compatible wheel for shuffle tests
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        id: wheel
-        shell: bash
-        run: |
-          wheel=$(find wheelhouse -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
-
-          if [[ -z "$wheel" ]]; then
-            echo "No compatible wheel found for shuffle tests"
-            exit 1
-          fi
-
-          echo "Found: $wheel"
-          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+      # -- Shuffle tests --
 
       - name: Setup venv for shuffle tests
         if: ${{ matrix.build.os != 'windows-11-arm' }}
@@ -130,8 +138,10 @@ jobs:
         if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
 
+      # -- CPython test_copy --
+
       - name: "Cache CPython test suite"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}1
+        if: ${{ matrix.build.os != 'windows-11-arm' }}
         id: cpython-cache
         uses: actions/cache@v4
         with:
