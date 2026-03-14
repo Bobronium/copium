@@ -101,6 +101,7 @@ unsafe fn init_stack_bounds() {
         let probe = 0u8;
         let sp = (&probe as *const u8) as *mut u8;
         STACK_LOW = sp.sub(STACK_SAFETY_MARGIN);
+    }
 }
 
 #[inline(always)]
