@@ -25,15 +25,7 @@ pub unsafe fn copy(object: *mut PyObject) -> PyResult {
     unsafe {
         let cls = object.class();
 
-        if class.is_atomic_immutable() || class.is_stdlib_immutable() {
-            return PyResult::ok(object.newref());
-        }
-
-        if class == PyTupleObject::type_ptr()
-            || class == PyFrozensetObject::type_ptr()
-            || PySlice_Check(object) != 0
-            || PyType_IsSubtype(class, std::ptr::addr_of_mut!(PyType_Type)) != 0
-        {
+        if cls.is_atomic_immutable() || cls.is_immutable_collection() || cls.is_type_subclass() {
             return PyResult::ok(object.newref());
         }
 

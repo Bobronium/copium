@@ -51,6 +51,8 @@ pytype! {
     PyFrozensetObject => PyFrozenSet_Type,
     PyMethodObject    => PyMethod_Type,
     PyMemoObject      => Memo_Type,
+    PySliceObject     => PySlice_Type,
+
 }
 
 // ── PyAnyPtr — pointer methods on every *mut T ─────────────
@@ -394,6 +396,7 @@ pub unsafe trait PyTypeObjectPtr {
     unsafe fn is_stdlib_immutable(self) -> bool;
     unsafe fn is_type_subclass(self) -> bool;
     unsafe fn is_atomic_immutable(self) -> bool;
+    unsafe fn is_immutable_collection(self) -> bool;
 }
 
 unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
@@ -427,6 +430,13 @@ unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
         let decimal_type = (*state_pointer).decimal_type;
         let fraction_type = (*state_pointer).fraction_type;
         (self == regex_pattern_type) || (self == decimal_type) || (self == fraction_type)
+    }
+
+    #[inline(always)]
+    unsafe fn is_immutable_collection(self) -> bool {
+        (self == std::ptr::addr_of_mut!(PyTuple_Type))
+            | (self == std::ptr::addr_of_mut!(PyFrozenSet_Type))
+            | (self == std::ptr::addr_of_mut!(PySlice_Type))
     }
 
     #[inline(always)]
