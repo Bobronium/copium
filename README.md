@@ -25,11 +25,11 @@ copium
     <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
     <img src="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" alt="Copium Logo" width="200" align="left">
   </picture>
-  <a href="https://github.com/Bobronium/copium/blob/754a6209f58556d21ba7d2a64098c41685437bee/showcase.ipynb">
+  <a href="https://github.com/Bobronium/copium/blob/46f871c542caf9b2c2c1a9fc73ca7e33a5691d02/showcase.ipynb">
     <picture>
-      <source srcset="https://raw.githubusercontent.com/Bobronium/copium/754a6209f58556d21ba7d2a64098c41685437bee/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="https://raw.githubusercontent.com/Bobronium/copium/754a6209f58556d21ba7d2a64098c41685437bee/assets/chart_light.svg" media="(prefers-color-scheme: light)">
-      <img src="https://raw.githubusercontent.com/Bobronium/copium/754a6209f58556d21ba7d2a64098c41685437bee/assets/chart_light.svg" alt="Self-contained IPython showcase" width="500">
+      <source srcset="https://raw.githubusercontent.com/Bobronium/copium/46f871c542caf9b2c2c1a9fc73ca7e33a5691d02/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
+      <source srcset="https://raw.githubusercontent.com/Bobronium/copium/46f871c542caf9b2c2c1a9fc73ca7e33a5691d02/assets/chart_light.svg" media="(prefers-color-scheme: light)">
+      <img src="https://raw.githubusercontent.com/Bobronium/copium/46f871c542caf9b2c2c1a9fc73ca7e33a5691d02/assets/chart_light.svg" alt="Self-contained IPython showcase" width="500">
     </picture>
   </a>
 
