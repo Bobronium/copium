@@ -99,7 +99,7 @@ if python_version == "3.13-x86_64":
         benchmark(copy.deepcopy, case.obj)
 
 else:
-    assert sys.version_info >= (3, 14) or not "--codspeed" in sys.argv, (
+    assert sys.version_info >= (3, 14) or "--codspeed" not in sys.argv, (
         "This block assumed to have newer versions only."
     )
 

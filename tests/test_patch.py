@@ -1,9 +1,8 @@
 import copy
+import copy as stdlib_copy
 import sys
 
-import copy as stdlib_copy
 import copium.patch
-
 
 COPIED = {"a": [1, 2]}
 
@@ -76,14 +75,14 @@ def test_no_copium_attributes_after_disable():
 
 def test_idempotent_enable():
     copium.patch.disable()
-    assert copium.patch.enable() == True
-    assert copium.patch.enable() == False
-    assert copium.patch.enabled() == True
+    assert copium.patch.enable() is True
+    assert copium.patch.enable() is False
+    assert copium.patch.enabled() is True
     copium.patch.disable()
 
 
 def test_idempotent_disable():
     copium.patch.enable()
-    assert copium.patch.disable() == True
-    assert copium.patch.disable() == False
-    assert copium.patch.enabled() == False
+    assert copium.patch.disable() is True
+    assert copium.patch.disable() is False
+    assert copium.patch.enabled() is False

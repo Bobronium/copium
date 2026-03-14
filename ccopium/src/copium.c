@@ -640,7 +640,7 @@ static struct PyModuleDef_Slot main_slots[] = {
 
 static struct PyModuleDef main_module_def = {
     PyModuleDef_HEAD_INIT,
-    "copium",
+    "ccopium",
     "Fast, full-native deepcopy with reduce protocol and keepalive memo.",
     0,
     main_methods,
@@ -709,7 +709,7 @@ static int _add_submodule(PyObject* parent, const char* name, PyObject* submodul
 /*                         Module Initialization                              */
 /* ========================================================================== */
 
-PyMODINIT_FUNC PyInit_copium(void) {
+PyMODINIT_FUNC PyInit_ccopium(void) {
     return PyModuleDef_Init(&main_module_def);
 }
 

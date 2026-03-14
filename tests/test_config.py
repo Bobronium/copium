@@ -55,12 +55,12 @@ class StubbornTracking:
 
 class TestGetConfig:
     def test_returns_dict_with_expected_keys(self):
-        cfg = copium.get_config()
+        cfg = copium.config.get()
         assert set(cfg) == {"memo", "on_incompatible", "suppress_warnings"}
 
     def test_default_values(self):
-        copium.configure()
-        cfg = copium.get_config()
+        copium.config.apply()
+        cfg = copium.config.get()
         assert cfg["memo"] == "native"
         assert cfg["on_incompatible"] == "warn"
         assert cfg["suppress_warnings"] == ()
@@ -73,30 +73,30 @@ class TestGetConfig:
 
 class TestConfigureAPI:
     def test_no_positional_args(self):
-        with pytest.raises(TypeError, match="no positional arguments"):
-            copium.configure("native")  # type: ignore[misc]
+        with pytest.raises(TypeError, match="takes 0 positional arguments"):
+            copium.config.apply("native")  # type: ignore[misc]
 
     def test_unexpected_kwarg(self):
         with pytest.raises(TypeError, match="unexpected keyword argument"):
-            copium.configure(bogus="x")  # type: ignore[call-arg]
+            copium.config.apply(bogus="x")  # type: ignore[call-arg]
 
     def test_invalid_memo_value(self):
         with pytest.raises(ValueError, match="'native' or 'dict'"):
-            copium.configure(memo="fast")  # type: ignore[arg-type]
+            copium.config.apply(memo="fast")  # type: ignore[arg-type]
 
     def test_invalid_on_incompatible_value(self):
         with pytest.raises(ValueError, match="'warn', 'raise', or 'silent'"):
-            copium.configure(on_incompatible="ignore")  # type: ignore[arg-type]
+            copium.config.apply(on_incompatible="ignore")  # type: ignore[arg-type]
 
     def test_suppress_warnings_non_string_item(self):
         with pytest.raises(
             TypeError, match=re.escape("on_incompatible[0] must be a 'str', got 'int'")
         ):
-            copium.configure(suppress_warnings=[42])  # type: ignore[list-item]
+            copium.config.apply(suppress_warnings=[42])  # type: ignore[list-item]
 
     def test_suppress_warnings_non_iterable(self):
         with pytest.raises(TypeError):
-            copium.configure(suppress_warnings=42)  # type: ignore[arg-type]
+            copium.config.apply(suppress_warnings=42)  # type: ignore[arg-type]
 
 
 # ===========================================================================
@@ -106,8 +106,8 @@ class TestConfigureAPI:
 
 class TestConfigureMemo:
     def test_memo_dict(self):
-        copium.configure(memo="dict")
-        assert copium.get_config()["memo"] == "dict"
+        copium.config.apply(memo="dict")
+        assert copium.config.get()["memo"] == "dict"
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -117,12 +117,12 @@ class TestConfigureMemo:
         assert not w
 
     def test_memo_native(self):
-        copium.configure(memo="native")
-        assert copium.get_config()["memo"] == "native"
+        copium.config.apply(memo="native")
+        assert copium.config.get()["memo"] == "native"
 
     def test_explicit_dict_memo_arg_bypasses_config(self):
         """deepcopy(obj, {}) always uses dict memo regardless of config."""
-        copium.configure(memo="native")
+        copium.config.apply(memo="native")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             result = copium.deepcopy(Stubborn(), {})
@@ -138,13 +138,13 @@ class TestConfigureMemo:
 
 class TestConfigureOnIncompatible:
     def test_raise(self):
-        copium.configure(on_incompatible="raise")
+        copium.config.apply(on_incompatible="raise")
 
         with pytest.raises(TypeError, match="memo must be a dict"):
             copium.deepcopy(Stubborn())
 
     def test_silent(self):
-        copium.configure(on_incompatible="silent")
+        copium.config.apply(on_incompatible="silent")
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -154,7 +154,7 @@ class TestConfigureOnIncompatible:
         assert not w
 
     def test_warn(self):
-        copium.configure(on_incompatible="warn")
+        copium.config.apply(on_incompatible="warn")
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -167,7 +167,7 @@ class TestConfigureOnIncompatible:
     def test_irrelevant_when_memo_dict(self):
         """on_incompatible has no effect when memo='dict' — situation never arises."""
         with pytest.raises(TypeError):
-            copium.configure(memo="dict", on_incompatible="raise")
+            copium.config.apply(memo="dict", on_incompatible="raise")
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -184,7 +184,7 @@ class TestConfigureOnIncompatible:
 
 class TestConfigureSuppressWarnings:
     def test_matching_suppression(self):
-        copium.configure(suppress_warnings=["TypeError: memo must be a dict"])
+        copium.config.apply(suppress_warnings=["TypeError: memo must be a dict"])
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -194,7 +194,7 @@ class TestConfigureSuppressWarnings:
         assert not w
 
     def test_non_matching_suppression(self):
-        copium.configure(suppress_warnings=["TypeError: different error"])
+        copium.config.apply(suppress_warnings=["TypeError: different error"])
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -203,16 +203,16 @@ class TestConfigureSuppressWarnings:
         assert len(w) == 1
 
     def test_none_clears(self):
-        copium.configure(suppress_warnings=["TypeError: memo must be a dict"])
-        assert copium.get_config()["suppress_warnings"] == ("TypeError: memo must be a dict",)
+        copium.config.apply(suppress_warnings=["TypeError: memo must be a dict"])
+        assert copium.config.get()["suppress_warnings"] == ("TypeError: memo must be a dict",)
 
-        copium.configure(suppress_warnings=None)
-        assert copium.get_config()["suppress_warnings"] == ()
+        copium.config.apply(suppress_warnings=None)
+        assert copium.config.get()["suppress_warnings"] == ()
 
     def test_empty_clears(self):
-        copium.configure(suppress_warnings=["something"])
-        copium.configure(suppress_warnings=())
-        assert copium.get_config()["suppress_warnings"] == ()
+        copium.config.apply(suppress_warnings=["something"])
+        copium.config.apply(suppress_warnings=())
+        assert copium.config.get()["suppress_warnings"] == ()
 
 
 # ===========================================================================
@@ -222,21 +222,21 @@ class TestConfigureSuppressWarnings:
 
 class TestConfigureIncremental:
     def test_setting_memo_preserves_on_incompatible(self):
-        copium.configure(on_incompatible="silent")
-        copium.configure(memo="dict")
-        assert copium.get_config()["on_incompatible"] == "silent"
+        copium.config.apply(on_incompatible="silent")
+        copium.config.apply(memo="dict")
+        assert copium.config.get()["on_incompatible"] == "silent"
 
     def test_setting_on_incompatible_preserves_memo(self):
-        copium.configure(memo="dict")
-        copium.configure(on_incompatible="raise")
-        assert copium.get_config()["memo"] == "dict"
+        copium.config.apply(memo="dict")
+        copium.config.apply(on_incompatible="raise")
+        assert copium.config.get()["memo"] == "dict"
 
     def test_settings_persist_across_memo_switch(self):
         """on_incompatible='silent' survives memo round-trip."""
-        copium.configure(memo="native", on_incompatible="silent")
-        copium.configure(memo="dict")
-        copium.configure(memo="native")
-        assert copium.get_config()["on_incompatible"] == "silent"
+        copium.config.apply(memo="native", on_incompatible="silent")
+        copium.config.apply(memo="dict")
+        copium.config.apply(memo="native")
+        assert copium.config.get()["on_incompatible"] == "silent"
 
 
 # ===========================================================================
@@ -246,17 +246,17 @@ class TestConfigureIncremental:
 
 class TestConfigureReset:
     def test_reset_restores_defaults(self):
-        copium.configure(memo="dict")
-        copium.configure()
-        cfg = copium.get_config()
+        copium.config.apply(memo="dict")
+        copium.config.apply()
+        cfg = copium.config.get()
         assert cfg["memo"] == "native"
         assert cfg["on_incompatible"] == "warn"
         assert cfg["suppress_warnings"] == ()
 
     def test_reset_restores_to_current_env(self):
         os.environ["COPIUM_USE_DICT_MEMO"] = "1"
-        copium.configure()
-        assert copium.get_config()["memo"] == "dict"
+        copium.config.apply()
+        assert copium.config.get()["memo"] == "dict"
 
 
 # ===========================================================================
@@ -266,7 +266,7 @@ class TestConfigureReset:
 
 class TestWarningMessage:
     def test_contains_configure_suggestions(self):
-        copium.configure(memo="native", on_incompatible="warn")
+        copium.config.apply(memo="native", on_incompatible="warn")
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -276,9 +276,9 @@ class TestWarningMessage:
         message = str(w[0].message)
         assert "'copium.memo' was rejected inside" in message
         assert "should treat memo as an opaque object" in message
-        assert 'copium.configure(memo="dict")' in message
-        assert 'copium.configure(on_incompatible="raise")' in message
-        assert "copium.configure(suppress_warnings=[" in message
+        assert 'copium.config.apply(memo="dict")' in message
+        assert 'copium.config.apply(on_incompatible="raise")' in message
+        assert "copium.config.apply(suppress_warnings=[" in message
         assert "COPIUM_USE_DICT_MEMO=1" in message
 
 
@@ -318,9 +318,9 @@ def test_env_memo_fallback_warning():
         deepcopy_expr_with_memo = deepcopy_expr[:-1].rstrip(",") + ", memo={})"
         assert f"change {deepcopy_expr} to {deepcopy_expr_with_memo}" in message
 
-        assert "copium.configure(suppress_warnings=[" in message
-        assert 'copium.configure(memo="dict")' in message
-        assert 'copium.configure(on_incompatible="raise")' in message
+        assert "copium.config.apply(suppress_warnings=[" in message
+        assert 'copium.config.apply(memo="dict")' in message
+        assert 'copium.config.apply(on_incompatible="raise")' in message
         assert "COPIUM_USE_DICT_MEMO=1" in message
 
     def assert_memo_replaced(_memos: list[Any]):
@@ -590,7 +590,7 @@ def test_env_use_dict_memo():
 def test_env_maps_to_get_config():
     import copium
 
-    cfg = copium.get_config()
+    cfg = copium.config.get()
     assert cfg["memo"] == "dict"
 
 
@@ -598,7 +598,7 @@ def test_env_maps_to_get_config():
 def test_env_no_fallback_maps_to_get_config():
     import copium
 
-    cfg = copium.get_config()
+    cfg = copium.config.get()
     assert cfg["on_incompatible"] == "raise"
 
 
@@ -606,7 +606,7 @@ def test_env_no_fallback_maps_to_get_config():
 def test_env_suppress_maps_to_get_config():
     import copium
 
-    cfg = copium.get_config()
+    cfg = copium.config.get()
     assert cfg["suppress_warnings"] == ("TypeError: x",)
 
 
@@ -615,9 +615,9 @@ def test_env_configure_overrides_env():
     """configure() overrides env-var defaults."""
     import copium
 
-    assert copium.get_config()["memo"] == "dict"
-    copium.configure(memo="native")
-    assert copium.get_config()["memo"] == "native"
+    assert copium.config.get()["memo"] == "dict"
+    copium.config.apply(memo="native")
+    assert copium.config.get()["memo"] == "native"
 
 
 @pytest.mark.subprocess(environ=env(COPIUM_USE_DICT_MEMO="1"))
@@ -625,10 +625,10 @@ def test_env_configure_reset_reads_env():
     """configure() with no args re-reads env vars."""
     import copium
 
-    copium.configure(memo="native")
-    assert copium.get_config()["memo"] == "native"
-    copium.configure()
-    assert copium.get_config()["memo"] == "dict"
+    copium.config.apply(memo="native")
+    assert copium.config.get()["memo"] == "native"
+    copium.config.apply()
+    assert copium.config.get()["memo"] == "dict"
 
 
 def copium_is_editable() -> bool:

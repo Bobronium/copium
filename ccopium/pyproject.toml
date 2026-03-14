@@ -1,12 +1,7 @@
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
-build-backend = "maturin"
-
-[tool.maturin]
-features = ["pyo3-ffi/extension-module"]
-module-name = "copium.__init__"
-python-source = "src/"
-data = "wheel-data/"
+requires = ["setuptools>=68", "setuptools-scm>=8.0", "wheel"]
+build-backend = "tools.build_system.backend"
+backend-path = ["."]
 
 [tool.setuptools]
 include-package-data = true
@@ -16,7 +11,6 @@ include-package-data = true
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "universal2", "arm64"]
-environment = { MACOSX_DEPLOYMENT_TARGET = "10.12" }
 
 [tool.cibuildwheel.linux]
 archs = ["auto", "aarch64"]
@@ -33,7 +27,7 @@ test-sources = ["tests", "pyproject.toml"]
 environment = { CL = "/experimental:c11atomics" }
 
 [project]
-name = "copium"
+name = "ccopium"
 dynamic = ["version"]
 description = "Fast drop-in replacement for copy.deepcopy()"
 readme = "README.md"
@@ -55,7 +49,6 @@ classifiers = [
 
 dependencies = []
 
-
 [project.urls]
 Homepage = "https://github.com/Bobronium/copium"
 Source = "https://github.com/Bobronium/copium"
@@ -66,10 +59,10 @@ autopatch = [
     "copium-autopatch==0.1.0"
 ]
 dev = [
-    "copium[lint]",
-    "copium[typecheck]",
-    "copium[test]",
-    "copium[docs]",
+    "ccopium[lint]",
+    "ccopium[typecheck]",
+    "ccopium[test]",
+    "ccopium[docs]",
 ]
 lint = [
     "ruff>=0.5",
@@ -244,7 +237,7 @@ disable_error_code = ["no-untyped-def"]
 
 [tool.uv.workspace]
 members = [
-    "datamodelzoo",
+    "../datamodelzoo",
 ]
 
 [tool.uv.sources]

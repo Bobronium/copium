@@ -80,6 +80,7 @@ setuptools_build_meta = SetuptoolsBackend()
 
 # Project paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+REPOSITORY_ROOT = PROJECT_ROOT.parent
 CACHE_ROOT = PROJECT_ROOT / ".build-cache"
 CACHE_ROOT.mkdir(exist_ok=True)
 
@@ -157,7 +158,7 @@ def _get_version_info(build_hash: str | None = None) -> dict[str, Any]:
         from setuptools_scm import get_version
 
         base_version = get_version(
-            root=str(PROJECT_ROOT),
+            root=str(REPOSITORY_ROOT),
             version_scheme="guess-next-dev",
             local_scheme="no-local-version",
         )
@@ -407,14 +408,14 @@ def _sources_fingerprint() -> str:
         h.update(b"ERROR:backend")
 
     # .pth file
-    pth = PROJECT_ROOT / "src" / "_copium.pth"
+    pth = PROJECT_ROOT / "src" / "_ccopium.pth"
     if pth.exists():
         try:
-            h.update(b"_copium.pth")
+            h.update(b"_ccopium.pth")
             h.update(pth.read_bytes())
         except OSError as e:
             error(f"Failed to read _copium.pth for fingerprint: {e!r}")
-            h.update(b"ERROR:_copium.pth")
+            h.update(b"ERROR:_ccopium.pth")
 
     digest = h.hexdigest()
     echo(f"Computed sources fingerprint: {digest[:12]}... from {count} source files")
@@ -544,7 +545,7 @@ def _get_c_extensions(
 
     return [
         Extension(
-            "copium",
+            "ccopium",
             sources=["src/copium.c"],
             include_dirs=[str(python_include), str(python_include / "internal")],
             define_macros=define_macros,

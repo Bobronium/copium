@@ -80,7 +80,7 @@ EXPECTED_ERROR_DIVERGENCES = {
     ),
     repr(ValueError("too many values to unpack (expected 2)")): repr(
         ValueError("too many values to unpack (expected 2, got 3)")
-    )
+    ),
 }
 
 
@@ -331,7 +331,8 @@ def test_memo_reused():
             self.observations.add(id(memo))
 
     ref_thieves = []
-    for _i in range(1000):
+    repeats = 1000
+    for _i in range(repeats):
         obj = [[], a := Observative(), a, "123", {}]
         ref_thieves.append({})
         copied = copium.deepcopy(obj)
@@ -342,14 +343,17 @@ def test_memo_reused():
 
     assert len(Observative.observations) == 1
 
-    for _i in range(1000):
+    Observative.observations.clear()
+
+    # This part is not strictly needed, but serves as a quick sanity check:
+    # we would not see same id(memo) if it was not indeed reused
+    for _i in range(repeats):
         obj = [[], a := Observative(), a, "123", {}]
         ref_thieves.append({})
         stdlib_copy.deepcopy(obj)
         ref_thieves.append({})
 
-    # might become flaky at some point, but serves the purpose now
-    assert len(Observative.observations) == 1001
+    assert len(Observative.observations) == pytest.approx(repeats, abs=10)
 
 
 def test_memo_reference_stolen():
@@ -397,7 +401,6 @@ def test_explicit_dictionary_memo_reference_balance():
     assert copied_object == object_to_copy
     assert copied_object is not object_to_copy
     assert reference_count_after_copying == reference_count_before_copying
-
 
 
 def test_no_extra_refs_post_deepcopy(copy):

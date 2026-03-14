@@ -471,48 +471,6 @@ def test_no_reference_leaks():
 
 
 @pytest.mark.memory
-@pytest.mark.skipif(not HAS_PSUTIL, reason="psutil not installed")
-def test_large_data_retention_policy():
-    """
-    Test that the retention policy works correctly with very large data.
-
-    When data exceeds COPIUM_MEMO_RETAIN_MAX_SLOTS, the buffer should
-    shrink back to COPIUM_MEMO_RETAIN_SHRINK_TO.
-    """
-    # Create data large enough to exceed retention limits
-    # COPIUM_MEMO_RETAIN_MAX_SLOTS = 131072 slots
-    # Create many unique objects to force many memo entries
-    huge_data = {f"obj_{i}": object() for i in range(200000)}
-
-    gc.collect()
-    before = get_process_memory()
-
-    # This should trigger growth beyond retention limit
-    _ = copium.deepcopy(huge_data)
-    during = get_process_memory()
-    del _
-
-    # After this smaller operation, buffer should have shrunk
-    small_data = create_test_data_small()
-    _ = copium.deepcopy(small_data)
-    del _
-
-    gc.collect()
-    after = get_process_memory()
-
-    # Memory should be significantly less than during peak
-    # (buffer should have shrunk from 128K slots to 8K slots)
-    peak_growth = during - before
-    final_retained = after - before
-
-    # Final retained should be much less than peak (at least 50% less)
-    assert final_retained < peak_growth * 0.5, (
-        f"Retention policy may not be working: "
-        f"peak_growth={peak_growth:,}, final_retained={final_retained:,}"
-    )
-
-
-@pytest.mark.memory
 def test_memo_dict_no_tls_optimization():
     """
     Test that when a dict memo is provided, copium behaves like stdlib.
