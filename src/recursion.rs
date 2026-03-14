@@ -1,4 +1,5 @@
 use pyo3_ffi::*;
+use core::hint::{likely,unlikely};
 use std::ptr;
 
 const STACKCHECK_STRIDE: u32 = 32;
@@ -13,7 +14,6 @@ static mut STACK_LOW: *mut u8 = ptr::null_mut();
 #[thread_local]
 static mut STACK_INITED: i32 = 0;
 
-#[inline(always)]
 unsafe fn init_stack_bounds() {
     unsafe {
         STACK_INITED = 1;
@@ -96,6 +96,11 @@ unsafe fn init_stack_bounds() {
                 STACK_LOW = lowc;
             }
         }
+
+        if !STACK_LOW.is_null() {
+            STACK_LOW = Py_GetRecursionLimit();
+        }
+
     }
 }
 
@@ -106,42 +111,27 @@ pub unsafe fn enter() -> i32 {
         DEPTH
     };
 
-    if d < STACKCHECK_STRIDE {
+    if likely(d < STACKCHECK_STRIDE) {
         return 0;
     }
 
-    if (d & (STACKCHECK_STRIDE - 1)) == 0 {
-        if unsafe { STACK_INITED == 0 } {
+    if unlikely((d & (STACKCHECK_STRIDE - 1)) == 0) {
+        if unsafe { unlikely(STACK_INITED == 0) } {
             unsafe { init_stack_bounds() };
         }
 
-        if unsafe { !STACK_LOW.is_null() } {
-            let sp_probe = 0u8;
-            let sp = (&sp_probe as *const u8).cast_mut();
-            if sp <= unsafe { STACK_LOW } {
-                unsafe {
-                    DEPTH -= 1;
-                    PyErr_Format(
-                        PyExc_RecursionError,
-                        crate::cstr!("Stack overflow (depth %u) while deep copying an object"),
-                        d,
-                    );
-                }
-                return -1;
+        let sp_probe = 0u8;
+        let sp = (&sp_probe as *const u8).cast_mut();
+        if unlikely(sp <= unsafe { STACK_LOW }) {
+            unsafe {
+                DEPTH -= 1;
+                PyErr_Format(
+                    PyExc_RecursionError,
+                    crate::cstr!("Stack overflow (depth %u) while deep copying an object"),
+                    d,
+                );
             }
-        } else {
-            let limit = unsafe { Py_GetRecursionLimit() };
-            if d as i32 > limit {
-                unsafe {
-                    DEPTH -= 1;
-                    PyErr_Format(
-                        PyExc_RecursionError,
-                        crate::cstr!("Stack overflow (depth %u) while deep copying an object"),
-                        d,
-                    );
-                }
-                return -1;
-            }
+            return -1;
         }
     }
 
