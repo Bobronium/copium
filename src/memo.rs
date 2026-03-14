@@ -20,7 +20,11 @@ pub trait Memo: Sized {
     /// When RECALL_CAN_ERROR is true, caller must check PyErr_Occurred() on null.
     unsafe fn recall(&mut self, object: *mut PyObject) -> (Self::Probe, *mut PyObject);
 
-    unsafe fn recall_probed(&mut self, object: *mut PyObject, probe: &Self::Probe) -> *mut PyObject {
+    unsafe fn recall_probed(
+        &mut self,
+        object: *mut PyObject,
+        probe: &Self::Probe,
+    ) -> *mut PyObject {
         let _ = probe;
         self.recall(object).1
     }
@@ -712,7 +716,10 @@ unsafe extern "C" fn keepalive_list_repr(obj: *mut PyObject) -> *mut PyObject {
     }
 }
 
-unsafe extern "C" fn keepalive_list_append(obj: *mut PyObject, arg: *mut PyObject) -> *mut PyObject {
+unsafe extern "C" fn keepalive_list_append(
+    obj: *mut PyObject,
+    arg: *mut PyObject,
+) -> *mut PyObject {
     unsafe {
         let self_ = obj as *mut PyKeepaliveListObject;
         if (*self_).owner.is_null() {
@@ -724,7 +731,10 @@ unsafe extern "C" fn keepalive_list_append(obj: *mut PyObject, arg: *mut PyObjec
     }
 }
 
-unsafe extern "C" fn keepalive_list_clear_py(obj: *mut PyObject, _: *mut PyObject) -> *mut PyObject {
+unsafe extern "C" fn keepalive_list_clear_py(
+    obj: *mut PyObject,
+    _: *mut PyObject,
+) -> *mut PyObject {
     unsafe {
         let self_ = obj as *mut PyKeepaliveListObject;
         if (*self_).owner.is_null() {
@@ -777,7 +787,10 @@ unsafe fn init_keepalive_methods() {
         (*tp).tp_as_sequence = ptr::addr_of_mut!(KEEPALIVE_LIST_SEQUENCE);
         #[cfg(Py_GIL_DISABLED)]
         {
-            (*tp).tp_flags.store(Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, core::sync::atomic::Ordering::Relaxed);
+            (*tp).tp_flags.store(
+                Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+                core::sync::atomic::Ordering::Relaxed,
+            );
         }
         #[cfg(not(Py_GIL_DISABLED))]
         {
@@ -789,7 +802,6 @@ unsafe fn init_keepalive_methods() {
         (*tp).tp_methods = ptr::addr_of_mut!(KEEPALIVE_LIST_METHODS_TABLE).cast::<PyMethodDef>();
     }
 }
-
 
 // ── TSS ────────────────────────────────────────────────────
 
@@ -933,12 +945,7 @@ impl Memo for DictMemo {
     }
 
     #[inline(always)]
-    unsafe fn memoize(
-        &mut self,
-        original: *mut PyObject,
-        copy: *mut PyObject,
-        _probe: &(),
-    ) -> i32 {
+    unsafe fn memoize(&mut self, original: *mut PyObject, copy: *mut PyObject, _probe: &()) -> i32 {
         unsafe {
             let pykey = PyLong_FromVoidPtr(original as *mut c_void);
             if pykey.is_null() {
@@ -1085,12 +1092,7 @@ impl Memo for AnyMemo {
         }
     }
 
-    unsafe fn memoize(
-        &mut self,
-        original: *mut PyObject,
-        copy: *mut PyObject,
-        _probe: &(),
-    ) -> i32 {
+    unsafe fn memoize(&mut self, original: *mut PyObject, copy: *mut PyObject, _probe: &()) -> i32 {
         unsafe {
             let pykey = PyLong_FromVoidPtr(original as *mut c_void);
             if pykey.is_null() {
@@ -1412,10 +1414,7 @@ unsafe extern "C" fn memo_mp_ass_subscript(
 
 // ── Sequence protocol (sq_contains) ────────────────────────
 
-unsafe extern "C" fn memo_sq_contains(
-    obj: *mut PyObject,
-    pykey: *mut PyObject,
-) -> std::ffi::c_int {
+unsafe extern "C" fn memo_sq_contains(obj: *mut PyObject, pykey: *mut PyObject) -> std::ffi::c_int {
     unsafe {
         let self_ = obj as *mut PyMemoObject;
 
@@ -1494,10 +1493,7 @@ unsafe extern "C" fn memo_py_get(
     }
 }
 
-unsafe extern "C" fn memo_py_contains(
-    obj: *mut PyObject,
-    pykey: *mut PyObject,
-) -> *mut PyObject {
+unsafe extern "C" fn memo_py_contains(obj: *mut PyObject, pykey: *mut PyObject) -> *mut PyObject {
     unsafe {
         let result = memo_sq_contains(obj, pykey);
         if result < 0 {
@@ -1660,7 +1656,10 @@ unsafe extern "C" fn memo_py_setdefault(
 ) -> *mut PyObject {
     unsafe {
         if nargs < 1 || nargs > 2 {
-            PyErr_SetString(PyExc_TypeError, cstr!("setdefault expected 1 or 2 arguments"));
+            PyErr_SetString(
+                PyExc_TypeError,
+                cstr!("setdefault expected 1 or 2 arguments"),
+            );
             return ptr::null_mut();
         }
 
@@ -1806,7 +1805,10 @@ pub unsafe fn memo_ready_type() -> i32 {
         (*tp).tp_as_sequence = ptr::addr_of_mut!(MEMO_SEQUENCE);
         #[cfg(Py_GIL_DISABLED)]
         {
-            (*tp).tp_flags.store(Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, core::sync::atomic::Ordering::Relaxed);
+            (*tp).tp_flags.store(
+                Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+                core::sync::atomic::Ordering::Relaxed,
+            );
         }
         #[cfg(not(Py_GIL_DISABLED))]
         {

@@ -1,12 +1,11 @@
-use pyo3_ffi::*;
-use std::os::raw::c_int;
-use std::ptr;
-
 use crate::deepcopy::PyResult;
 use crate::ffi_ext;
 use crate::reduce::{self, ReduceKind};
 use crate::state::STATE;
 use crate::types::*;
+use pyo3_ffi::*;
+use std::os::raw::c_int;
+use std::ptr;
 
 macro_rules! check {
     ($expression:expr) => {{
@@ -24,37 +23,28 @@ trait PyCopy {
 
 pub unsafe fn copy(object: *mut PyObject) -> PyResult {
     unsafe {
-        let class = object.class();
+        let cls = object.class();
 
-        if class.is_atomic_immutable() || class.is_stdlib_immutable() {
+        if cls.is_atomic_immutable() || cls.is_immutable_collection() || cls.is_type_subclass() {
             return PyResult::ok(object.newref());
         }
 
-        if class == PyTupleObject::type_ptr()
-            || class == PyFrozensetObject::type_ptr()
-            || PySlice_Check(object) != 0
-            || PyType_IsSubtype(class, std::ptr::addr_of_mut!(PyType_Type)) != 0
-        {
-            return PyResult::ok(object.newref());
+        if let Some(object) = PyListObject::cast_exact(object, cls) {
+            return object.copy();
         }
-
-        if class == PyListObject::type_ptr() {
-            return (object as *mut PyListObject).copy();
+        if let Some(object) = PyDictObject::cast_exact(object, cls) {
+            return object.copy();
         }
-        if class == PyDictObject::type_ptr() {
-            return (object as *mut PyDictObject).copy();
+        if let Some(object) = PySetObject::cast_exact(object, cls) {
+            return object.copy();
         }
-        if class == PySetObject::type_ptr() {
-            return (object as *mut PySetObject).copy();
-        }
-        if class == PyByteArrayObject::type_ptr() {
-            return (object as *mut PyByteArrayObject).copy();
+        if let Some(object) = PyByteArrayObject::cast_exact(object, cls) {
+            return object.copy();
         }
 
         object.copy()
     }
 }
-
 
 impl PyCopy for *mut PyListObject {
     unsafe fn copy(self) -> PyResult {
@@ -101,14 +91,14 @@ impl PyCopy for *mut PyByteArrayObject {
 impl PyCopy for *mut PyObject {
     unsafe fn copy(self) -> PyResult {
         unsafe {
-            let mut dunder_copy: *mut PyObject = ptr::null_mut();
-            let has_dunder_copy = self.get_optional_attr(STATE.s_copy, &mut dunder_copy);
-            if has_dunder_copy < 0 {
+            let mut custom_copy: *mut PyObject = ptr::null_mut();
+            let has_custom_copy = self.get_optional_attr(STATE.s_copy, &mut custom_copy);
+            if has_custom_copy < 0 {
                 return PyResult::error();
             }
-            if has_dunder_copy > 0 {
-                let copied = dunder_copy.call();
-                dunder_copy.decref();
+            if has_custom_copy > 0 {
+                let copied = custom_copy.call();
+                custom_copy.decref();
                 if copied.is_null() {
                     return PyResult::error();
                 }

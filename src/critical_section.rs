@@ -39,7 +39,6 @@
 
 use pyo3_ffi::*;
 
-
 #[cfg(Py_GIL_DISABLED)]
 struct CSGuard(pyo3_ffi::PyCriticalSection);
 
@@ -51,7 +50,6 @@ impl Drop for CSGuard {
         }
     }
 }
-
 
 #[cfg(Py_GIL_DISABLED)]
 struct CS2Guard(pyo3_ffi::PyCriticalSection2);
@@ -82,4 +80,3 @@ where
         f()
     }
 }
-

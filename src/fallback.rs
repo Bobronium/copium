@@ -693,7 +693,7 @@ unsafe fn emit_fallback_warning(
             deepcopy_expression,
             error_identifier,
             error_identifier,
-            deepcopy_expression
+            deepcopy_expression,
         );
         if full_message.is_null() {
             status = -1;

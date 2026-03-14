@@ -273,10 +273,7 @@ unsafe extern "C" fn memo_mp_ass_subscript(
 
 // ── Sequence protocol (sq_contains) ────────────────────────
 
-unsafe extern "C" fn memo_sq_contains(
-    obj: *mut PyObject,
-    pykey: *mut PyObject,
-) -> std::ffi::c_int {
+unsafe extern "C" fn memo_sq_contains(obj: *mut PyObject, pykey: *mut PyObject) -> std::ffi::c_int {
     unsafe {
         let self_ = obj as *mut PyMemoObject;
 
@@ -294,7 +291,11 @@ unsafe extern "C" fn memo_sq_contains(
         }
 
         let found = (*self_).inner.table.lookup_h(key, hash_pointer(key));
-        if found.is_null() { 0 } else { 1 }
+        if found.is_null() {
+            0
+        } else {
+            1
+        }
     }
 }
 
@@ -343,10 +344,7 @@ unsafe extern "C" fn memo_py_get(
     }
 }
 
-unsafe extern "C" fn memo_py_contains(
-    obj: *mut PyObject,
-    pykey: *mut PyObject,
-) -> *mut PyObject {
+unsafe extern "C" fn memo_py_contains(obj: *mut PyObject, pykey: *mut PyObject) -> *mut PyObject {
     unsafe {
         let result = memo_sq_contains(obj, pykey);
         if result < 0 {

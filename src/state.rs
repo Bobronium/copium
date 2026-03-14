@@ -119,9 +119,7 @@ unsafe extern "C" fn uninitialized_dict_items_vectorcall(
 
 unsafe fn load_type_from(module_name: &str, attr: &str) -> *mut PyTypeObject {
     unsafe {
-        let m = PyImport_ImportModule(
-            format!("{module_name}\0").as_ptr() as *const c_char,
-        );
+        let m = PyImport_ImportModule(format!("{module_name}\0").as_ptr() as *const c_char);
         if m.is_null() {
             return ptr::null_mut();
         }
@@ -217,8 +215,10 @@ pub unsafe fn init() -> i32 {
 
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
         {
-            let dict_items_descriptor =
-                PyObject_GetAttrString(ptr::addr_of_mut!(PyDict_Type) as *mut PyObject, cstr!("items"));
+            let dict_items_descriptor = PyObject_GetAttrString(
+                ptr::addr_of_mut!(PyDict_Type) as *mut PyObject,
+                cstr!("items"),
+            );
             if dict_items_descriptor.is_null() {
                 return -1;
             }
@@ -329,7 +329,10 @@ pub unsafe fn load_config_from_env() -> i32 {
         } else {
             MemoMode::Native
         };
-        (*s).on_incompatible = if no_fallback.as_deref().is_some_and(|value| !value.is_empty()) {
+        (*s).on_incompatible = if no_fallback
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        {
             OnIncompatible::Raise
         } else {
             OnIncompatible::Warn

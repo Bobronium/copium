@@ -3,31 +3,31 @@
 
 use core::ffi::{c_char, c_void};
 use pyo3_ffi::*;
-use std::ptr;
 use std::hint::{likely, unlikely};
+use std::ptr;
 
 #[macro_use]
 mod ffi_ext;
+mod about;
+mod compat;
+mod config;
+mod copy;
+mod critical_section;
+mod deepcopy;
+mod dict_iter;
+mod extra;
+mod fallback;
+mod memo;
+mod patch;
+mod recursion;
+mod reduce;
 mod state;
 mod types;
-mod recursion;
-mod memo;
-mod dict_iter;
-mod reduce;
-mod fallback;
-mod deepcopy;
-mod copy;
-mod config;
-mod about;
-mod extra;
-mod patch;
-mod compat;
-mod critical_section;
 
+use crate::memo::PyMemoObject;
+use crate::types::{py_dict_new, PyObjectPtr, PyTypeInfo, PyTypeObjectPtr};
 use memo::{AnyMemo, DictMemo};
 use state::{MemoMode, STATE};
-use crate::memo::PyMemoObject;
-use crate::types::{py_dict_new, PyObjectPtr, PyTypeObjectPtr, PyTypeInfo};
 // ══════════════════════════════════════════════════════════════
 //  copy(obj, /) — METH_O
 // ══════════════════════════════════════════════════════════════
@@ -416,7 +416,9 @@ static mut MODULE_SLOTS: [PyModuleDef_Slot; 2] = [
 static mut MODULE_DEF: PyModuleDef = PyModuleDef {
     m_base: PyModuleDef_HEAD_INIT,
     m_name: b"copium\0".as_ptr().cast(),
-    m_doc: b"Fast, full-native deepcopy with reduce protocol and keepalive memo.\0".as_ptr().cast(),
+    m_doc: b"Fast, full-native deepcopy with reduce protocol and keepalive memo.\0"
+        .as_ptr()
+        .cast(),
     m_size: 0,
     m_methods: ptr::null_mut(),
     m_slots: ptr::null_mut(),
