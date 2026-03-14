@@ -1,0 +1,4 @@
+**/*.pyi linguist-generated=true
+tests/** linguist-generated=true
+tools/** linguist-generated=true
+ccopium/** linguist-vendored=true
