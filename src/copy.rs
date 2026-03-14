@@ -55,7 +55,6 @@ pub unsafe fn copy(object: *mut PyObject) -> PyResult {
     }
 }
 
-
 impl PyCopy for *mut PyListObject {
     unsafe fn copy(self) -> PyResult {
         unsafe {

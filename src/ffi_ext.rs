@@ -11,7 +11,7 @@ use core::sync::atomic::Ordering;
 // ── Symbols not (reliably) in pyo3-ffi ──────────────────────
 
 pub use pyo3_ffi::{
-    Py_NotImplemented, Py_None, PyEllipsis_Type, PyProperty_Type, _PyWeakref_RefType,
+    _PyWeakref_RefType, PyEllipsis_Type, PyProperty_Type, Py_None, Py_NotImplemented,
 };
 
 #[cfg_attr(windows, link(name = "pythonXY"))]

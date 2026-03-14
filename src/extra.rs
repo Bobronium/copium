@@ -92,10 +92,7 @@ unsafe extern "C" fn py_repeatcall(
 
         let func = *args;
         if PyCallable_Check(func) == 0 {
-            PyErr_SetString(
-                PyExc_TypeError,
-                crate::cstr!("function must be callable"),
-            );
+            PyErr_SetString(PyExc_TypeError, crate::cstr!("function must be callable"));
             return ptr::null_mut();
         }
 
@@ -147,7 +144,9 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
                 PyCFunctionFastWithKeywords: py_replicate,
             },
             ml_flags: METH_FASTCALL | METH_KEYWORDS,
-            ml_doc: crate::cstr!("replicate(obj, n, /)\n--\n\nReturns n deep copies of the object in a list."),
+            ml_doc: crate::cstr!(
+                "replicate(obj, n, /)\n--\n\nReturns n deep copies of the object in a list."
+            ),
         };
         EXTRA_METHODS[1] = PyMethodDef {
             ml_name: crate::cstr!("repeatcall"),
@@ -155,7 +154,9 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
                 PyCFunctionFastWithKeywords: py_repeatcall,
             },
             ml_flags: METH_FASTCALL | METH_KEYWORDS,
-            ml_doc: crate::cstr!("repeatcall(function, size, /)\n--\n\nCall function repeatedly size times."),
+            ml_doc: crate::cstr!(
+                "repeatcall(function, size, /)\n--\n\nCall function repeatedly size times."
+            ),
         };
         EXTRA_METHODS[2] = PyMethodDef::zeroed();
 

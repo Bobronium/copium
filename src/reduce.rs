@@ -170,9 +170,21 @@ pub(crate) unsafe fn validate_reduce_tuple(
         let callable = tup.get_borrowed_unchecked(0);
         let mut argtup = tup.get_borrowed_unchecked(1);
         let none = ffi_ext::Py_None();
-        let state_raw = if size >= 3 { tup.get_borrowed_unchecked(2) } else { none };
-        let list_raw = if size >= 4 { tup.get_borrowed_unchecked(3) } else { none };
-        let dict_raw = if size == 5 { tup.get_borrowed_unchecked(4) } else { none };
+        let state_raw = if size >= 3 {
+            tup.get_borrowed_unchecked(2)
+        } else {
+            none
+        };
+        let list_raw = if size >= 4 {
+            tup.get_borrowed_unchecked(3)
+        } else {
+            none
+        };
+        let dict_raw = if size == 5 {
+            tup.get_borrowed_unchecked(4)
+        } else {
+            none
+        };
 
         if !argtup.is_tuple() {
             let coerced = PySequence_Tuple(argtup);
@@ -195,13 +207,28 @@ pub(crate) unsafe fn validate_reduce_tuple(
             argtup = coerced;
         }
 
-        (ReduceKind::Tuple, ReduceParts {
-            callable,
-            argtup,
-            state: if state_raw == none { ptr::null_mut() } else { state_raw },
-            listitems: if list_raw == none { ptr::null_mut() } else { list_raw },
-            dictitems: if dict_raw == none { ptr::null_mut() } else { dict_raw },
-        })
+        (
+            ReduceKind::Tuple,
+            ReduceParts {
+                callable,
+                argtup,
+                state: if state_raw == none {
+                    ptr::null_mut()
+                } else {
+                    state_raw
+                },
+                listitems: if list_raw == none {
+                    ptr::null_mut()
+                } else {
+                    list_raw
+                },
+                dictitems: if dict_raw == none {
+                    ptr::null_mut()
+                } else {
+                    dict_raw
+                },
+            },
+        )
     }
 }
 
@@ -227,10 +254,7 @@ unsafe fn call_tp_new(
     }
 }
 
-unsafe fn reconstruct_newobj<M: Memo>(
-    argtup: *mut PyObject,
-    memo: &mut M,
-) -> *mut PyObject {
+unsafe fn reconstruct_newobj<M: Memo>(argtup: *mut PyObject, memo: &mut M) -> *mut PyObject {
     unsafe {
         let tup = argtup as *mut PyTupleObject;
         let nargs = tup.length();
@@ -551,10 +575,7 @@ unsafe fn apply_slot_state<M: Memo>(
                 if pair.is_null() {
                     break;
                 }
-                let seq = ffi_ext::PySequence_Fast(
-                    pair,
-                    crate::cstr!("items() must return pairs"),
-                );
+                let seq = ffi_ext::PySequence_Fast(pair, crate::cstr!("items() must return pairs"));
                 pair.decref();
                 if seq.is_null() {
                     ret = -1;
@@ -709,10 +730,8 @@ unsafe fn apply_dictitems<M: Memo>(
                 key = ptup.get_borrowed_unchecked(0).newref();
                 value = ptup.get_borrowed_unchecked(1).newref();
             } else {
-                let seq = ffi_ext::PySequence_Fast(
-                    pair,
-                    crate::cstr!("cannot unpack non-sequence"),
-                );
+                let seq =
+                    ffi_ext::PySequence_Fast(pair, crate::cstr!("cannot unpack non-sequence"));
                 if seq.is_null() {
                     pair.decref();
                     ret = -1;
@@ -725,17 +744,13 @@ unsafe fn apply_dictitems<M: Memo>(
                     if n < 2 {
                         ffi_ext::PyErr_Format(
                             PyExc_ValueError,
-                            crate::cstr!(
-                                "not enough values to unpack (expected 2, got %zd)"
-                            ),
+                            crate::cstr!("not enough values to unpack (expected 2, got %zd)"),
                             n,
                         );
                     } else {
                         ffi_ext::PyErr_Format(
                             PyExc_ValueError,
-                            crate::cstr!(
-                                "too many values to unpack (expected 2, got %zd)"
-                            ),
+                            crate::cstr!("too many values to unpack (expected 2, got %zd)"),
                             n,
                         );
                     }

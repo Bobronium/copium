@@ -7,7 +7,7 @@ use std::ptr;
 use crate::compat;
 use crate::ffi_ext;
 use crate::ffi_ext::*;
-use crate::memo::{PyMemoObject, Memo_Type};
+use crate::memo::{Memo_Type, PyMemoObject};
 use crate::state::STATE;
 
 // ── Type identity (on the type, not the pointer) ───────────

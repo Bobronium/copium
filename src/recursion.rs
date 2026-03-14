@@ -1,5 +1,5 @@
+use core::hint::{likely, unlikely};
 use pyo3_ffi::*;
-use core::hint::{likely,unlikely};
 use std::ptr;
 
 const STACKCHECK_STRIDE: u32 = 32;
@@ -40,7 +40,9 @@ unsafe fn init_stack_bounds() {
             let mut addr: *mut libc::c_void = ptr::null_mut();
             let mut sz: usize = 0;
 
-            if libc::pthread_attr_getstack(&attr, &mut addr, &mut sz) == 0 && !addr.is_null() && sz != 0
+            if libc::pthread_attr_getstack(&attr, &mut addr, &mut sz) == 0
+                && !addr.is_null()
+                && sz != 0
             {
                 let mut low = addr as *mut u8;
                 if sz > STACK_SAFETY_MARGIN {
@@ -78,10 +80,7 @@ unsafe fn init_stack_bounds() {
 
         let h_kernel32: HMODULE = GetModuleHandleW(kernel32_name.as_ptr());
         if !h_kernel32.is_null() {
-            let proc = GetProcAddress(
-                h_kernel32,
-                b"GetCurrentThreadStackLimits\0".as_ptr(),
-            );
+            let proc = GetProcAddress(h_kernel32, b"GetCurrentThreadStackLimits\0".as_ptr());
             if let Some(raw) = proc {
                 let fn_ptr: GetStackLimitsFn = core::mem::transmute(raw);
                 let mut low: usize = 0;

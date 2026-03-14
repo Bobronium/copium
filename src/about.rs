@@ -28,7 +28,11 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
 
         let version = env!("CARGO_PKG_VERSION");
         let version_cstr = format!("{version}\0");
-        PyModule_AddStringConstant(module, crate::cstr!("__version__"), version_cstr.as_ptr() as _);
+        PyModule_AddStringConstant(
+            module,
+            crate::cstr!("__version__"),
+            version_cstr.as_ptr() as _,
+        );
 
         // VersionInfo namedtuple
         let collections = PyImport_ImportModule(crate::cstr!("collections"));
@@ -62,10 +66,20 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
 
         // Parse version
         let parts: Vec<&str> = version.split('.').collect();
-        let major = parts.first().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-        let minor = parts.get(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+        let major = parts
+            .first()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
+        let minor = parts
+            .get(1)
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
         let patch_str = parts.get(2).map(|s| *s).unwrap_or("0");
-        let patch = patch_str.split('+').next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+        let patch = patch_str
+            .split('+')
+            .next()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
 
         let build_hash = env!("COPIUM_BUILD_HASH");
         let local_str = format!("{build_hash}\0");

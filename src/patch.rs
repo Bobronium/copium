@@ -84,7 +84,10 @@ unsafe fn unapply_patch(_py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
         let capsule = PyObject_GetAttrString(fn_ptr, crate::cstr!("__copium_original__"));
         if capsule.is_null() {
             PyErr_Clear();
-            PyErr_SetString(PyExc_RuntimeError, crate::cstr!("copium.patch: not applied"));
+            PyErr_SetString(
+                PyExc_RuntimeError,
+                crate::cstr!("copium.patch: not applied"),
+            );
             return -1;
         }
 
@@ -125,7 +128,8 @@ unsafe fn init_template() -> i32 {
             return 0;
         }
 
-        let src = b"def deepcopy(x, memo=None, _nil=[]):\n    return \"copium.deepcopy\"(x, memo)\n\0";
+        let src =
+            b"def deepcopy(x, memo=None, _nil=[]):\n    return \"copium.deepcopy\"(x, memo)\n\0";
 
         let globals = PyDict_New();
         if globals.is_null() {
@@ -201,15 +205,18 @@ unsafe fn init_template() -> i32 {
 
         G_TEMPLATE_CODE = PyObject_GetAttrString(fn_obj, crate::cstr!("__code__"));
         globals.decref();
-        if G_TEMPLATE_CODE.is_null() { -1 } else { 0 }
+        if G_TEMPLATE_CODE.is_null() {
+            -1
+        } else {
+            0
+        }
     }
 }
 
 #[cfg(not(Py_3_12))]
 unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
     unsafe {
-        let template_consts =
-            PyObject_GetAttrString(G_TEMPLATE_CODE, crate::cstr!("co_consts"));
+        let template_consts = PyObject_GetAttrString(G_TEMPLATE_CODE, crate::cstr!("co_consts"));
         if template_consts.is_null() {
             return ptr::null_mut();
         }
@@ -358,11 +365,13 @@ unsafe fn apply_patch(_py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObj
 #[cfg(not(Py_3_12))]
 unsafe fn unapply_patch(_py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
     unsafe {
-        let original_code =
-            PyObject_GetAttrString(fn_ptr, crate::cstr!("__copium_original__"));
+        let original_code = PyObject_GetAttrString(fn_ptr, crate::cstr!("__copium_original__"));
         if original_code.is_null() {
             PyErr_Clear();
-            PyErr_SetString(PyExc_RuntimeError, crate::cstr!("copium.patch: not applied"));
+            PyErr_SetString(
+                PyExc_RuntimeError,
+                crate::cstr!("copium.patch: not applied"),
+            );
             return -1;
         }
 
@@ -383,14 +392,15 @@ unsafe fn unapply_patch(_py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
 
 fn require_py_function<'py>(obj: Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
     if !obj.is_instance_of::<PyFunction>() {
-        return Err(PyTypeError::new_err("copy.deepcopy is not a Python function"));
+        return Err(PyTypeError::new_err(
+            "copy.deepcopy is not a Python function",
+        ));
     }
     Ok(obj)
 }
 
 fn take_py_err(py: Python<'_>) -> PyErr {
-    PyErr::take(py)
-        .unwrap_or_else(|| PyRuntimeError::new_err("unexpected null error state"))
+    PyErr::take(py).unwrap_or_else(|| PyRuntimeError::new_err("unexpected null error state"))
 }
 
 #[pyfunction]
@@ -449,8 +459,9 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
         m.add_function(wrap_pyfunction!(enabled, &m)?)?;
         let ptr = m.into_ptr();
         if unsafe { crate::add_submodule(parent, crate::cstr!("patch"), ptr) } < 0 {
-            return Err(PyErr::take(py)
-                .unwrap_or_else(|| PyRuntimeError::new_err("add_submodule failed")));
+            return Err(
+                PyErr::take(py).unwrap_or_else(|| PyRuntimeError::new_err("add_submodule failed"))
+            );
         }
         Ok(())
     })();
