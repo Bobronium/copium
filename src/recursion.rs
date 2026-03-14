@@ -96,12 +96,11 @@ unsafe fn init_stack_bounds() {
                 STACK_LOW = lowc;
             }
         }
-
-        if !STACK_LOW.is_null() {
-            STACK_LOW = Py_GetRecursionLimit();
-        }
-
     }
+    if STACK_LOW.is_null() {
+        let probe = 0u8;
+        let sp = (&probe as *const u8) as *mut u8;
+        STACK_LOW = sp.sub(STACK_SAFETY_MARGIN);
 }
 
 #[inline(always)]
