@@ -493,13 +493,13 @@ impl PyDeepCopy for *mut PyObject {
         unsafe {
             let state_pointer = ptr::addr_of!(STATE);
             let deepcopy_name = (*state_pointer).s_deepcopy;
-            let mut dunder: *mut PyObject = ptr::null_mut();
-            let has = self.get_optional_attr(deepcopy_name, &mut dunder);
+            let mut custom_deepcopy_method: *mut PyObject = ptr::null_mut();
+            let has = self.get_optional_attr(deepcopy_name, &mut custom_deepcopy_method);
             if has < 0 {
                 return PyResult::error();
             }
             if has > 0 {
-                return deepcopy_via_dunder(self, dunder, memo, probe);
+                return deepcopy_custom(self, custom_deepcopy_method, memo, probe);
             }
 
             let result = crate::reduce::reconstruct(self, self.class(), memo, probe);
@@ -512,15 +512,15 @@ impl PyDeepCopy for *mut PyObject {
     }
 }
 
-unsafe fn deepcopy_via_dunder<M: Memo>(
+unsafe fn deepcopy_custom<M: Memo>(
     object: *mut PyObject,
-    dunder: *mut PyObject,
+    custom_deepcopy_method: *mut PyObject,
     memo: &mut M,
     probe: M::Probe,
 ) -> PyResult {
     unsafe {
         let checkpoint = memo.checkpoint();
-        let mut copied = dunder.call_one(memo.as_call_arg());
+        let mut copied = custom_deepcopy_method.call_one(memo.as_call_arg());
 
         if copied.is_null() {
             if let Some(saved_checkpoint) = checkpoint {
@@ -528,7 +528,7 @@ unsafe fn deepcopy_via_dunder<M: Memo>(
                 if !native_memo.is_null() {
                     copied = crate::fallback::maybe_retry_with_dict_memo(
                         object,
-                        dunder,
+                        custom_deepcopy_method,
                         &mut *native_memo,
                         saved_checkpoint,
                     );
@@ -536,7 +536,7 @@ unsafe fn deepcopy_via_dunder<M: Memo>(
             }
         }
 
-        dunder.decref();
+        custom_deepcopy_method.decref();
 
         if copied.is_null() {
             return PyResult::error();
