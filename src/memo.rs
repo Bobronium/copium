@@ -189,7 +189,7 @@ impl MemoTable {
             idx = (idx + 1) & mask;
         }
     }
-    #[inline]
+    #[inline(always)]
     pub fn insert_h(&mut self, key: usize, value: *mut PyObject, hash: usize) -> i32 {
         if unlikely(self.ensure() < 0) {
             return -1;
