@@ -6,7 +6,7 @@ rust-version = "1.75"
 publish = false
 
 [lib]
-name = "__init__"
+name = "copium"
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -24,5 +24,6 @@ windows-sys = { version = "0.59", features = [
 lto = "fat"
 codegen-units = 1
 strip = "debuginfo"
+
 [build-dependencies]
 pyo3-build-config = "0.28.2"
