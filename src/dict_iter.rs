@@ -1,7 +1,8 @@
 use pyo3_ffi::*;
 use std::hint::{likely, unlikely};
 use std::ptr;
-
+#[cfg(Py_GIL_DISABLED)]
+use crate::{py_cache_typed, py_obj};
 use crate::types::PyObjectPtr;
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]

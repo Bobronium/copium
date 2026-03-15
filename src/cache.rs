@@ -421,7 +421,7 @@ macro_rules! py_cache_typed {
         ::inventory::submit! { $crate::cache::CacheEntry { init_fn: __init } }
 
         #[allow(unused_unsafe)]
-        SLOT.get()
+        unsafe { SLOT.get() }
     }};
 }
 
