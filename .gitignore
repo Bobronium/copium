@@ -41,3 +41,4 @@ htmlcov/
 *.so
 compile_commands.json
 .bench
+.DS_Store
