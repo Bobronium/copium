@@ -81,7 +81,7 @@ jobs:
         id: wheel
         shell: bash
         run: |
-          wheel=$(find dist -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
+          wheel=$(find dist -name "*-${{ matrix.python.tag }}-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
 
           if [[ -z "$wheel" ]]; then
             echo "No compatible wheel found"
