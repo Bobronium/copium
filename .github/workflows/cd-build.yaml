@@ -29,10 +29,7 @@ jobs:
           - { tag: "cp312", version: "3.12.10", label: "3.12" }
           - { tag: "cp313", version: "3.13.9",  label: "3.13" }
           - { tag: "cp314", version: "3.14.0",  label: "3.14" }
-
-        exclude:
-          - { build: { os: windows-11-arm }, python: { tag: "cp310" } }
-          - { build: { os: windows-11-arm }, python: { tag: "cp311" } }
+          - { tag: "cp314t", version: "3.14t",  label: "3.14t", branch: "3.14" }
 
     runs-on: ${{ matrix.build.os }}
 
@@ -51,10 +48,14 @@ jobs:
           enable-cache: true
 
       - name: Install Python (non-Linux)
-        if: runner.os != 'Linux' && matrix.build.os != 'windows-11-arm'
+        if: runner.os != 'Linux'
         shell: bash
         run: |
-          uv python install ${{ matrix.python.version }}
+          if [[ "${{ matrix.build.os }}" == "windows-11-arm" ]]; then
+            uv python install cpython-${{ matrix.python.version }}-windows-aarch64-none
+          else
+            uv python install ${{ matrix.python.version }}
+          fi
           echo "PYTHON=$(uv python find ${{ matrix.python.version }})" >> "$GITHUB_ENV"
 
       - name: Build wheel
@@ -80,11 +81,10 @@ jobs:
           path: dist/*.whl
 
       - name: Find built wheel
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        id: wheel
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
         shell: bash
         run: |
-          wheel=$(find dist -name "*-${{ matrix.python.tag }}-*-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
+          wheel=$(find dist -name "*-${{ matrix.python.tag }}-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
 
           if [[ -z "$wheel" ]]; then
             echo "No compatible wheel found"
@@ -95,15 +95,13 @@ jobs:
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Setup test environment
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        run: |
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
           uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
       - name: "Test: Built wheel"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        run: uv run --no-sync pytest tests/ -vvv
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: Setup venv for codspeed
         if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
@@ -119,56 +117,48 @@ jobs:
           run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
 
       - name: Setup venv for shuffle tests
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        run: |
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
           uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
       - name: "Test: Shuffle A"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: "Test: Shuffle B"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: "Test: Shuffle C"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: "Test: Shuffle D"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: "Cache CPython test suite"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        id: cpython-cache
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
         uses: actions/cache@v4
         with:
           path: cpython-tests
-          key: cpython-tests-${{ matrix.python.label }}
+          key: cpython-tests-${{ matrix.python.branch || matrix.python.label }}
 
       - name: "Checkout CPython test suite"
-        if: ${{ matrix.build.os != 'windows-11-arm' && steps.cpython-cache.outputs.cache-hit != 'true' }}
+        if: ${{ (matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label)) && steps.cpython-cache.outputs.cache-hit != 'true' }}
         uses: actions/checkout@v5
         with:
           repository: python/cpython
-          ref: ${{ matrix.python.label }}
+          ref: ${{ matrix.python.branch || matrix.python.label }}
           sparse-checkout: Lib/test
           sparse-checkout-cone-mode: true
           path: cpython-tests
 
       - name: "Test: CPython test_copy (patched)"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        env:
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
           COPIUM_PATCH_ENABLE: "1"
           PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
         run: uv run --no-sync python -m unittest test.test_copy -v
 
       - name: "Test: CPython test_copy (patched, dict memo)"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
-        env:
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
           COPIUM_PATCH_ENABLE: "1"
           COPIUM_USE_DICT_MEMO: "1"
           PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
