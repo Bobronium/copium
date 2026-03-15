@@ -3,8 +3,7 @@ use std::ffi::c_void;
 use std::hint::{likely, unlikely};
 use std::ptr;
 
-use crate::state::STATE;
-use crate::types::*;
+use crate::{py_cache, py_eval, py_str, types::*};
 
 // ══════════════════════════════════════════════════════════════
 //  Memo trait — unified interface, three backends
@@ -1010,9 +1009,7 @@ impl AnyMemo {
                 return 0;
             }
 
-            let state_pointer = ptr::addr_of!(STATE);
-            let get_method_name = (*state_pointer).s_get;
-            let sentinel = (*state_pointer).sentinel;
+            let sentinel = py_cache!(py_eval!("object()"));
             let pykey = PyLong_FromVoidPtr(self.object as *mut c_void);
             if pykey.is_null() {
                 return -1;
@@ -1020,7 +1017,7 @@ impl AnyMemo {
 
             let existing = PyObject_CallMethodObjArgs(
                 self.object,
-                get_method_name,
+                py_str!("get"),
                 pykey,
                 sentinel,
                 ptr::null_mut::<PyObject>(),
@@ -1063,9 +1060,7 @@ impl Memo for AnyMemo {
 
     unsafe fn recall(&mut self, object: *mut PyObject) -> ((), *mut PyObject) {
         unsafe {
-            let state_pointer = ptr::addr_of!(STATE);
-            let get_method_name = (*state_pointer).s_get;
-            let sentinel = (*state_pointer).sentinel;
+            let sentinel = py_cache!(py_eval!("object()"));
             let pykey = PyLong_FromVoidPtr(object as *mut c_void);
             if pykey.is_null() {
                 return ((), ptr::null_mut());
@@ -1073,7 +1068,7 @@ impl Memo for AnyMemo {
 
             let found = PyObject_CallMethodObjArgs(
                 self.object,
-                get_method_name,
+                py_str!("get"),
                 pykey,
                 sentinel,
                 ptr::null_mut::<PyObject>(),

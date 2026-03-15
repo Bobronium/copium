@@ -1,9 +1,8 @@
 use pyo3_ffi::*;
 use std::hint::{likely, unlikely};
 use std::ptr;
-
-#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
-use crate::state::STATE;
+#[cfg(Py_GIL_DISABLED)]
+use crate::{py_cache_typed, py_obj};
 use crate::types::PyObjectPtr;
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
@@ -129,11 +128,28 @@ pub struct DictIterGuard {
 
 impl DictIterGuard {
     #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+    #[inline(always)]
+    fn cached_dict_items_vc() -> pyo3_ffi::vectorcallfunc {
+        py_cache_typed!(pyo3_ffi::vectorcallfunc, {
+            match crate::ffi_ext::PyVectorcall_Function(py_obj!("dict.items")) {
+                Some(f) => Some(f),
+                None => {
+                    pyo3_ffi::PyErr_SetString(
+                        pyo3_ffi::PyExc_TypeError,
+                        crate::cstr!("copium: dict.items has no vectorcall"),
+                    );
+                    None
+                }
+            }
+        })
+    }
+
+    #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
     unsafe fn new_dict_items_iterator(dict: *mut PyObject) -> *mut PyObject {
         unsafe {
             let arguments = [dict];
-            let dict_items_view = (STATE.dict_items_vectorcall)(
-                STATE.dict_items_descriptor,
+            let dict_items_view = (Self::cached_dict_items_vc())(
+                py_obj!("dict.items"),
                 arguments.as_ptr(),
                 1,
                 ptr::null_mut(),

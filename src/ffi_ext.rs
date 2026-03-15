@@ -10,9 +10,7 @@ use core::sync::atomic::Ordering;
 
 // ── Symbols not (reliably) in pyo3-ffi ──────────────────────
 
-pub use pyo3_ffi::{
-    _PyWeakref_RefType, PyEllipsis_Type, PyProperty_Type, Py_None, Py_NotImplemented,
-};
+pub use pyo3_ffi::{_PyWeakref_RefType, PyEllipsis_Type, PyProperty_Type, Py_None};
 
 #[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
