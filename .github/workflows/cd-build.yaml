@@ -51,7 +51,11 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         run: |
-          uv python install ${{ matrix.python.version }}
+          if [[ "${{ matrix.build.os }}" == "windows-11-arm" ]]; then
+            uv python install cpython-${{ matrix.python.version }}-windows-aarch64-none
+          else
+            uv python install ${{ matrix.python.version }}
+          fi
           echo "PYTHON=$(uv python find ${{ matrix.python.version }})" >> "$GITHUB_ENV"
 
       - name: Build wheel
@@ -77,7 +81,6 @@ jobs:
           path: dist/*.whl
 
       - name: Find built wheel
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         id: wheel
         shell: bash
         run: |
@@ -92,14 +95,12 @@ jobs:
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Setup test environment
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: |
           uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
       - name: "Test: Built wheel"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -vvv
 
       - name: Setup venv for codspeed
@@ -116,30 +117,24 @@ jobs:
           run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
 
       - name: Setup venv for shuffle tests
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: |
           uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
       - name: "Test: Shuffle A"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
 
       - name: "Test: Shuffle B"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
 
       - name: "Test: Shuffle C"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
 
       - name: "Test: Shuffle D"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
 
       - name: "Cache CPython test suite"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         id: cpython-cache
         uses: actions/cache@v4
         with:
@@ -147,7 +142,7 @@ jobs:
           key: cpython-tests-${{ matrix.python.branch || matrix.python.label }}
 
       - name: "Checkout CPython test suite"
-        if: ${{ matrix.build.os != 'windows-11-arm' && steps.cpython-cache.outputs.cache-hit != 'true' }}
+        if: ${{ steps.cpython-cache.outputs.cache-hit != 'true' }}
         uses: actions/checkout@v5
         with:
           repository: python/cpython
@@ -157,14 +152,12 @@ jobs:
           path: cpython-tests
 
       - name: "Test: CPython test_copy (patched)"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         env:
           COPIUM_PATCH_ENABLE: "1"
           PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
         run: uv run --no-sync python -m unittest test.test_copy -v
 
       - name: "Test: CPython test_copy (patched, dict memo)"
-        if: ${{ matrix.build.os != 'windows-11-arm' }}
         env:
           COPIUM_PATCH_ENABLE: "1"
           COPIUM_USE_DICT_MEMO: "1"
