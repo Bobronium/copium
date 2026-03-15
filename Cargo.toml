@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 pyo3-ffi = { version = "0.28.2", features = ["extension-module"] }
 pyo3 = { version = "0.28", features = ["extension-module"] }
 libc = "0.2"
+inventory = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
@@ -27,3 +28,8 @@ strip = "debuginfo"
 
 [build-dependencies]
 pyo3-build-config = "0.28.2"
+
+
+[profile.dev]
+incremental = true
+codegen-units = 16

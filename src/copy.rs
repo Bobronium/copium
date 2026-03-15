@@ -1,8 +1,7 @@
 use crate::deepcopy::PyResult;
-use crate::ffi_ext;
 use crate::reduce::{self, ReduceKind};
-use crate::state::STATE;
 use crate::types::*;
+use crate::{ffi_ext, py_str};
 use pyo3_ffi::*;
 use std::os::raw::c_int;
 use std::ptr;
@@ -92,7 +91,7 @@ impl PyCopy for *mut PyObject {
     unsafe fn copy(self) -> PyResult {
         unsafe {
             let mut custom_copy: *mut PyObject = ptr::null_mut();
-            let has_custom_copy = self.get_optional_attr(STATE.s_copy, &mut custom_copy);
+            let has_custom_copy = self.get_optional_attr(py_str!("__copy__"), &mut custom_copy);
             if has_custom_copy < 0 {
                 return PyResult::error();
             }
@@ -126,7 +125,7 @@ unsafe fn reconstruct_shallow_instance(
 unsafe fn apply_setstate(instance: *mut PyObject, state: *mut PyObject) -> c_int {
     unsafe {
         let mut setstate: *mut PyObject = ptr::null_mut();
-        if instance.get_optional_attr(STATE.s_setstate, &mut setstate) < 0 {
+        if instance.get_optional_attr(py_str!("__setstate__"), &mut setstate) < 0 {
             return -1;
         }
         if setstate.is_null() {
@@ -150,7 +149,7 @@ unsafe fn apply_dict_state(instance: *mut PyObject, dict_state: *mut PyObject) -
         }
 
         if !dict_state.is_dict() {
-            let instance_dict = instance.getattr(STATE.s_dict);
+            let instance_dict = instance.getattr(py_str!("__dict__"));
             if instance_dict.is_null() {
                 return -1;
             }
@@ -172,7 +171,7 @@ unsafe fn apply_dict_state(instance: *mut PyObject, dict_state: *mut PyObject) -
             return result;
         }
 
-        let instance_dict = instance.getattr(STATE.s_dict);
+        let instance_dict = instance.getattr(py_str!("__dict__"));
         if instance_dict.is_null() {
             return -1;
         }
@@ -312,7 +311,7 @@ unsafe fn apply_listitems(instance: *mut PyObject, listitems: *mut PyObject) -> 
             return 0;
         }
 
-        let append = instance.getattr(STATE.s_append);
+        let append = instance.getattr(py_str!("append"));
         if append.is_null() {
             return -1;
         }

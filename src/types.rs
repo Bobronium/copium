@@ -8,9 +8,7 @@ use crate::compat;
 use crate::ffi_ext;
 use crate::ffi_ext::*;
 use crate::memo::{Memo_Type, PyMemoObject};
-use crate::state::STATE;
-
-// ── Type identity (on the type, not the pointer) ───────────
+use crate::py_type;
 
 pub unsafe trait PyTypeInfo: Sized {
     fn type_ptr() -> *mut PyTypeObject;
@@ -425,11 +423,9 @@ unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
 
     #[inline(always)]
     unsafe fn is_stdlib_immutable(self) -> bool {
-        let state_pointer = std::ptr::addr_of!(STATE);
-        let regex_pattern_type = (*state_pointer).re_pattern_type;
-        let decimal_type = (*state_pointer).decimal_type;
-        let fraction_type = (*state_pointer).fraction_type;
-        (self == regex_pattern_type) || (self == decimal_type) || (self == fraction_type)
+        (self == py_type!("re.Pattern"))
+            || (self == py_type!("decimal.Decimal"))
+            || (self == py_type!("fractions.Fraction"))
     }
 
     #[inline(always)]

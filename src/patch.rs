@@ -114,109 +114,56 @@ unsafe fn unapply_patch(_py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
 // ══════════════════════════════════════════════════════════════
 
 #[cfg(not(Py_3_12))]
-static mut G_TEMPLATE_CODE: *mut PyObject = ptr::null_mut();
-
-#[cfg(not(Py_3_12))]
 unsafe fn is_patched(fn_ptr: *mut PyObject) -> bool {
     unsafe { PyObject_HasAttrString(fn_ptr, crate::cstr!("__copium_original__")) != 0 }
 }
 
 #[cfg(not(Py_3_12))]
-unsafe fn init_template() -> i32 {
-    unsafe {
-        if !G_TEMPLATE_CODE.is_null() {
-            return 0;
-        }
+unsafe fn template_code() -> *mut PyObject {
+    use crate::types::{PyMapPtr, PyObjectPtr};
+    use crate::{py_cache, py_exec, py_obj, py_str};
+    py_cache!({
+        let filters = py_obj!("warnings.filters");
+        let saved_warnings = PySequence_List(filters);
 
-        let src =
-            b"def deepcopy(x, memo=None, _nil=[]):\n    return \"copium.deepcopy\"(x, memo)\n\0";
-
-        let globals = PyDict_New();
-        if globals.is_null() {
-            return -1;
-        }
-
-        let builtins = PyEval_GetBuiltins();
-        if !builtins.is_null()
-            && PyDict_SetItemString(globals, crate::cstr!("__builtins__"), builtins) < 0
-        {
-            globals.decref();
-            return -1;
-        }
-
-        let warnings = PyImport_ImportModule(crate::cstr!("warnings"));
-        let mut filters_copy: *mut PyObject = ptr::null_mut();
-
-        if !warnings.is_null() {
-            let old_filters = PyObject_GetAttrString(warnings, crate::cstr!("filters"));
-            if !old_filters.is_null() {
-                filters_copy = PySequence_List(old_filters);
-                old_filters.decref();
-            } else {
-                PyErr_Clear();
-            }
-            let ignore = PyObject_CallMethod(
-                warnings,
-                crate::cstr!("simplefilter"),
-                crate::cstr!("sO"),
-                crate::cstr!("ignore"),
-                PyExc_SyntaxWarning,
-            );
-            if !ignore.is_null() {
-                ignore.decref();
-            } else {
-                PyErr_Clear();
-            }
+        let warnings_set = py_obj!("warnings.simplefilter").call_one(py_str!("ignore"));
+        if !warnings_set.is_null() {
+            warnings_set.decref();
         } else {
             PyErr_Clear();
         }
 
-        let res = PyRun_StringFlags(
-            src.as_ptr().cast(),
-            Py_file_input,
-            globals,
-            globals,
-            ptr::null_mut(),
+        let globals = py_exec!(
+            r#"
+            def deepcopy(x, memo=None, _nil=[]):
+                return "copium.deepcopy"(x, memo)
+        "#
         );
 
-        if !warnings.is_null() && !filters_copy.is_null() {
-            if PyObject_SetAttrString(warnings, crate::cstr!("filters"), filters_copy) < 0 {
-                PyErr_Clear();
-            }
+        if !saved_warnings.is_null() {
+            py_obj!("warnings").set_attr(py_str!("filters"), saved_warnings);
+            saved_warnings.decref();
         }
-        filters_copy.decref_nullable();
-        warnings.decref_nullable();
 
-        if res.is_null() {
+        if globals.is_null() {
+            return ptr::null_mut();
+        }
+        let func = globals.get_item(py_str!("deepcopy"));
+        if func.is_null() {
             globals.decref();
-            return -1;
+            return ptr::null_mut();
         }
-        res.decref();
-
-        let fn_obj = PyDict_GetItemString(globals, crate::cstr!("deepcopy"));
-        if fn_obj.is_null() {
-            globals.decref();
-            PyErr_SetString(
-                PyExc_RuntimeError,
-                crate::cstr!("copium.patch: template creation failed"),
-            );
-            return -1;
-        }
-
-        G_TEMPLATE_CODE = PyObject_GetAttrString(fn_obj, crate::cstr!("__code__"));
+        let code = func.getattr(py_str!("__code__"));
         globals.decref();
-        if G_TEMPLATE_CODE.is_null() {
-            -1
-        } else {
-            0
-        }
-    }
+        code
+    })
 }
 
 #[cfg(not(Py_3_12))]
 unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
     unsafe {
-        let template_consts = PyObject_GetAttrString(G_TEMPLATE_CODE, crate::cstr!("co_consts"));
+        let tc = template_code();
+        let template_consts = PyObject_GetAttrString(tc, crate::cstr!("co_consts"));
         if template_consts.is_null() {
             return ptr::null_mut();
         }
@@ -279,7 +226,7 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
             return ptr::null_mut();
         }
 
-        let replace = PyObject_GetAttrString(G_TEMPLATE_CODE, crate::cstr!("replace"));
+        let replace = PyObject_GetAttrString(tc, crate::cstr!("replace"));
         if replace.is_null() {
             consts_tuple.decref();
             return ptr::null_mut();
@@ -326,10 +273,6 @@ unsafe fn cleanup_patch_attrs(fn_ptr: *mut PyObject) {
 #[cfg(not(Py_3_12))]
 unsafe fn apply_patch(_py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObject) -> i32 {
     unsafe {
-        if init_template() < 0 {
-            return -1;
-        }
-
         let current_code = PyObject_GetAttrString(fn_ptr, crate::cstr!("__code__"));
         if current_code.is_null() {
             return -1;

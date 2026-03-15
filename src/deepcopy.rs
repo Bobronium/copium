@@ -4,10 +4,9 @@ use std::ptr;
 
 use crate::critical_section::with_critical_section_raw;
 use crate::dict_iter::DictIterGuard;
-use crate::ffi_ext::*;
 use crate::memo::Memo;
+use crate::{ffi_ext::*, py_str};
 
-use crate::state::STATE;
 use crate::types::*;
 
 #[repr(transparent)]
@@ -489,10 +488,8 @@ impl PyDeepCopy for *mut PyMethodObject {
 impl PyDeepCopy for *mut PyObject {
     unsafe fn deepcopy<M: Memo>(self, memo: &mut M, probe: M::Probe) -> PyResult {
         unsafe {
-            let state_pointer = ptr::addr_of!(STATE);
-            let deepcopy_name = (*state_pointer).s_deepcopy;
             let mut custom_deepcopy_method: *mut PyObject = ptr::null_mut();
-            let has = self.get_optional_attr(deepcopy_name, &mut custom_deepcopy_method);
+            let has = self.get_optional_attr(py_str!("__deepcopy__"), &mut custom_deepcopy_method);
             if has < 0 {
                 return PyResult::error();
             }

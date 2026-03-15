@@ -9,6 +9,8 @@ use std::ptr;
 #[macro_use]
 mod ffi_ext;
 mod about;
+#[allow(dead_code)]
+mod cache;
 mod compat;
 mod config;
 mod copy;
@@ -313,6 +315,10 @@ unsafe fn init_methods() {
 
 unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
     unsafe {
+        if cache::init() < 0 {
+            return -1;
+        }
+
         if state::init() < 0 {
             return -1;
         }
@@ -325,7 +331,7 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
             return -1;
         }
 
-        if PyModule_AddObject(module, cstr!("Error"), STATE.copy_error.newref()) < 0 {
+        if PyModule_AddObject(module, cstr!("Error"), py_obj!("copy.Error").newref()) < 0 {
             return -1;
         }
 
