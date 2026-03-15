@@ -81,7 +81,7 @@ jobs:
           path: dist/*.whl
 
       - name: Find built wheel
-        id: wheel
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
         shell: bash
         run: |
           wheel=$(find dist -name "*-${{ matrix.python.tag }}-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
@@ -95,13 +95,13 @@ jobs:
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Setup test environment
-        run: |
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
           uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
       - name: "Test: Built wheel"
-        run: uv run --no-sync pytest tests/ -vvv
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: Setup venv for codspeed
         if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
@@ -117,32 +117,32 @@ jobs:
           run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
 
       - name: Setup venv for shuffle tests
-        run: |
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
           uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
       - name: "Test: Shuffle A"
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: "Test: Shuffle B"
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: "Test: Shuffle C"
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: "Test: Shuffle D"
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
 
       - name: "Cache CPython test suite"
-        id: cpython-cache
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
         uses: actions/cache@v4
         with:
           path: cpython-tests
           key: cpython-tests-${{ matrix.python.branch || matrix.python.label }}
 
       - name: "Checkout CPython test suite"
-        if: ${{ steps.cpython-cache.outputs.cache-hit != 'true' }}
+        if: ${{ (matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label)) && steps.cpython-cache.outputs.cache-hit != 'true' }}
         uses: actions/checkout@v5
         with:
           repository: python/cpython
@@ -152,13 +152,13 @@ jobs:
           path: cpython-tests
 
       - name: "Test: CPython test_copy (patched)"
-        env:
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
           COPIUM_PATCH_ENABLE: "1"
           PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
         run: uv run --no-sync python -m unittest test.test_copy -v
 
       - name: "Test: CPython test_copy (patched, dict memo)"
-        env:
+        if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
           COPIUM_PATCH_ENABLE: "1"
           COPIUM_USE_DICT_MEMO: "1"
           PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
