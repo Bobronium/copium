@@ -1,570 +1,21 @@
 use pyo3_ffi::*;
 use std::ffi::c_void;
-use std::hint::{likely, unlikely};
 use std::ptr;
 
-use crate::{py_cache, py_eval, py_str, types::*};
-
-// ══════════════════════════════════════════════════════════════
-//  Memo trait — unified interface, three backends
-// ══════════════════════════════════════════════════════════════
-
-pub trait Memo: Sized {
-    type Probe;
-
-    const RECALL_CAN_ERROR: bool;
-
-    /// Look up object in memo. Returns (probe_for_later, found_or_null).
-    /// When found is non-null, it is a new reference.
-    /// When RECALL_CAN_ERROR is true, caller must check PyErr_Occurred() on null.
-    unsafe fn recall(&mut self, object: *mut PyObject) -> (Self::Probe, *mut PyObject);
-
-    unsafe fn recall_probed(
-        &mut self,
-        object: *mut PyObject,
-        probe: &Self::Probe,
-    ) -> *mut PyObject {
-        let _ = probe;
-        self.recall(object).1
-    }
-
-    /// Store (original → copy) mapping. Returns 0 on success, -1 on error.
-    unsafe fn memoize(
-        &mut self,
-        original: *mut PyObject,
-        copy: *mut PyObject,
-        probe: &Self::Probe,
-    ) -> i32;
-
-    /// Remove a mapping (used on error paths in native memo).
-    unsafe fn forget(&mut self, original: *mut PyObject, probe: &Self::Probe);
-
-    /// Get the Python object to pass to __deepcopy__(memo).
-    unsafe fn as_call_arg(&mut self) -> *mut PyObject;
-
-    /// Ensure any keepalive-backed memo state is ready before a copy path that
-    /// needs stdlib-compatible early memo interaction.
-    #[inline(always)]
-    unsafe fn ensure_memo_is_valid(&mut self) -> i32 {
-        0
-    }
-
-    #[inline(always)]
-    unsafe fn checkpoint(&mut self) -> Option<MemoCheckpoint> {
-        None
-    }
-
-    #[inline(always)]
-    unsafe fn as_native_memo(&mut self) -> *mut PyMemoObject {
-        ptr::null_mut()
-    }
-}
-
-// ══════════════════════════════════════════════════════════════
-//  MemoTable — pointer-keyed open-addressing hash table
-// ══════════════════════════════════════════════════════════════
-
-pub(crate) const TOMBSTONE: usize = usize::MAX;
-
-const MEMO_RETAIN_MAX_SLOTS: usize = 1 << 17;
-const MEMO_RETAIN_SHRINK_TO: usize = 1 << 13;
-const KEEP_RETAIN_MAX: usize = 1 << 13;
-const KEEP_RETAIN_TARGET: usize = 1 << 10;
-
-pub(crate) struct MemoEntry {
-    pub(crate) key: usize,
-    pub(crate) value: *mut PyObject,
-}
-
-pub struct MemoTable {
-    pub(crate) slots: *mut MemoEntry,
-    pub(crate) size: usize,
-    pub(crate) used: usize,
-    pub(crate) filled: usize,
-}
-
-#[inline(always)]
-pub(crate) fn hash_pointer(ptr: usize) -> usize {
-    let mut h = ptr;
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xff51afd7ed558ccd);
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
-    h ^= h >> 33;
-    h
-}
-
-impl MemoTable {
-    fn new() -> Self {
-        Self {
-            slots: ptr::null_mut(),
-            size: 0,
-            used: 0,
-            filled: 0,
-        }
-    }
-
-    fn ensure(&mut self) -> i32 {
-        if likely(!self.slots.is_null()) {
-            return 0;
-        }
-        self.resize(1)
-    }
-
-    fn resize(&mut self, min_needed: usize) -> i32 {
-        let mut new_size = 8usize;
-        while new_size < min_needed.saturating_mul(2) {
-            new_size = new_size.saturating_mul(2);
-        }
-
-        let layout = std::alloc::Layout::array::<MemoEntry>(new_size).unwrap();
-        let new_slots = unsafe { std::alloc::alloc_zeroed(layout) as *mut MemoEntry };
-        if new_slots.is_null() {
-            return -1;
-        }
-
-        let old_slots = self.slots;
-        let old_size = self.size;
-
-        self.slots = new_slots;
-        self.size = new_size;
-        self.used = 0;
-        self.filled = 0;
-
-        if !old_slots.is_null() {
-            for i in 0..old_size {
-                let entry = unsafe { &*old_slots.add(i) };
-                if entry.key != 0 && entry.key != TOMBSTONE {
-                    self.insert_no_grow(entry.key, entry.value);
-                }
-            }
-            let old_layout = std::alloc::Layout::array::<MemoEntry>(old_size).unwrap();
-            unsafe { std::alloc::dealloc(old_slots as *mut u8, old_layout) };
-        }
-
-        0
-    }
-
-    fn insert_no_grow(&mut self, key: usize, value: *mut PyObject) {
-        let mask = self.size - 1;
-        let mut idx = hash_pointer(key) & mask;
-
-        loop {
-            let entry = unsafe { &mut *self.slots.add(idx) };
-            if entry.key == 0 {
-                entry.key = key;
-                entry.value = value;
-                unsafe { value.incref() };
-                self.used += 1;
-                self.filled += 1;
-                return;
-            }
-            if entry.key == key {
-                let old = entry.value;
-                entry.value = value;
-                unsafe {
-                    value.incref();
-                    old.decref_nullable();
-                }
-                return;
-            }
-            idx = (idx + 1) & mask;
-        }
-    }
-
-    #[inline(always)]
-    pub fn lookup_h(&self, key: usize, hash: usize) -> *mut PyObject {
-        if unlikely(self.slots.is_null()) {
-            return ptr::null_mut();
-        }
-
-        let mask = self.size - 1;
-        let mut idx = hash & mask;
-
-        loop {
-            let entry = unsafe { &*self.slots.add(idx) };
-            if entry.key == 0 {
-                return ptr::null_mut();
-            }
-            if likely(entry.key != TOMBSTONE) && entry.key == key {
-                return entry.value; // borrowed
-            }
-            idx = (idx + 1) & mask;
-        }
-    }
-    #[inline(always)]
-    pub fn insert_h(&mut self, key: usize, value: *mut PyObject, hash: usize) -> i32 {
-        if unlikely(self.ensure() < 0) {
-            return -1;
-        }
-        if unlikely(self.filled * 10 >= self.size * 7) {
-            if self.resize(self.used + 1) < 0 {
-                return -1;
-            }
-        }
-
-        let mask = self.size - 1;
-        let mut idx = hash & mask;
-        let mut first_tomb: Option<usize> = None;
-
-        loop {
-            let entry = unsafe { &mut *self.slots.add(idx) };
-            if likely(entry.key == 0) {
-                let at = first_tomb.unwrap_or(idx);
-                let slot = unsafe { &mut *self.slots.add(at) };
-                slot.key = key;
-                unsafe { value.incref() };
-                slot.value = value;
-                self.used += 1;
-                self.filled += 1;
-                return 0;
-            }
-            if unlikely(entry.key == TOMBSTONE) {
-                if first_tomb.is_none() {
-                    first_tomb = Some(idx);
-                }
-            } else if unlikely(entry.key == key) {
-                let old = entry.value;
-                unsafe {
-                    value.incref();
-                    entry.value = value;
-                    old.decref_nullable();
-                }
-                return 0;
-            }
-            idx = (idx + 1) & mask;
-        }
-    }
-
-    pub fn remove_h(&mut self, key: usize, hash: usize) -> i32 {
-        if self.slots.is_null() {
-            return -1;
-        }
-
-        let mask = self.size - 1;
-        let mut idx = hash & mask;
-
-        loop {
-            let entry = unsafe { &mut *self.slots.add(idx) };
-            if entry.key == 0 {
-                return -1;
-            }
-            if entry.key != TOMBSTONE && entry.key == key {
-                entry.key = TOMBSTONE;
-                unsafe { entry.value.decref_nullable() };
-                entry.value = ptr::null_mut();
-                self.used -= 1;
-                return 0;
-            }
-            idx = (idx + 1) & mask;
-        }
-    }
-
-    pub fn clear(&mut self) {
-        if self.slots.is_null() {
-            return;
-        }
-
-        for i in 0..self.size {
-            let entry = unsafe { &*self.slots.add(i) };
-            if likely(entry.key != 0 && entry.key != TOMBSTONE) {
-                unsafe { entry.value.decref_nullable() };
-            }
-        }
-        unsafe { ptr::write_bytes(self.slots, 0, self.size) };
-        self.used = 0;
-        self.filled = 0;
-    }
-
-    pub fn reset(&mut self) {
-        self.clear();
-        if self.size > MEMO_RETAIN_MAX_SLOTS {
-            let _ = self.resize(MEMO_RETAIN_SHRINK_TO / 2);
-        }
-    }
-}
-
-impl Drop for MemoTable {
-    fn drop(&mut self) {
-        if self.slots.is_null() {
-            return;
-        }
-
-        for i in 0..self.size {
-            let entry = unsafe { &*self.slots.add(i) };
-            if entry.key != 0 && entry.key != TOMBSTONE {
-                unsafe { entry.value.decref_nullable() };
-            }
-        }
-
-        let layout = std::alloc::Layout::array::<MemoEntry>(self.size).unwrap();
-        unsafe { std::alloc::dealloc(self.slots as *mut u8, layout) };
-    }
-}
-
-// ══════════════════════════════════════════════════════════════
-//  KeepaliveVector
-// ══════════════════════════════════════════════════════════════
-
-pub struct KeepaliveVec {
-    pub(crate) items: Vec<*mut PyObject>,
-}
-
-impl KeepaliveVec {
-    fn new() -> Self {
-        Self { items: Vec::new() }
-    }
-
-    pub fn append(&mut self, obj: *mut PyObject) {
-        unsafe { obj.incref() };
-        self.items.push(obj);
-    }
-
-    pub fn clear(&mut self) {
-        for &item in &self.items {
-            unsafe { item.decref() };
-        }
-        self.items.clear();
-    }
-}
-
-impl KeepaliveVec {
-    pub fn shrink_if_large(&mut self) {
-        if self.items.capacity() > KEEP_RETAIN_MAX {
-            self.items.shrink_to(KEEP_RETAIN_TARGET);
-        }
-    }
-}
-
-impl Drop for KeepaliveVec {
-    fn drop(&mut self) {
-        self.clear();
-    }
-}
-
-// ══════════════════════════════════════════════════════════════
-//  UndoLog — tracks keys for rollback
-// ══════════════════════════════════════════════════════════════
-
-pub struct UndoLog {
-    keys: Vec<usize>,
-}
-
-impl UndoLog {
-    fn new() -> Self {
-        Self { keys: Vec::new() }
-    }
-
-    fn append(&mut self, key: usize) {
-        self.keys.push(key);
-    }
-
-    fn clear(&mut self) {
-        self.keys.clear();
-    }
-
-    fn shrink_if_large(&mut self) {
-        if self.keys.capacity() > KEEP_RETAIN_MAX {
-            self.keys.shrink_to(KEEP_RETAIN_TARGET);
-        }
-    }
-}
-
-pub type MemoCheckpoint = usize;
-
-// ══════════════════════════════════════════════════════════════
-//  Native memo Python object
-// ══════════════════════════════════════════════════════════════
-
-#[repr(C)]
-pub struct PyMemoObject {
-    pub ob_base: PyObject,
-    pub table: MemoTable,
-    pub keepalive: KeepaliveVec,
-    pub undo_log: UndoLog,
-    pub dict_proxy: *mut PyObject,
-}
-
-impl PyMemoObject {
-    pub fn init_in_place(&mut self) {
-        unsafe {
-            ptr::write(ptr::addr_of_mut!(self.table), MemoTable::new());
-            ptr::write(ptr::addr_of_mut!(self.keepalive), KeepaliveVec::new());
-            ptr::write(ptr::addr_of_mut!(self.undo_log), UndoLog::new());
-            ptr::write(ptr::addr_of_mut!(self.dict_proxy), ptr::null_mut());
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.keepalive.clear();
-        self.keepalive.shrink_if_large();
-        self.undo_log.clear();
-        self.undo_log.shrink_if_large();
-        self.table.reset();
-        if !self.dict_proxy.is_null() {
-            unsafe { self.dict_proxy.decref() };
-            self.dict_proxy = ptr::null_mut();
-        }
-    }
-    #[inline(always)]
-    pub fn checkpoint(&self) -> MemoCheckpoint {
-        self.undo_log.keys.len()
-    }
-
-    #[cold]
-    pub fn rollback(&mut self, cp: MemoCheckpoint) {
-        for i in cp..self.undo_log.keys.len() {
-            let key = self.undo_log.keys[i];
-            let hash = hash_pointer(key);
-            let _ = self.table.remove_h(key, hash);
-        }
-        self.undo_log.keys.truncate(cp);
-    }
-
-    pub(crate) fn insert_logged(&mut self, key: usize, value: *mut PyObject, hash: usize) -> i32 {
-        if self.table.insert_h(key, value, hash) < 0 {
-            return -1;
-        }
-        self.undo_log.append(key);
-        0
-    }
-
-    /// Export table contents to a Python dict for __deepcopy__ fallback.
-    #[cold]
-    pub unsafe fn to_dict(&self) -> *mut PyObject {
-        unsafe {
-            let dict = PyDict_New();
-            if dict.is_null() {
-                return ptr::null_mut();
-            }
-
-            if self.table.slots.is_null() {
-                return dict;
-            }
-
-            for i in 0..self.table.size {
-                let entry = &*self.table.slots.add(i);
-                if entry.key != 0 && entry.key != TOMBSTONE {
-                    let pykey = PyLong_FromVoidPtr(entry.key as *mut c_void);
-                    if pykey.is_null() {
-                        dict.decref();
-                        return ptr::null_mut();
-                    }
-                    if PyDict_SetItem(dict, pykey, entry.value) < 0 {
-                        pykey.decref();
-                        dict.decref();
-                        return ptr::null_mut();
-                    }
-                    pykey.decref();
-                }
-            }
-
-            dict
-        }
-    }
-
-    #[cold]
-    pub unsafe fn sync_from_dict(&mut self, dict: *mut PyObject, orig_size: Py_ssize_t) -> i32 {
-        unsafe {
-            let cur_size = PyDict_Size(dict);
-            if cur_size <= orig_size {
-                return 0;
-            }
-
-            let mut pos: Py_ssize_t = 0;
-            let mut py_key: *mut PyObject = ptr::null_mut();
-            let mut value: *mut PyObject = ptr::null_mut();
-            let mut idx: Py_ssize_t = 0;
-
-            while PyDict_Next(dict, &mut pos, &mut py_key, &mut value) != 0 {
-                idx += 1;
-                if idx <= orig_size {
-                    continue;
-                }
-                if PyLong_Check(py_key) == 0 {
-                    continue;
-                }
-                let key = PyLong_AsVoidPtr(py_key) as usize;
-                if key == 0 && !PyErr_Occurred().is_null() {
-                    return -1;
-                }
-                let hash = hash_pointer(key);
-                if self.table.insert_h(key, value, hash) < 0 {
-                    return -1;
-                }
-            }
-
-            0
-        }
-    }
-}
-
-impl Memo for PyMemoObject {
-    type Probe = usize;
-    const RECALL_CAN_ERROR: bool = false;
-
-    #[inline(always)]
-    unsafe fn recall(&mut self, object: *mut PyObject) -> (usize, *mut PyObject) {
-        let key = object as usize;
-        let hash = hash_pointer(key);
-        let found = self.recall_probed(object, &hash);
-        (hash, found)
-    }
-
-    #[inline(always)]
-    unsafe fn recall_probed(&mut self, object: *mut PyObject, probe: &usize) -> *mut PyObject {
-        let key = object as usize;
-        let found = self.table.lookup_h(key, *probe);
-        if !found.is_null() {
-            unsafe { found.incref() };
-        }
-        found
-    }
-
-    #[inline(always)]
-    unsafe fn memoize(
-        &mut self,
-        original: *mut PyObject,
-        copy: *mut PyObject,
-        probe: &usize,
-    ) -> i32 {
-        let key = original as usize;
-        if unlikely(self.table.insert_h(key, copy, *probe) < 0) {
-            return -1;
-        }
-        self.keepalive.append(original);
-        0
-    }
-
-    #[cold]
-    unsafe fn forget(&mut self, original: *mut PyObject, probe: &usize) {
-        let _ = self.table.remove_h(original as usize, *probe);
-    }
-
-    unsafe fn as_call_arg(&mut self) -> *mut PyObject {
-        self as *mut PyMemoObject as *mut PyObject
-    }
-
-    unsafe fn checkpoint(&mut self) -> Option<MemoCheckpoint> {
-        Some(PyMemoObject::checkpoint(self))
-    }
-
-    unsafe fn as_native_memo(&mut self) -> *mut PyMemoObject {
-        self
-    }
-}
-
-impl Drop for PyMemoObject {
-    fn drop(&mut self) {
-        self.reset();
-    }
-}
+use super::native::PyMemoObject;
+use crate::ffi_ext::PyUnicode_FromFormat;
+use crate::memo::table::{hash_pointer, TOMBSTONE};
+use crate::types::{PyObjectPtr, PyObjectSlotPtr};
 
 #[allow(non_upper_case_globals)]
 pub static mut Memo_Type: PyTypeObject = unsafe { std::mem::zeroed() };
 static mut MEMO_MAPPING: PyMappingMethods = unsafe { std::mem::zeroed() };
 static mut MEMO_SEQUENCE: PySequenceMethods = unsafe { std::mem::zeroed() };
 static mut MEMO_METHODS_TABLE: [PyMethodDef; 9] = unsafe { std::mem::zeroed() };
+
+// ══════════════════════════════════════════════════════════════
+//  KeepaliveList — proxy type exposing keepalive vec to Python
+// ══════════════════════════════════════════════════════════════
 
 #[repr(C)]
 struct PyKeepaliveListObject {
@@ -589,7 +40,7 @@ unsafe fn keepalive_list_new(owner: *mut PyMemoObject) -> *mut PyObject {
     }
 }
 
-unsafe fn memo_keepalive_proxy(self_: *mut PyMemoObject) -> *mut PyObject {
+pub(super) unsafe fn memo_keepalive_proxy(self_: *mut PyMemoObject) -> *mut PyObject {
     unsafe {
         if !(*self_).dict_proxy.is_null() {
             return (*self_).dict_proxy.newref();
@@ -780,7 +231,7 @@ unsafe fn init_keepalive_methods() {
 
         let tp = ptr::addr_of_mut!(KEEPALIVE_LIST_TYPE);
         (*tp).tp_name = cstr!("copium.keepalive");
-        (*tp).tp_basicsize = std::mem::size_of::<PyKeepaliveListObject>() as Py_ssize_t;
+        (*tp).tp_basicsize = size_of::<PyKeepaliveListObject>() as Py_ssize_t;
         (*tp).tp_dealloc = Some(keepalive_list_dealloc);
         (*tp).tp_repr = Some(keepalive_list_repr);
         (*tp).tp_as_sequence = ptr::addr_of_mut!(KEEPALIVE_LIST_SEQUENCE);
@@ -802,333 +253,9 @@ unsafe fn init_keepalive_methods() {
     }
 }
 
-// ── TSS ────────────────────────────────────────────────────
-
-#[thread_local]
-static mut TSS_MEMO: *mut PyMemoObject = ptr::null_mut();
-
-pub unsafe fn pymemo_alloc() -> *mut PyMemoObject {
-    unsafe {
-        let memo = PyObject_GC_New::<PyMemoObject>(ptr::addr_of_mut!(Memo_Type));
-        if memo.is_null() {
-            return ptr::null_mut();
-        }
-
-        (*memo).init_in_place();
-        memo
-    }
-}
-
-#[inline(always)]
-pub unsafe fn get_memo() -> (*mut PyMemoObject, bool) {
-    unsafe {
-        let tss = TSS_MEMO;
-        if unlikely(tss.is_null()) {
-            let fresh = pymemo_alloc();
-            if fresh.is_null() {
-                return (ptr::null_mut(), false);
-            }
-            TSS_MEMO = fresh;
-            return (fresh, true);
-        }
-
-        if likely(tss.refcount() == 1) {
-            return (tss, true);
-        }
-
-        (pymemo_alloc(), false)
-    }
-}
-
-#[inline(always)]
-pub unsafe fn cleanup_memo(memo: *mut PyMemoObject, is_tss: bool) {
-    unsafe {
-        if likely(is_tss && memo.refcount() == 1) {
-            (*memo).reset();
-            return;
-        }
-
-        if is_tss {
-            let fresh = pymemo_alloc();
-            if fresh.is_null() {
-                TSS_MEMO = ptr::null_mut();
-            } else {
-                TSS_MEMO = fresh;
-            }
-        }
-
-        PyObject_GC_Track(memo as *mut c_void);
-        memo.decref();
-    }
-}
-
 // ══════════════════════════════════════════════════════════════
-//  DictMemo — wraps a PyDict, matching legacy dict path
+//  tp_dealloc / tp_finalize / tp_traverse / tp_clear
 // ══════════════════════════════════════════════════════════════
-
-pub struct DictMemo {
-    pub dict: *mut PyDictObject,
-    keepalive: *mut PyListObject, // lazily initialized list at dict[id(dict)]
-}
-
-impl DictMemo {
-    pub fn new(dict: *mut PyDictObject) -> Self {
-        Self {
-            dict,
-            keepalive: ptr::null_mut(),
-        }
-    }
-
-    #[inline(never)]
-    unsafe fn ensure_keepalive(&mut self) -> i32 {
-        unsafe {
-            if !self.keepalive.is_null() {
-                return 0;
-            }
-
-            let pykey = PyLong_FromVoidPtr(self.dict as *mut c_void);
-            if pykey.is_null() {
-                return -1;
-            }
-
-            let existing = self.dict.get_item(pykey);
-            if !existing.is_null() {
-                existing.incref();
-                self.keepalive = existing as *mut PyListObject;
-                pykey.decref();
-                return 0;
-            }
-            if !PyErr_Occurred().is_null() {
-                pykey.decref();
-                return -1;
-            }
-
-            let list = py_list_new(0);
-            if list.is_null() {
-                pykey.decref();
-                return -1;
-            }
-
-            if self.dict.set_item(pykey, list as *mut PyObject) < 0 {
-                list.decref();
-                pykey.decref();
-                return -1;
-            }
-
-            self.keepalive = list as *mut PyListObject; // dict owns one ref, we own one ref
-            pykey.decref();
-            0
-        }
-    }
-}
-
-impl Memo for DictMemo {
-    type Probe = ();
-    const RECALL_CAN_ERROR: bool = true;
-
-    #[inline(always)]
-    unsafe fn recall(&mut self, object: *mut PyObject) -> ((), *mut PyObject) {
-        unsafe {
-            let pykey = PyLong_FromVoidPtr(object as *mut c_void);
-            if pykey.is_null() {
-                return ((), ptr::null_mut());
-            }
-
-            let found = self.dict.get_item(pykey);
-            if !found.is_null() {
-                found.incref();
-            }
-            pykey.decref();
-            ((), found)
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn memoize(&mut self, original: *mut PyObject, copy: *mut PyObject, _probe: &()) -> i32 {
-        unsafe {
-            let pykey = PyLong_FromVoidPtr(original as *mut c_void);
-            if pykey.is_null() {
-                return -1;
-            }
-
-            let rc = self.dict.set_item(pykey, copy);
-            pykey.decref();
-            if rc < 0 {
-                return -1;
-            }
-
-            if self.ensure_keepalive() < 0 {
-                return -1;
-            }
-
-            PyList_Append(self.keepalive as *mut PyObject, original)
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn forget(&mut self, _original: *mut PyObject, _probe: &()) {}
-
-    #[inline(always)]
-    unsafe fn as_call_arg(&mut self) -> *mut PyObject {
-        self.dict as *mut PyObject
-    }
-
-    unsafe fn ensure_memo_is_valid(&mut self) -> i32 {
-        unsafe { self.ensure_keepalive() }
-    }
-}
-
-impl Drop for DictMemo {
-    fn drop(&mut self) {
-        if !self.keepalive.is_null() {
-            unsafe { self.keepalive.decref() };
-        }
-    }
-}
-
-// ══════════════════════════════════════════════════════════════
-//  AnyMemo — arbitrary Python mapping (non-dict, non-native)
-// ══════════════════════════════════════════════════════════════
-
-pub struct AnyMemo {
-    pub object: *mut PyObject,
-    keepalive: *mut PyObject,
-}
-
-impl AnyMemo {
-    pub fn new(object: *mut PyObject) -> Self {
-        Self {
-            object,
-            keepalive: ptr::null_mut(),
-        }
-    }
-
-    unsafe fn ensure_keepalive(&mut self) -> i32 {
-        unsafe {
-            if !self.keepalive.is_null() {
-                return 0;
-            }
-
-            let sentinel = py_cache!(py_eval!("object()"));
-            let pykey = PyLong_FromVoidPtr(self.object as *mut c_void);
-            if pykey.is_null() {
-                return -1;
-            }
-
-            let existing = PyObject_CallMethodObjArgs(
-                self.object,
-                py_str!("get"),
-                pykey,
-                sentinel,
-                ptr::null_mut::<PyObject>(),
-            );
-            if existing.is_null() {
-                pykey.decref();
-                return -1;
-            }
-
-            if existing != sentinel {
-                self.keepalive = existing;
-                pykey.decref();
-                return 0;
-            }
-
-            existing.decref();
-
-            let list = PyList_New(0);
-            if list.is_null() {
-                pykey.decref();
-                return -1;
-            }
-
-            if PyObject_SetItem(self.object, pykey, list) < 0 {
-                list.decref();
-                pykey.decref();
-                return -1;
-            }
-
-            self.keepalive = list;
-            pykey.decref();
-            0
-        }
-    }
-}
-
-impl Memo for AnyMemo {
-    type Probe = ();
-    const RECALL_CAN_ERROR: bool = true;
-
-    unsafe fn recall(&mut self, object: *mut PyObject) -> ((), *mut PyObject) {
-        unsafe {
-            let sentinel = py_cache!(py_eval!("object()"));
-            let pykey = PyLong_FromVoidPtr(object as *mut c_void);
-            if pykey.is_null() {
-                return ((), ptr::null_mut());
-            }
-
-            let found = PyObject_CallMethodObjArgs(
-                self.object,
-                py_str!("get"),
-                pykey,
-                sentinel,
-                ptr::null_mut::<PyObject>(),
-            );
-            pykey.decref();
-
-            if found.is_null() {
-                return ((), ptr::null_mut()); // error set
-            }
-            if found == sentinel {
-                found.decref();
-                return ((), ptr::null_mut()); // not found, no error
-            }
-
-            ((), found) // new ref
-        }
-    }
-
-    unsafe fn memoize(&mut self, original: *mut PyObject, copy: *mut PyObject, _probe: &()) -> i32 {
-        unsafe {
-            let pykey = PyLong_FromVoidPtr(original as *mut c_void);
-            if pykey.is_null() {
-                return -1;
-            }
-
-            let rc = PyObject_SetItem(self.object, pykey, copy);
-            pykey.decref();
-            if rc < 0 {
-                return -1;
-            }
-
-            if self.ensure_keepalive() < 0 {
-                return -1;
-            }
-
-            PyList_Append(self.keepalive, original)
-        }
-    }
-
-    unsafe fn forget(&mut self, _original: *mut PyObject, _probe: &()) {}
-
-    #[inline(always)]
-    unsafe fn as_call_arg(&mut self) -> *mut PyObject {
-        self.object
-    }
-
-    unsafe fn ensure_memo_is_valid(&mut self) -> i32 {
-        unsafe { self.ensure_keepalive() }
-    }
-}
-
-impl Drop for AnyMemo {
-    fn drop(&mut self) {
-        if !self.keepalive.is_null() {
-            unsafe { self.keepalive.decref() };
-        }
-    }
-}
-
-// ── tp_dealloc / tp_finalize / tp_traverse / tp_clear ──────
 
 unsafe extern "C" fn memo_dealloc(obj: *mut PyObject) {
     unsafe {
@@ -1208,7 +335,9 @@ unsafe extern "C" fn memo_clear_gc(obj: *mut PyObject) -> std::ffi::c_int {
     }
 }
 
-// ── tp_repr / tp_iter ──────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+//  tp_repr / tp_iter
+// ══════════════════════════════════════════════════════════════
 
 unsafe extern "C" fn memo_repr(obj: *mut PyObject) -> *mut PyObject {
     unsafe {
@@ -1296,7 +425,9 @@ unsafe extern "C" fn memo_iter(obj: *mut PyObject) -> *mut PyObject {
     }
 }
 
-// ── Mapping protocol ───────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+//  Mapping protocol
+// ══════════════════════════════════════════════════════════════
 
 unsafe extern "C" fn memo_mp_length(obj: *mut PyObject) -> Py_ssize_t {
     unsafe {
@@ -1407,7 +538,9 @@ unsafe extern "C" fn memo_mp_ass_subscript(
     }
 }
 
-// ── Sequence protocol (sq_contains) ────────────────────────
+// ══════════════════════════════════════════════════════════════
+//  Sequence protocol (sq_contains)
+// ══════════════════════════════════════════════════════════════
 
 unsafe extern "C" fn memo_sq_contains(obj: *mut PyObject, pykey: *mut PyObject) -> std::ffi::c_int {
     unsafe {
@@ -1436,7 +569,9 @@ unsafe extern "C" fn memo_sq_contains(obj: *mut PyObject, pykey: *mut PyObject) 
     }
 }
 
-// ── Methods ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+//  Methods
+// ══════════════════════════════════════════════════════════════
 
 unsafe extern "C" fn memo_py_clear(obj: *mut PyObject, _: *mut PyObject) -> *mut PyObject {
     unsafe {
@@ -1689,20 +824,9 @@ unsafe extern "C" fn memo_py_setdefault(
     }
 }
 
-unsafe extern "C" fn memo_py_del(obj: *mut PyObject, _: *mut PyObject) -> *mut PyObject {
-    unsafe {
-        let self_ = obj as *mut PyMemoObject;
-        (*self_).table.clear();
-        (*self_).keepalive.clear();
-        if !(*self_).dict_proxy.is_null() {
-            (*self_).dict_proxy.decref();
-            (*self_).dict_proxy = ptr::null_mut();
-        }
-        Py_None().newref()
-    }
-}
-
-// ── Type initialization ────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+//  Type initialization
+// ══════════════════════════════════════════════════════════════
 
 unsafe fn init_memo_methods() {
     unsafe {
@@ -1765,7 +889,7 @@ unsafe fn init_memo_methods() {
         MEMO_METHODS_TABLE[7] = PyMethodDef {
             ml_name: cstr!("__del__"),
             ml_meth: PyMethodDefPointer {
-                PyCFunction: memo_py_del,
+                PyCFunction: memo_py_clear,
             },
             ml_flags: METH_NOARGS,
             ml_doc: ptr::null(),
