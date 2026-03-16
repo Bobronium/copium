@@ -82,6 +82,7 @@ jobs:
 
       - name: Find built wheel
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        id: wheel
         shell: bash
         run: |
           wheel=$(find dist -name "*-${{ matrix.python.tag }}-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
@@ -96,12 +97,14 @@ jobs:
 
       - name: Setup test environment
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        run: |
           uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
       - name: "Test: Built wheel"
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        run: uv run --no-sync pytest tests/ -vvv
 
       - name: Setup venv for codspeed
         if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
@@ -118,24 +121,30 @@ jobs:
 
       - name: Setup venv for shuffle tests
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        run: |
           uv venv --python ${{ matrix.python.label }} --clear
           uv sync --extra test --no-install-project
           uv pip install "${{ steps.wheel.outputs.path }}"
 
       - name: "Test: Shuffle A"
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
 
       - name: "Test: Shuffle B"
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
 
       - name: "Test: Shuffle C"
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
 
       - name: "Test: Shuffle D"
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
 
       - name: "Cache CPython test suite"
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        id: cpython-cache
         uses: actions/cache@v4
         with:
           path: cpython-tests
@@ -153,12 +162,14 @@ jobs:
 
       - name: "Test: CPython test_copy (patched)"
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        env:
           COPIUM_PATCH_ENABLE: "1"
           PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
         run: uv run --no-sync python -m unittest test.test_copy -v
 
       - name: "Test: CPython test_copy (patched, dict memo)"
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
+        env:
           COPIUM_PATCH_ENABLE: "1"
           COPIUM_USE_DICT_MEMO: "1"
           PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
