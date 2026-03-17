@@ -51,8 +51,7 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         run: |
-          if [[ "${{ matrix.build.os }}" == "windows-11-arm" ]]; then
-            uv python install cpython-${{ matrix.python.version }}-windows-aarch64-none
+          if [[ "${{ matrix.build.os }}" == "windows-11-arm" && ! "${{ matrix.python.label }}" =~ ^3\.(10|11|12)$ ]]; then            uv python install cpython-${{ matrix.python.version }}-windows-aarch64-none
           else
             uv python install ${{ matrix.python.version }}
           fi
