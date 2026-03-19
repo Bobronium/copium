@@ -23,7 +23,7 @@ copium
   <picture>
     <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" media="(prefers-color-scheme: dark)">
     <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" alt="Copium Logo" width="200" align="left">
+    <img src="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_light_512.png" alt="Copium Logo" width="200" align="left">
   </picture>
   <a href="https://github.com/Bobronium/copium/blob/5f3a1f98d7b59a6092aacc1071105e16a3ed2cab/showcase.ipynb">
     <picture>
