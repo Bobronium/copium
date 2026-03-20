@@ -1,14 +1,12 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyFunction;
-use pyo3_ffi::*;
 use std::ptr;
 
-use crate::py;
-use crate::py::vectorcall::PyVectorcallPtr;
-use crate::types::PyObjectPtr;
+use crate::py::{self, *};
 
 #[inline(always)]
+#[cfg(Py_3_12)]
 fn capsule_name() -> &'static std::ffi::CStr {
     crate::cstr!("copium._original_vectorcall")
 }
@@ -129,7 +127,7 @@ unsafe fn is_patched(fn_ptr: *mut PyObject) -> bool {
 
 #[cfg(not(Py_3_12))]
 unsafe fn template_code() -> *mut PyObject {
-    use crate::types::{PyMapPtr, PyObjectPtr};
+    use crate::py::{self, PyMapPtr, PyObjectPtr};
     use crate::{py_cache, py_exec, py_obj, py_str};
     py_cache!({
         let filters = py_obj!("warnings.filters");

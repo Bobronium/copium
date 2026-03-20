@@ -1,9 +1,7 @@
-use pyo3_ffi::*;
 use std::ptr;
 
 use crate::deepcopy;
-use crate::py;
-use crate::types::{PyObjectPtr, PySeqPtr, PyTypeObjectPtr};
+use crate::py::{self, *};
 
 unsafe extern "C" fn py_replicate(
     _self: *mut PyObject,

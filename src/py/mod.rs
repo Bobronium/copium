@@ -3,10 +3,8 @@
 #![allow(unused_imports)]
 #![allow(unused_unsafe)]
 
-use std::ptr::addr_of_mut;
-use pyo3_ffi::*;
-
 use crate::memo::{Memo_Type, PyMemoObject};
+use std::ptr::addr_of_mut;
 
 pub mod boolean;
 pub mod bytearray;
@@ -31,27 +29,19 @@ pub mod type_object;
 pub mod unicode;
 pub mod vectorcall;
 
-pub use boolean::*;
-pub use bytearray::*;
-pub use capsule::*;
-pub use critical_section::*;
-pub use dict::*;
-pub use err::*;
-pub use eval::*;
-pub use frame::*;
-pub use gc::*;
-pub use list::*;
-pub use long::*;
-pub use method::*;
-pub use module::*;
-pub use object::*;
-pub use seq::*;
-pub use set::*;
-pub use tuple::*;
-pub use type_object::*;
-pub use unicode::*;
-pub use vectorcall::*;
-use crate::py::ffi::{_Py_EllipsisObject, _Py_NoneStruct};
+pub use ffi::*;
+pub use bytearray::PyBufPtr;
+pub use capsule::PyCapsulePtr;
+pub use dict::PyMapPtr;
+pub use frame::PyFramePtr;
+pub use list::PyMutSeqPtr;
+pub use method::PyBoundMethodPtr;
+pub use object::{PyObjectPtr, PyObjectSlotPtr};
+pub use seq::PySeqPtr;
+pub use set::{PyMutSetPtr, PySetPtr};
+pub use type_object::PyTypeObjectPtr;
+pub use unicode::PyUnicodePtr;
+pub use vectorcall::PyVectorcallPtr;
 
 pub unsafe trait PyTypeInfo: Sized {
     fn type_ptr() -> *mut PyTypeObject;

@@ -2,16 +2,13 @@
 #![feature(likely_unlikely)]
 
 use core::ffi::{c_void, CStr};
-use pyo3_ffi::*;
 use std::hint::{likely, unlikely};
 use std::ptr;
 
 mod py;
-mod ffi_ext;
 mod about;
 #[allow(dead_code)]
 mod cache;
-mod compat;
 mod config;
 mod copy;
 mod critical_section;
@@ -24,10 +21,8 @@ mod patch;
 mod recursion;
 mod reduce;
 mod state;
-mod types;
-use crate::py::seq::PySeqPtr;
+use py::*;
 use crate::memo::PyMemoObject;
-use crate::types::{py_dict_new, PyMapPtr, PyObjectPtr, PyTypeInfo, PyTypeObjectPtr};
 use memo::{AnyMemo, DictMemo};
 use state::{MemoMode, STATE};
 // ══════════════════════════════════════════════════════════════
@@ -50,7 +45,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
 ) -> *mut PyObject {
     unsafe {
         let mut obj: *mut PyObject = ptr::null_mut();
-        let mut memo_arg: *mut PyObject = py::none();
+        let mut memo_arg: *mut PyObject = py::NoneObject;
 
         // ── Fast path: no keyword arguments ─────────────────
         let kwcount = if kwnames.is_null() {
@@ -141,7 +136,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
         }
 
         // ── Dispatch based on memo type ─────────────────────
-        if likely(memo_arg == py::none()) {
+        if likely(memo_arg == py::NoneObject) {
             let tp = obj.class();
             if tp.is_atomic_immutable() {
                 return obj.newref();
@@ -158,7 +153,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
             }
 
             // memo="dict" config
-            let dict = py_dict_new(0);
+            let dict = py::dict::new_presized(0);
             if dict.is_null() {
                 return ptr::null_mut();
             }

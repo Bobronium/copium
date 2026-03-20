@@ -1,14 +1,11 @@
 use std::os::raw::c_int;
 use std::ptr;
 
-use pyo3_ffi::*;
-
 use crate::deepcopy;
 use crate::memo::Memo;
-use crate::py;
+use crate::py::{self, *};
 use crate::py_obj;
 use crate::py_str;
-use crate::types::*;
 
 macro_rules! bail {
     ($e:expr) => {{
@@ -158,7 +155,7 @@ pub(crate) unsafe fn validate_reduce_tuple(
 
         let callable = tup.get_borrowed_unchecked(0);
         let mut argtup = tup.get_borrowed_unchecked(1);
-        let none = py::none();
+        let none = py::NoneObject;
         let state_raw = if size >= 3 {
             tup.get_borrowed_unchecked(2)
         } else {
@@ -265,7 +262,7 @@ unsafe fn reconstruct_newobj<M: Memo>(argtup: *mut PyObject, memo: &mut M) -> *m
             return ptr::null_mut();
         }
 
-        let args = bail!(py_tuple_new(nargs - 1));
+        let args = bail!(py::tuple::new(nargs - 1));
 
         for i in 1..nargs {
             let arg = tup.get_borrowed_unchecked(i);
@@ -334,7 +331,7 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
         }
 
         if !kwargs.is_dict() {
-            coerced_kwargs = py_dict_new(0);
+            coerced_kwargs = py::dict::new_presized(0);
             if coerced_kwargs.is_null() {
                 coerced_args.decref_nullable();
                 return ptr::null_mut();
@@ -393,7 +390,7 @@ unsafe fn reconstruct_callable<M: Memo>(
             return callable.call();
         }
 
-        let copied_args = bail!(py_tuple_new(nargs));
+        let copied_args = bail!(py::tuple::new(nargs));
 
         for i in 0..nargs {
             let arg = tup.get_borrowed_unchecked(i);

@@ -1,13 +1,8 @@
-use pyo3_ffi::*;
 use std::hint::{likely, unlikely};
 use std::ptr;
 #[cfg(Py_GIL_DISABLED)]
 use crate::{py_cache_typed, py_obj};
-use crate::py;
-#[cfg(Py_GIL_DISABLED)]
-use crate::py::vectorcall::PyVectorcallPtr;
-use crate::types::PyObjectPtr;
-use crate::py::dict::PyMapPtr;
+use crate::py::{self, *};
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 static mut G_DICT_WATCHER_ID: i32 = -1;
 
@@ -110,8 +105,8 @@ pub struct DictIterGuard {
 impl DictIterGuard {
     #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
     #[inline(always)]
-    fn cached_dict_items_vc() -> pyo3_ffi::vectorcallfunc {
-        py_cache_typed!(pyo3_ffi::vectorcallfunc, {
+    fn cached_dict_items_vc() -> vectorcallfunc {
+        py_cache_typed!(vectorcallfunc, {
             match py_obj!("dict.items").vectorcall_function() {
                 Some(f) => Some(f),
                 None => {

@@ -5,7 +5,6 @@ mod pytype;
 mod table;
 mod tss;
 
-use pyo3_ffi::*;
 use std::ptr;
 
 pub use any::AnyMemo;
@@ -14,7 +13,7 @@ pub use native::PyMemoObject;
 pub use pytype::{memo_ready_type, Memo_Type};
 pub use table::{KeepaliveVec, MemoTable, UndoLog};
 pub use tss::{cleanup_memo, get_memo, pymemo_alloc};
-use crate::types::PyTypeInfo;
+use crate::py::{PyObject, PyTypeInfo};
 
 pub type MemoCheckpoint = usize;
 

@@ -37,10 +37,13 @@
 //! but races are possible and the state of an object may change "underneath" a suspended thread in
 //! possibly surprising ways.
 
-use crate::types::PyTypeInfo;
+use crate::py::PyTypeInfo;
 
 #[cfg(Py_GIL_DISABLED)]
-struct CSGuard(pyo3_ffi::PyCriticalSection);
+use crate::py::{PyCriticalSection, PyCriticalSection2};
+
+#[cfg(Py_GIL_DISABLED)]
+struct CSGuard(PyCriticalSection);
 
 #[cfg(Py_GIL_DISABLED)]
 impl Drop for CSGuard {
@@ -52,7 +55,7 @@ impl Drop for CSGuard {
 }
 
 #[cfg(Py_GIL_DISABLED)]
-struct CS2Guard(pyo3_ffi::PyCriticalSection2);
+struct CS2Guard(PyCriticalSection2);
 
 #[cfg(Py_GIL_DISABLED)]
 impl Drop for CS2Guard {

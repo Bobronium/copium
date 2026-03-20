@@ -5,13 +5,33 @@
 
 use core::ffi::{c_char, CStr};
 use libc::c_ulong;
-use pyo3_ffi::*;
 use std::os::raw::c_int;
 
 #[cfg(Py_GIL_DISABLED)]
 use core::sync::atomic::Ordering;
 
-pub use pyo3_ffi::{_PyWeakref_RefType, PyEllipsis_Type, PyProperty_Type, Py_None};
+pub use pyo3_ffi::{
+    visitproc, vectorcallfunc, METH_FASTCALL, METH_KEYWORDS, METH_NOARGS, METH_O,
+    PY_SSIZE_T_MAX, PyBaseObject_Type, PyBool_Type, PyByteArrayObject, PyByteArray_Type,
+    PyBytes_Type, PyCFunction_Type, PyCodeObject, PyCode_Type, PyComplex_Type, PyDictObject,
+    PyDict_Type, PyEllipsis_Type, PyExc_AssertionError, PyExc_AttributeError,
+    PyExc_IndexError, PyExc_KeyError, PyExc_RecursionError, PyExc_RuntimeError,
+    PyExc_SystemError, PyExc_TypeError, PyExc_UserWarning, PyExc_ValueError, PyFloat_Type,
+    PyFrozenSet_Type, PyFunction_Type, PyListObject, PyList_Type, PyLongObject, PyLong_Type,
+    PyMappingMethods, PyMethodDef, PyMethodDefPointer, PyModuleDef, PyModuleDef_HEAD_INIT,
+    PyModuleDef_Slot, PyObject, PySequenceMethods, PySetObject, PySet_Type, PySliceObject,
+    PySlice_Type, PyTupleObject, PyTuple_Type, PyTypeObject, PyUnicodeObject,
+    PyUnicode_Type, Py_eval_input, Py_file_input, Py_hash_t, Py_mod_exec, Py_ssize_t,
+    Py_TPFLAGS_DEFAULT, Py_TPFLAGS_HAVE_GC, Py_None, PyProperty_Type, PyRange_Type,
+    _PyWeakref_RefType,
+};
+use pyo3_ffi::{Py_DECREF, PyDict_SetItem, Py_SIZE, Py_TPFLAGS_LIST_SUBCLASS};
+
+#[cfg(Py_GIL_DISABLED)]
+pub use pyo3_ffi::{PyCriticalSection, PyCriticalSection2};
+
+#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+pub use pyo3_ffi::{Py_MOD_GIL_NOT_USED, Py_mod_gil};
 
 #[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {

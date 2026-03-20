@@ -19,7 +19,7 @@ macro_rules! format {
         #[allow(unused_unsafe)]
         unsafe {
             $crate::py::ffi::PyErr_Format(
-                ($exception) as *mut ::pyo3_ffi::PyObject,
+                ($exception) as *mut $crate::py::PyObject,
                 ($format_string).as_ptr()
                 $(, $argument )*
             )

@@ -1,9 +1,7 @@
-use pyo3_ffi::*;
 use std::ptr;
 
 use super::Memo;
-use crate::py;
-use crate::types::{py_list_new, PyMapPtr, PyMutSeqPtr, PyObjectPtr, PyTypeInfo};
+use crate::py::{self, *};
 
 pub struct DictMemo {
     pub dict: *mut PyDictObject,
@@ -42,7 +40,7 @@ impl DictMemo {
                 return -1;
             }
 
-            let list = py_list_new(0);
+            let list = py::list::new(0);
             if list.is_null() {
                 pykey.decref();
                 return -1;

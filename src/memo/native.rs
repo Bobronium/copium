@@ -1,8 +1,6 @@
 use super::{KeepaliveVec, Memo, MemoCheckpoint, MemoTable, UndoLog};
 use crate::memo::table::{hash_pointer, TOMBSTONE};
-use crate::py;
-use crate::types::{PyMapPtr, PyObjectPtr, PyTypeInfo};
-use pyo3_ffi::*;
+use crate::py::{self, *};
 use std::ffi::c_void;
 use std::hint::unlikely;
 use std::ptr;
@@ -64,7 +62,7 @@ impl PyMemoObject {
     #[cold]
     pub unsafe fn to_dict(&self) -> *mut PyObject {
         unsafe {
-            let dict = crate::types::py_dict_new(0);
+            let dict = py::dict::new_presized(0);
             if dict.is_null() {
                 return ptr::null_mut();
             }

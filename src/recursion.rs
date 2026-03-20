@@ -1,8 +1,7 @@
 use core::hint::{likely, unlikely};
-use pyo3_ffi::*;
 use std::ptr;
 
-use crate::py;
+use crate::py::{self, *};
 
 const STACKCHECK_STRIDE: u32 = 32;
 const STACK_SAFETY_MARGIN: usize = 256 * 1024;

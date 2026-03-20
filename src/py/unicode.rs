@@ -122,7 +122,7 @@ macro_rules! from_format {
             $crate::py::ffi::PyUnicode_FromFormat(
                 ($format_string).as_ptr()
                 $(, $argument )*
-            ) as *mut ::pyo3_ffi::PyUnicodeObject
+            ) as *mut $crate::py::PyUnicodeObject
         }
     }};
 }

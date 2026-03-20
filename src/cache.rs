@@ -4,10 +4,7 @@ use std::mem::MaybeUninit;
 use std::os::raw::c_int;
 use std::ptr;
 
-use pyo3_ffi::*;
-
-use crate::py;
-use crate::types::{PyMapPtr, PyObjectPtr};
+use crate::py::{self, *};
 
 // ── Slot types ─────────────────────────────────────────────
 
@@ -322,10 +319,10 @@ macro_rules! __py_obj_impl {
 #[macro_export]
 macro_rules! py_obj {
     ($path:literal) => {
-        $crate::__py_obj_impl!(required, *mut ::pyo3_ffi::PyObject, $path)
+        $crate::__py_obj_impl!(required, *mut $crate::py::PyObject, $path)
     };
     (? $path:literal) => {
-        $crate::__py_obj_impl!(optional, *mut ::pyo3_ffi::PyObject, $path)
+        $crate::__py_obj_impl!(optional, *mut $crate::py::PyObject, $path)
     };
     ($T:ty, $path:literal) => {
         $crate::__py_obj_impl!(required, *mut $T, $path)
@@ -346,9 +343,9 @@ macro_rules! py_type {
                 if val.is_null() {
                     return -1;
                 }
-                if !$crate::types::PyObjectPtr::is_type(val) {
+                if !$crate::py::PyObjectPtr::is_type(val) {
                     $crate::py::err::set_string(
-                        ::pyo3_ffi::PyExc_TypeError,
+                        $crate::py::PyExc_TypeError,
                         unsafe {
                             ::std::ffi::CStr::from_bytes_with_nul_unchecked(
                                 concat!("py_type!(\"", $path, "\"): resolved to non-type\0")
@@ -356,7 +353,7 @@ macro_rules! py_type {
                             )
                         },
                     );
-                    $crate::types::PyObjectPtr::decref(val);
+                    $crate::py::PyObjectPtr::decref(val);
                     return -1;
                 }
                 SLOT.set(val);
@@ -366,7 +363,7 @@ macro_rules! py_type {
 
         ::inventory::submit! { $crate::cache::ObjEntry { init_fn: __init } }
 
-        unsafe { SLOT.get() as *mut ::pyo3_ffi::PyTypeObject }
+        unsafe { SLOT.get() as *mut $crate::py::PyTypeObject }
     }};
 }
 
@@ -379,8 +376,8 @@ macro_rules! py_cache {
 
         #[allow(unused_unsafe)]
         unsafe fn __init() -> ::std::os::raw::c_int {
-            let val: *mut ::pyo3_ffi::PyObject =
-                (|| -> *mut ::pyo3_ffi::PyObject { unsafe { $($body)+ } })();
+            let val: *mut $crate::py::PyObject =
+                (|| -> *mut $crate::py::PyObject { unsafe { $($body)+ } })();
             if val.is_null() {
                 return -1;
             }

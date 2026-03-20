@@ -1,11 +1,9 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
-use pyo3_ffi::PyObject;
 
-use crate::py;
+use crate::py::{self, PyObject, PyObjectPtr};
 use crate::state::{MemoMode, OnIncompatible, STATE};
-use crate::types::PyObjectPtr;
 
 // ══════════════════════════════════════════════════════════════
 //  copium.config.apply(**kwargs)

@@ -1,8 +1,7 @@
-use pyo3_ffi::*;
 use std::ptr;
 
 use super::Memo;
-use crate::types::{py_list_new, PyMutSeqPtr, PyObjectPtr, PyTypeInfo};
+use crate::py::{self, *};
 use crate::{py_cache, py_eval, py_str};
 
 pub struct AnyMemo {
@@ -30,7 +29,7 @@ impl AnyMemo {
                 return -1;
             }
 
-            let existing = crate::py::call::method_obj_args!(
+            let existing = py::call::method_obj_args!(
                 self.object,
                 py_str!("get"),
                 pykey,
@@ -49,7 +48,7 @@ impl AnyMemo {
 
             existing.decref();
 
-            let list = py_list_new(0);
+            let list = py::list::new(0);
             if list.is_null() {
                 pykey.decref();
                 return -1;
@@ -80,7 +79,7 @@ impl Memo for AnyMemo {
                 return ((), ptr::null_mut());
             }
 
-            let found = crate::py::call::method_obj_args!(
+            let found = py::call::method_obj_args!(
                 self.object,
                 py_str!("get"),
                 pykey,

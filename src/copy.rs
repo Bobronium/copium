@@ -1,9 +1,7 @@
 use crate::deepcopy::PyResult;
-use crate::py;
+use crate::py::{self, *};
 use crate::reduce::{self, ReduceKind};
-use crate::types::*;
 use crate::{py_str};
-use pyo3_ffi::*;
 use std::os::raw::c_int;
 use std::ptr;
 
@@ -50,7 +48,7 @@ impl PyCopy for *mut PyListObject {
     unsafe fn copy(self) -> PyResult {
         unsafe {
             let size = self.length();
-            let copied = check!(py_list_new(size));
+            let copied = check!(py::list::new(size));
 
             for index in 0..size {
                 let item = self.get_borrowed_unchecked(index);
@@ -71,15 +69,15 @@ impl PyCopy for *mut PyDictObject {
 
 impl PyCopy for *mut PySetObject {
     unsafe fn copy(self) -> PyResult {
-        unsafe { PyResult::ok(check!(py_set_from(self))) }
+        unsafe { PyResult::ok(check!(py::set::from(self))) }
     }
 }
 
 impl PyCopy for *mut PyByteArrayObject {
     unsafe fn copy(self) -> PyResult {
         unsafe {
-            let size = crate::types::PyBufPtr::len(self);
-            let copied = check!(py_bytearray_new(size));
+            let size = PyBufPtr::len(self);
+            let copied = check!(py::bytearray::new(size));
             if size > 0 {
                 ptr::copy_nonoverlapping(self.as_ptr(), copied.as_ptr(), size as usize);
             }
@@ -457,7 +455,7 @@ unsafe fn copy_via_reduce(object: *mut PyObject) -> PyResult {
 
         let mut reduce_result = reduce::try_reduce_via_registry(object, class);
         if reduce_result.is_null() {
-            if !crate::py::err::occurred().is_null() {
+            if !py::err::occurred().is_null() {
                 return PyResult::error();
             }
 

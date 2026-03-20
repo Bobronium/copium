@@ -5,7 +5,7 @@ use std::ptr;
 use super::native::PyMemoObject;
 use super::pytype::Memo_Type;
 use crate::py;
-use crate::types::PyObjectPtr;
+use crate::py::PyObjectPtr;
 
 #[thread_local]
 static mut TSS_MEMO: *mut PyMemoObject = ptr::null_mut();

@@ -1,10 +1,7 @@
-use pyo3_ffi::*;
 use std::ptr;
 
 use crate::cstr;
-use crate::py;
-use crate::types::{PyObjectPtr, PySeqPtr};
-use crate::py::unicode::PyUnicodePtr;
+use crate::py::{self, *};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

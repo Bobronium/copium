@@ -1,9 +1,7 @@
-use pyo3_ffi::*;
 use std::ffi::CString;
 use std::ptr;
 
-use crate::py;
-use crate::types::{PyObjectPtr, PySeqPtr};
+use crate::py::{self, *};
 
 static mut ABOUT_METHODS: [PyMethodDef; 1] = [PyMethodDef::zeroed()];
 
@@ -48,7 +46,7 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             return -1;
         }
 
-        let vi_cls = crate::py::call::call_function!(
+        let vi_cls = py::call::call_function!(
             namedtuple,
             crate::cstr!("s[ssssss]"),
             crate::cstr!("VersionInfo"),
@@ -85,14 +83,14 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
         let build_hash = env!("COPIUM_BUILD_HASH");
         let local_cstring = CString::new(build_hash).unwrap();
 
-        let vi = crate::py::call::call_function!(
+        let vi = py::call::call_function!(
             vi_cls,
             crate::cstr!("lllOOs"),
             major,
             minor,
             patch,
-            py::none(),
-            py::none(),
+            py::NoneObject,
+            py::NoneObject,
             local_cstring.as_c_str(),
         );
 
@@ -101,7 +99,7 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             py::module::add_object(module, crate::cstr!("__version_tuple__"), vi);
         }
 
-        py::module::add_object(module, crate::cstr!("__commit_id__"), py::none().newref());
+        py::module::add_object(module, crate::cstr!("__commit_id__"), py::NoneObject.newref());
 
         py::module::add_string_constant(
             module,
@@ -109,7 +107,7 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             local_cstring.as_c_str(),
         );
 
-        let author_cls = crate::py::call::call_function!(
+        let author_cls = py::call::call_function!(
             namedtuple,
             crate::cstr!("s[ss]"),
             crate::cstr!("Author"),
@@ -122,7 +120,7 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             return -1;
         }
 
-        let author = crate::py::call::call_function!(
+        let author = py::call::call_function!(
             author_cls,
             crate::cstr!("ss"),
             crate::cstr!("Arseny Boykov (Bobronium)"),

@@ -1,11 +1,8 @@
-use pyo3_ffi::*;
 use std::ptr;
 
 use crate::memo::{MemoCheckpoint, PyMemoObject};
-use crate::py;
-use crate::py::frame::PyFramePtr;
+use crate::py::{self, *};
 use crate::state::{OnIncompatible, STATE};
-use crate::types::PyObjectPtr;
 
 macro_rules! cleanup_traceback_build {
     ($parts:expr, $traceback_module:expr, $format_exception:expr, $traceback_lines:expr, $empty_string:expr, $caller_string:expr) => {{
@@ -204,11 +201,11 @@ unsafe fn make_expression_with_memo(expression: *mut PyObject) -> *mut PyObject 
         };
 
         if let Some(prefix) = expression_text.strip_suffix(",)") {
-            return new_unicode_from_string(&format!("{prefix}, memo={{}})"));
+            return new_unicode_from_string(&std::format!("{prefix}, memo={{}})"));
         }
 
         if let Some(prefix) = expression_text.strip_suffix(')') {
-            return new_unicode_from_string(&format!("{prefix}, memo={{}})"));
+            return new_unicode_from_string(&std::format!("{prefix}, memo={{}})"));
         }
 
         ptr::null_mut()

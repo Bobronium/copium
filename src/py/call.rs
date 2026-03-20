@@ -71,7 +71,7 @@ macro_rules! call_function {
         #[allow(unused_unsafe)]
         unsafe {
             $crate::py::ffi::PyObject_CallFunction(
-                ($callable) as *mut ::pyo3_ffi::PyObject,
+                ($callable) as *mut $crate::py::PyObject,
                 ($format_string).as_ptr()
                 $(, $crate::py::call::IntoPythonCallArgument::into_python_call_argument($argument) )*
             )
@@ -86,9 +86,9 @@ macro_rules! call_function_obj_args {
         #[allow(unused_unsafe)]
         unsafe {
             $crate::py::ffi::PyObject_CallFunctionObjArgs(
-                ($callable) as *mut ::pyo3_ffi::PyObject
+                ($callable) as *mut $crate::py::PyObject
                 $(, $crate::py::call::IntoPythonCallArgument::into_python_call_argument($argument) )*
-                , std::ptr::null_mut::<::pyo3_ffi::PyObject>()
+                , std::ptr::null_mut::<$crate::py::PyObject>()
             )
         }
     }};
@@ -101,11 +101,11 @@ macro_rules! call_method_obj_args {
         #[allow(unused_unsafe)]
         unsafe {
             $crate::py::ffi::PyObject_CallMethodObjArgs(
-                ($callable) as *mut ::pyo3_ffi::PyObject,
+                ($callable) as *mut $crate::py::PyObject,
                 $crate::py::call::IntoPythonCallArgument::into_python_call_argument($name)
-                    as *mut ::pyo3_ffi::PyObject
+                    as *mut $crate::py::PyObject
                 $(, $crate::py::call::IntoPythonCallArgument::into_python_call_argument($argument) )*
-                , std::ptr::null_mut::<::pyo3_ffi::PyObject>()
+                , std::ptr::null_mut::<$crate::py::PyObject>()
             )
         }
     }};

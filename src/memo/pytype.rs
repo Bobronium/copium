@@ -1,12 +1,10 @@
-use pyo3_ffi::*;
 use std::ffi::c_void;
 use std::ptr;
 
 use super::native::PyMemoObject;
 use crate::cstr;
 use crate::memo::table::{hash_pointer, TOMBSTONE};
-use crate::py;
-use crate::types::{PyMapPtr, PyObjectPtr, PyObjectSlotPtr};
+use crate::py::{self, *};
 
 #[allow(non_upper_case_globals)]
 pub static mut Memo_Type: PyTypeObject = unsafe { std::mem::zeroed() };
@@ -178,7 +176,7 @@ unsafe extern "C" fn keepalive_list_append(
             return ptr::null_mut();
         }
         (*(*self_).owner).keepalive.append(arg);
-        py::none().newref()
+        py::NoneObject.newref()
     }
 }
 
@@ -193,7 +191,7 @@ unsafe extern "C" fn keepalive_list_clear_py(
             return ptr::null_mut();
         }
         (*(*self_).owner).keepalive.clear();
-        py::none().newref()
+        py::NoneObject.newref()
     }
 }
 
@@ -583,7 +581,7 @@ unsafe extern "C" fn memo_py_clear(obj: *mut PyObject, _: *mut PyObject) -> *mut
             (*self_).dict_proxy.decref();
             (*self_).dict_proxy = ptr::null_mut();
         }
-        py::none().newref()
+        py::NoneObject.newref()
     }
 }
 
@@ -620,7 +618,7 @@ unsafe extern "C" fn memo_py_get(
             return (*args.add(1)).newref();
         }
 
-        py::none().newref()
+        py::NoneObject.newref()
     }
 }
 
@@ -816,7 +814,7 @@ unsafe extern "C" fn memo_py_setdefault(
             return found.newref();
         }
 
-        let default_value = if nargs == 2 { *args.add(1) } else { py::none() };
+        let default_value = if nargs == 2 { *args.add(1) } else { py::NoneObject };
         if (*self_).insert_logged(key, default_value, hash_pointer(key)) < 0 {
             return ptr::null_mut();
         }

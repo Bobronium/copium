@@ -1,8 +1,7 @@
-use pyo3_ffi::*;
 use std::hint::likely;
 use std::ptr;
 
-use crate::types::{PyObjectPtr, PyTypeInfo};
+use crate::py::{PyObject, PyObjectPtr, PyTypeInfo};
 
 pub(crate) const TOMBSTONE: usize = usize::MAX;
 
