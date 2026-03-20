@@ -2,6 +2,8 @@ use core::hint::{likely, unlikely};
 use pyo3_ffi::*;
 use std::ptr;
 
+use crate::py;
+
 const STACKCHECK_STRIDE: u32 = 32;
 const STACK_SAFETY_MARGIN: usize = 256 * 1024;
 
@@ -124,7 +126,7 @@ pub unsafe fn enter() -> i32 {
         if unlikely(sp <= unsafe { STACK_LOW }) {
             unsafe {
                 DEPTH -= 1;
-                PyErr_Format(
+                py::err::format!(
                     PyExc_RecursionError,
                     crate::cstr!("Stack overflow (depth %u) while deep copying an object"),
                     d,

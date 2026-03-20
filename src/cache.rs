@@ -1,12 +1,13 @@
 use std::cell::UnsafeCell;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::c_int;
 use std::ptr;
 
 use pyo3_ffi::*;
 
-use crate::types::PyObjectPtr;
+use crate::py;
+use crate::types::{PyMapPtr, PyObjectPtr};
 
 // ── Slot types ─────────────────────────────────────────────
 
@@ -69,8 +70,8 @@ init_phase!(StrEntry, ObjEntry, CacheEntry);
 
 // ── Primitives ─────────────────────────────────────────────
 
-pub unsafe fn intern_str(s: *const c_char) -> *mut PyObject {
-    unsafe { PyUnicode_InternFromString(s) }
+pub unsafe fn intern_str(string: &CStr) -> *mut PyObject {
+    unsafe { py::unicode::intern(string).as_object() }
 }
 
 /// Resolve a dotted path like "decimal.Decimal" or "xml.etree.ElementTree.Element".
@@ -80,12 +81,7 @@ pub unsafe fn intern_str(s: *const c_char) -> *mut PyObject {
 pub unsafe fn resolve_path(path: &str) -> *mut PyObject {
     let segments: Vec<&str> = path.split('.').collect();
     if segments.is_empty() {
-        unsafe {
-            PyErr_SetString(
-                PyExc_ValueError,
-                b"cache::resolve_path: empty path\0".as_ptr().cast(),
-            );
-        }
+        unsafe { py::err::set_string(PyExc_ValueError, crate::cstr!("cache::resolve_path: empty path")) };
         return ptr::null_mut();
     }
 
@@ -96,9 +92,9 @@ pub unsafe fn resolve_path(path: &str) -> *mut PyObject {
 
     let mut cur: *mut PyObject;
     unsafe {
-        let builtins = PyEval_GetBuiltins();
+        let builtins = py::eval::builtins();
         let builtin_hit = if !builtins.is_null() {
-            PyDict_GetItemString(builtins, first.as_ptr())
+            builtins.borrow_item_cstr(first.as_c_str())
         } else {
             ptr::null_mut()
         };
@@ -106,8 +102,8 @@ pub unsafe fn resolve_path(path: &str) -> *mut PyObject {
         if !builtin_hit.is_null() {
             cur = builtin_hit.newref();
         } else {
-            PyErr_Clear();
-            cur = PyImport_ImportModule(first.as_ptr());
+            py::err::clear();
+            cur = py::module::import(first.as_c_str());
             if cur.is_null() {
                 return ptr::null_mut();
             }
@@ -126,17 +122,17 @@ pub unsafe fn resolve_path(path: &str) -> *mut PyObject {
         };
 
         unsafe {
-            let next = PyObject_GetAttrString(cur, seg.as_ptr());
+            let next = cur.getattr_cstr(seg.as_c_str());
             if !next.is_null() {
                 cur.decref();
                 cur = next;
                 continue;
             }
-            PyErr_Clear();
+            py::err::clear();
 
             let dotted: String = segments[..=i].join(".");
             if let Ok(module_path) = CString::new(dotted) {
-                let module = PyImport_ImportModule(module_path.as_ptr());
+                let module = py::module::import(module_path.as_c_str());
                 if !module.is_null() {
                     cur.decref();
                     cur = module;
@@ -144,11 +140,11 @@ pub unsafe fn resolve_path(path: &str) -> *mut PyObject {
                 }
             }
 
-            PyErr_Clear();
+            py::err::clear();
             let path_cstr = CString::new(path).unwrap_or_default();
-            PyErr_Format(
+            py::err::format!(
                 PyExc_AttributeError,
-                b"cache: cannot resolve '%s' in '%s'\0".as_ptr().cast(),
+                crate::cstr!("cache: cannot resolve '%s' in '%s'"),
                 seg.as_ptr(),
                 path_cstr.as_ptr(),
             );
@@ -163,49 +159,47 @@ pub unsafe fn resolve_path(path: &str) -> *mut PyObject {
 pub unsafe fn resolve_path_optional(path: &str) -> *mut PyObject {
     let result = unsafe { resolve_path(path) };
     if result.is_null() {
-        unsafe {
-            PyErr_Clear();
-        }
+        unsafe { py::err::clear() };
     }
     result
 }
 
 unsafe fn make_globals() -> *mut PyObject {
     unsafe {
-        let globals = PyDict_New();
+        let globals = py::dict::new();
         if globals.is_null() {
             return ptr::null_mut();
         }
-        let builtins = PyEval_GetBuiltins();
+        let builtins = py::eval::builtins();
         if !builtins.is_null()
-            && PyDict_SetItemString(globals, b"__builtins__\0".as_ptr().cast(), builtins) < 0
+            && globals.set_item_cstr(crate::cstr!("__builtins__"), builtins) < 0
         {
             globals.decref();
             return ptr::null_mut();
         }
-        globals
+        globals.as_object()
     }
 }
 
-pub unsafe fn eval_cstr(code: *const c_char) -> *mut PyObject {
+pub unsafe fn eval_cstr(code: &CStr) -> *mut PyObject {
     unsafe {
         let globals = make_globals();
         if globals.is_null() {
             return ptr::null_mut();
         }
-        let result = PyRun_StringFlags(code, Py_eval_input, globals, globals, ptr::null_mut());
+        let result = py::eval::run_string(code, Py_eval_input, globals, globals);
         globals.decref();
         result
     }
 }
 
-pub unsafe fn exec_cstr(code: *const c_char) -> *mut PyDictObject {
+pub unsafe fn exec_cstr(code: &CStr) -> *mut PyDictObject {
     unsafe {
         let globals = make_globals();
         if globals.is_null() {
             return ptr::null_mut();
         }
-        let result = PyRun_StringFlags(code, Py_file_input, globals, globals, ptr::null_mut());
+        let result = py::eval::run_string(code, Py_file_input, globals, globals);
         if result.is_null() {
             globals.decref();
             return ptr::null_mut();
@@ -238,12 +232,12 @@ fn dedent(s: &str) -> CString {
 
 pub unsafe fn eval_str(s: &str) -> *mut PyObject {
     let code = dedent(s);
-    unsafe { eval_cstr(code.as_ptr()) }
+    unsafe { eval_cstr(code.as_c_str()) }
 }
 
 pub unsafe fn exec_str(s: &str) -> *mut PyDictObject {
     let code = dedent(s);
-    unsafe { exec_cstr(code.as_ptr()) }
+    unsafe { exec_cstr(code.as_c_str()) }
 }
 
 // ── Init ───────────────────────────────────────────────────
@@ -273,9 +267,7 @@ macro_rules! py_str {
         static SLOT: $crate::cache::PtrSlot = $crate::cache::PtrSlot::new();
 
         unsafe fn __init() -> ::std::os::raw::c_int {
-            let val = $crate::cache::intern_str(
-                concat!($s, "\0").as_ptr() as *const ::std::os::raw::c_char
-            );
+            let val = $crate::cache::intern_str($crate::cstr!($s));
             if val.is_null() {
                 return -1;
             }
@@ -354,11 +346,15 @@ macro_rules! py_type {
                 if val.is_null() {
                     return -1;
                 }
-                if ::pyo3_ffi::PyType_Check(val) == 0 {
-                    ::pyo3_ffi::PyErr_SetString(
+                if !$crate::types::PyObjectPtr::is_type(val) {
+                    $crate::py::err::set_string(
                         ::pyo3_ffi::PyExc_TypeError,
-                        concat!("py_type!(\"", $path, "\"): resolved to non-type\0").as_ptr()
-                            as *const ::std::os::raw::c_char,
+                        unsafe {
+                            ::std::ffi::CStr::from_bytes_with_nul_unchecked(
+                                concat!("py_type!(\"", $path, "\"): resolved to non-type\0")
+                                    .as_bytes(),
+                            )
+                        },
                     );
                     $crate::types::PyObjectPtr::decref(val);
                     return -1;

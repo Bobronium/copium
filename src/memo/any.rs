@@ -1,9 +1,8 @@
 use pyo3_ffi::*;
-use std::ffi::c_void;
 use std::ptr;
 
 use super::Memo;
-use crate::types::{py_list_new, PyMutSeqPtr, PyObjectPtr, PyTypeInfo};
+use crate::types::{py_list_new, py_tuple_new, PyMutSeqPtr, PyObjectPtr, PySeqPtr, PyTypeInfo};
 use crate::{py_cache, py_eval, py_str};
 
 pub struct AnyMemo {
@@ -26,26 +25,33 @@ impl AnyMemo {
             }
 
             let sentinel = py_cache!(py_eval!("object()"));
-            let pykey = PyLong_FromVoidPtr(self.object as *mut c_void);
+            let pykey = self.object.id();
             if pykey.is_null() {
                 return -1;
             }
 
-            let existing = PyObject_CallMethodObjArgs(
-                self.object,
-                py_str!("get"),
-                pykey,
-                sentinel,
-                ptr::null_mut::<PyObject>(),
-            );
-            if existing.is_null() {
+            let getter = self.object.getattr(py_str!("get"));
+            if getter.is_null() {
                 pykey.decref();
+                return -1;
+            }
+            let args = py_tuple_new(2);
+            if args.is_null() {
+                getter.decref();
+                pykey.decref();
+                return -1;
+            }
+            args.steal_item_unchecked(0, pykey.as_object());
+            args.steal_item_unchecked(1, sentinel.newref());
+            let existing = getter.call_with(args);
+            getter.decref();
+            args.decref();
+            if existing.is_null() {
                 return -1;
             }
 
             if existing != sentinel {
                 self.keepalive = existing as *mut PyListObject;
-                pykey.decref();
                 return 0;
             }
 
@@ -77,19 +83,27 @@ impl Memo for AnyMemo {
     unsafe fn recall<T: PyTypeInfo>(&mut self, object: *mut T) -> ((), *mut T) {
         unsafe {
             let sentinel = py_cache!(py_eval!("object()"));
-            let pykey = PyLong_FromVoidPtr(object as *mut c_void);
+            let pykey = object.id();
             if pykey.is_null() {
                 return ((), ptr::null_mut());
             }
 
-            let found = PyObject_CallMethodObjArgs(
-                self.object,
-                py_str!("get"),
-                pykey,
-                sentinel,
-                ptr::null_mut::<PyObject>(),
-            );
-            pykey.decref();
+            let getter = self.object.getattr(py_str!("get"));
+            if getter.is_null() {
+                pykey.decref();
+                return ((), ptr::null_mut());
+            }
+            let args = py_tuple_new(2);
+            if args.is_null() {
+                getter.decref();
+                pykey.decref();
+                return ((), ptr::null_mut());
+            }
+            args.steal_item_unchecked(0, pykey.as_object());
+            args.steal_item_unchecked(1, sentinel.newref());
+            let found = getter.call_with(args);
+            getter.decref();
+            args.decref();
 
             if found.is_null() {
                 return ((), ptr::null_mut());
@@ -110,7 +124,7 @@ impl Memo for AnyMemo {
         _probe: &Self::Probe,
     ) -> i32 {
         unsafe {
-            let pykey = PyLong_FromVoidPtr(original as *mut c_void);
+            let pykey = original.id();
             if pykey.is_null() {
                 return -1;
             }

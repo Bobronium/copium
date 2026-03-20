@@ -46,7 +46,7 @@ struct CSGuard(pyo3_ffi::PyCriticalSection);
 impl Drop for CSGuard {
     fn drop(&mut self) {
         unsafe {
-            pyo3_ffi::PyCriticalSection_End(&mut self.0);
+            py::critical_section::end(&mut self.0);
         }
     }
 }
@@ -58,7 +58,7 @@ struct CS2Guard(pyo3_ffi::PyCriticalSection2);
 impl Drop for CS2Guard {
     fn drop(&mut self) {
         unsafe {
-            pyo3_ffi::PyCriticalSection2_End(&mut self.0);
+            py::critical_section::end2(&mut self.0);
         }
     }
 }
@@ -71,7 +71,7 @@ where
     #[cfg(Py_GIL_DISABLED)]
     {
         let mut guard = CSGuard(unsafe { std::mem::zeroed() });
-        unsafe { pyo3_ffi::PyCriticalSection_Begin(&mut guard.0, object as _) };
+        unsafe { py::critical_section::begin(&mut guard.0, object) };
         f()
     }
     #[cfg(not(Py_GIL_DISABLED))]

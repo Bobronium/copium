@@ -1,8 +1,8 @@
 use pyo3_ffi::*;
-use std::ffi::c_void;
 use std::ptr;
 
 use super::Memo;
+use crate::py;
 use crate::types::{py_list_new, PyMapPtr, PyMutSeqPtr, PyObjectPtr, PyTypeInfo};
 
 pub struct DictMemo {
@@ -25,7 +25,7 @@ impl DictMemo {
                 return 0;
             }
 
-            let pykey = PyLong_FromVoidPtr(self.dict as *mut c_void);
+            let pykey = self.dict.id();
             if pykey.is_null() {
                 return -1;
             }
@@ -37,7 +37,7 @@ impl DictMemo {
                 pykey.decref();
                 return 0;
             }
-            if !PyErr_Occurred().is_null() {
+            if !py::err::occurred().is_null() {
                 pykey.decref();
                 return -1;
             }
@@ -68,7 +68,7 @@ impl Memo for DictMemo {
     #[inline(always)]
     unsafe fn recall<T: PyTypeInfo>(&mut self, object: *mut T) -> ((), *mut T) {
         unsafe {
-            let pykey = PyLong_FromVoidPtr(object as *mut c_void);
+            let pykey = object.id();
             if pykey.is_null() {
                 return ((), ptr::null_mut());
             }

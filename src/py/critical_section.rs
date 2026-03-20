@@ -1,0 +1,40 @@
+use pyo3_ffi::*;
+
+use super::PyTypeInfo;
+
+#[cfg(Py_GIL_DISABLED)]
+#[inline(always)]
+pub unsafe fn begin<T: PyTypeInfo>(critical_section: &mut PyCriticalSection, object: *mut T) {
+    pyo3_ffi::PyCriticalSection_Begin(critical_section, object as *mut PyObject)
+}
+
+#[cfg(not(Py_GIL_DISABLED))]
+#[inline(always)]
+pub unsafe fn begin<T: PyTypeInfo>(critical_section: &mut (), object: *mut T) {
+    let _ = critical_section;
+    let _ = object;
+}
+
+#[cfg(Py_GIL_DISABLED)]
+#[inline(always)]
+pub unsafe fn end(critical_section: &mut PyCriticalSection) {
+    pyo3_ffi::PyCriticalSection_End(critical_section)
+}
+
+#[cfg(not(Py_GIL_DISABLED))]
+#[inline(always)]
+pub unsafe fn end(critical_section: &mut ()) {
+    let _ = critical_section;
+}
+
+#[cfg(Py_GIL_DISABLED)]
+#[inline(always)]
+pub unsafe fn end2(critical_section: &mut PyCriticalSection2) {
+    pyo3_ffi::PyCriticalSection2_End(critical_section)
+}
+
+#[cfg(not(Py_GIL_DISABLED))]
+#[inline(always)]
+pub unsafe fn end2(critical_section: &mut ()) {
+    let _ = critical_section;
+}

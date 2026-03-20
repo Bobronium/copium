@@ -1,5 +1,6 @@
 use super::{KeepaliveVec, Memo, MemoCheckpoint, MemoTable, UndoLog};
 use crate::memo::table::{hash_pointer, TOMBSTONE};
+use crate::py;
 use crate::types::{PyMapPtr, PyObjectPtr, PyTypeInfo};
 use pyo3_ffi::*;
 use std::ffi::c_void;
@@ -75,7 +76,7 @@ impl PyMemoObject {
             for i in 0..self.table.size {
                 let entry = &*self.table.slots.add(i);
                 if entry.key != 0 && entry.key != TOMBSTONE {
-                    let pykey = PyLong_FromVoidPtr(entry.key as *mut c_void);
+                    let pykey = py::long::from_ptr(entry.key as *mut c_void).as_object();
                     if pykey.is_null() {
                         dict.decref();
                         return ptr::null_mut();
@@ -107,16 +108,16 @@ impl PyMemoObject {
             let mut value: *mut PyObject = ptr::null_mut();
             let mut idx: Py_ssize_t = 0;
 
-            while dict_typed.dict_next(&mut pos, &mut py_key, &mut value) != 0 {
+            while dict_typed.dict_next(&mut pos, &mut py_key, &mut value) {
                 idx += 1;
                 if idx <= orig_size {
                     continue;
                 }
-                if PyLong_Check(py_key) == 0 {
+                if !py::long::check(py_key) {
                     continue;
                 }
-                let key = PyLong_AsVoidPtr(py_key) as usize;
-                if key == 0 && !PyErr_Occurred().is_null() {
+                let key = py::long::as_ptr(py_key) as usize;
+                if key == 0 && !py::err::occurred().is_null() {
                     return -1;
                 }
                 let hash = hash_pointer(key);

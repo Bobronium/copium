@@ -1,12 +1,12 @@
 #![feature(thread_local)]
 #![feature(likely_unlikely)]
 
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_void, CStr};
 use pyo3_ffi::*;
 use std::hint::{likely, unlikely};
 use std::ptr;
 
-#[macro_use]
+mod py;
 mod ffi_ext;
 mod about;
 #[allow(dead_code)]
@@ -25,9 +25,9 @@ mod recursion;
 mod reduce;
 mod state;
 mod types;
-
+use crate::py::seq::PySeqPtr;
 use crate::memo::PyMemoObject;
-use crate::types::{py_dict_new, PyObjectPtr, PyTypeInfo, PyTypeObjectPtr};
+use crate::types::{py_dict_new, PyMapPtr, PyObjectPtr, PyTypeInfo, PyTypeObjectPtr};
 use memo::{AnyMemo, DictMemo};
 use state::{MemoMode, STATE};
 // ══════════════════════════════════════════════════════════════
@@ -50,25 +50,25 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
 ) -> *mut PyObject {
     unsafe {
         let mut obj: *mut PyObject = ptr::null_mut();
-        let mut memo_arg: *mut PyObject = Py_None();
+        let mut memo_arg: *mut PyObject = py::none();
 
         // ── Fast path: no keyword arguments ─────────────────
         let kwcount = if kwnames.is_null() {
             0
         } else {
-            PyTuple_Size(kwnames)
+            py::tuple::size(kwnames)
         };
 
         if likely(kwcount == 0) {
             if unlikely(nargs < 1) {
-                PyErr_SetString(
+                py::err::set_string(
                     PyExc_TypeError,
                     cstr!("deepcopy() missing 1 required positional argument: 'x'"),
                 );
                 return ptr::null_mut();
             }
             if unlikely(nargs > 2) {
-                PyErr_Format(
+                py::err::format!(
                     PyExc_TypeError,
                     cstr!("deepcopy() takes from 1 to 2 positional arguments but %zd were given"),
                     nargs,
@@ -82,7 +82,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
         } else {
             // ── Keyword argument handling ────────────────────
             if unlikely(nargs > 2) {
-                PyErr_Format(
+                py::err::format!(
                     PyExc_TypeError,
                     cstr!("deepcopy() takes from 1 to 2 positional arguments but %zd were given"),
                     nargs,
@@ -99,21 +99,21 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
 
             let mut seen_memo_kw = false;
             for i in 0..kwcount {
-                let name = PyTuple_GetItem(kwnames, i);
+                let name = py::tuple::get_item(kwnames, i);
                 let val = *args.offset(nargs + i);
 
-                if PyUnicode_CompareWithASCIIString(name, cstr!("x")) == 0 {
+                if py::unicode::compare_ascii(name, cstr!("x")) == 0 {
                     if !obj.is_null() {
-                        PyErr_SetString(
+                        py::err::set_string(
                             PyExc_TypeError,
                             cstr!("deepcopy() got multiple values for argument 'x'"),
                         );
                         return ptr::null_mut();
                     }
                     obj = val;
-                } else if PyUnicode_CompareWithASCIIString(name, cstr!("memo")) == 0 {
+                } else if py::unicode::compare_ascii(name, cstr!("memo")) == 0 {
                     if seen_memo_kw || nargs == 2 {
-                        PyErr_SetString(
+                        py::err::set_string(
                             PyExc_TypeError,
                             cstr!("deepcopy() got multiple values for argument 'memo'"),
                         );
@@ -122,7 +122,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
                     memo_arg = val;
                     seen_memo_kw = true;
                 } else {
-                    PyErr_Format(
+                    py::err::format!(
                         PyExc_TypeError,
                         cstr!("deepcopy() got an unexpected keyword argument '%U'"),
                         name,
@@ -132,7 +132,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
             }
 
             if unlikely(obj.is_null()) {
-                PyErr_SetString(
+                py::err::set_string(
                     PyExc_TypeError,
                     cstr!("deepcopy() missing 1 required positional argument: 'x'"),
                 );
@@ -141,7 +141,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
         }
 
         // ── Dispatch based on memo type ─────────────────────
-        if likely(memo_arg == Py_None()) {
+        if likely(memo_arg == py::none()) {
             let tp = obj.class();
             if tp.is_atomic_immutable() {
                 return obj.newref();
@@ -202,14 +202,14 @@ unsafe extern "C" fn py_replace(
 ) -> *mut PyObject {
     unsafe {
         if nargs == 0 {
-            PyErr_SetString(
+            py::err::set_string(
                 PyExc_TypeError,
                 cstr!("replace() missing 1 required positional argument: 'obj'"),
             );
             return ptr::null_mut();
         }
         if nargs > 1 {
-            PyErr_Format(
+            py::err::format!(
                 PyExc_TypeError,
                 cstr!("replace() takes 1 positional argument but %zd were given"),
                 nargs,
@@ -220,10 +220,10 @@ unsafe extern "C" fn py_replace(
         let obj = *args;
         let type_pointer = obj.class();
         let class_object = type_pointer as *mut PyObject;
-        let func = PyObject_GetAttrString(class_object, cstr!("__replace__"));
+        let func = class_object.getattr_cstr(cstr!("__replace__"));
         if func.is_null() {
-            PyErr_Clear();
-            PyErr_Format(
+            py::err::clear();
+            py::err::format!(
                 PyExc_TypeError,
                 cstr!("replace() does not support %.200s objects"),
                 (*type_pointer).tp_name,
@@ -231,34 +231,34 @@ unsafe extern "C" fn py_replace(
             return ptr::null_mut();
         }
 
-        let posargs = PyTuple_New(1);
+        let posargs = py::tuple::new(1);
         if posargs.is_null() {
             func.decref();
             return ptr::null_mut();
         }
-        PyTuple_SetItem(posargs, 0, obj.newref());
+        posargs.steal_item_unchecked(0, obj.newref());
 
         let mut kwargs: *mut PyObject = ptr::null_mut();
         let kwcount = if kwnames.is_null() {
             0
         } else {
-            PyTuple_Size(kwnames)
+            py::tuple::size(kwnames)
         };
         if kwcount > 0 {
-            kwargs = PyDict_New();
+            kwargs = py::dict::new().as_object();
             if kwargs.is_null() {
                 func.decref();
                 posargs.decref();
                 return ptr::null_mut();
             }
             for i in 0..kwcount {
-                let key = PyTuple_GetItem(kwnames, i);
+                let key = py::tuple::get_item(kwnames, i);
                 let val = *args.offset(nargs + i);
-                PyDict_SetItem(kwargs, key, val);
+                (kwargs as *mut PyDictObject).set_item(key, val);
             }
         }
 
-        let out = PyObject_Call(func, posargs, kwargs);
+        let out = func.call_with_kwargs(posargs, kwargs);
         func.decref();
         posargs.decref();
         kwargs.decref_nullable();
@@ -277,34 +277,35 @@ unsafe fn init_methods() {
         let mut i = 0usize;
 
         MAIN_METHODS[i] = PyMethodDef {
-            ml_name: cstr!("copy"),
+            ml_name: cstr!("copy").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunction: py_copy,
             },
             ml_flags: METH_O,
-            ml_doc: cstr!("copy(obj, /)\n--\n\nReturn a shallow copy of obj."),
+            ml_doc: cstr!("copy(obj, /)\n--\n\nReturn a shallow copy of obj.").as_ptr(),
         };
         i += 1;
 
         MAIN_METHODS[i] = PyMethodDef {
-            ml_name: cstr!("deepcopy"),
+            ml_name: cstr!("deepcopy").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunctionFastWithKeywords: py_deepcopy,
             },
             ml_flags: METH_FASTCALL | METH_KEYWORDS,
-            ml_doc: cstr!("deepcopy(x, memo=None, /)\n--\n\nReturn a deep copy of obj."),
+            ml_doc: cstr!("deepcopy(x, memo=None, /)\n--\n\nReturn a deep copy of obj.").as_ptr(),
         };
         i += 1;
 
         #[cfg(Py_3_13)]
         {
             MAIN_METHODS[i] = PyMethodDef {
-                ml_name: cstr!("replace"),
+                ml_name: cstr!("replace").as_ptr(),
                 ml_meth: PyMethodDefPointer {
                     PyCFunctionFastWithKeywords: py_replace,
                 },
                 ml_flags: METH_FASTCALL | METH_KEYWORDS,
-                ml_doc: cstr!("replace(obj, /, **changes)\n--\n\nReplace fields on a copy."),
+                ml_doc: cstr!("replace(obj, /, **changes)\n--\n\nReplace fields on a copy.")
+                    .as_ptr(),
             };
             i += 1;
         }
@@ -331,12 +332,12 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
             return -1;
         }
 
-        if PyModule_AddObject(module, cstr!("Error"), py_obj!("copy.Error").newref()) < 0 {
+        if py::module::add_object(module, cstr!("Error"), py_obj!("copy.Error").newref()) < 0 {
             return -1;
         }
 
         let memo_type = ptr::addr_of_mut!(memo::Memo_Type) as *mut PyObject;
-        if PyModule_AddObject(module, cstr!("memo"), memo_type.newref()) < 0 {
+        if py::module::add_object(module, cstr!("memo"), memo_type.newref()) < 0 {
             return -1;
         }
 
@@ -350,28 +351,28 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
             return -1;
         }
 
-        let config_module = PyObject_GetAttrString(module, cstr!("config"));
+        let config_module = module.getattr_cstr(cstr!("config"));
         if config_module.is_null() {
             return -1;
         }
 
-        let configure = PyObject_GetAttrString(config_module, cstr!("apply"));
+        let configure = config_module.getattr_cstr(cstr!("apply"));
         if configure.is_null() {
             config_module.decref();
             return -1;
         }
-        if PyModule_AddObject(module, cstr!("configure"), configure) < 0 {
+        if py::module::add_object(module, cstr!("configure"), configure) < 0 {
             config_module.decref();
             configure.decref();
             return -1;
         }
 
-        let get_config = PyObject_GetAttrString(config_module, cstr!("get"));
+        let get_config = config_module.getattr_cstr(cstr!("get"));
         config_module.decref();
         if get_config.is_null() {
             return -1;
         }
-        if PyModule_AddObject(module, cstr!("get_config"), get_config) < 0 {
+        if py::module::add_object(module, cstr!("get_config"), get_config) < 0 {
             get_config.decref();
             return -1;
         }
@@ -436,31 +437,29 @@ static mut MODULE_DEF: PyModuleDef = PyModuleDef {
 /// Register a submodule on the parent and in sys.modules.
 pub unsafe fn add_submodule(
     parent: *mut PyObject,
-    name: *const c_char,
+    name: &CStr,
     submodule: *mut PyObject,
 ) -> i32 {
     unsafe {
-        // Always register as "copium.<name>" regardless of internal module nesting
-        let canonical = PyUnicode_FromFormat(cstr!("copium.%s"), name);
+        let canonical = py::unicode::from_format!(cstr!("copium.%s"), name.as_ptr());
         if canonical.is_null() {
             submodule.decref();
             return -1;
         }
 
-        PyObject_SetAttrString(submodule, cstr!("__name__"), canonical);
+        submodule.set_attr_cstr(cstr!("__name__"), canonical);
 
-        let sys_modules = PyImport_GetModuleDict();
+        let sys_modules = py::module::get_module_dict();
         if !sys_modules.is_null() {
-            PyDict_SetItem(sys_modules, canonical, submodule);
+            sys_modules.set_item(canonical, submodule);
         }
 
-        // Also register under the actual parent name (e.g. orcopium.orcopium.extra)
-        let parent_name = PyModule_GetNameObject(parent);
+        let parent_name = py::module::get_name(parent);
         if !parent_name.is_null() {
-            let full_name = PyUnicode_FromFormat(cstr!("%U.%s"), parent_name, name);
+            let full_name = py::unicode::from_format!(cstr!("%U.%s"), parent_name, name.as_ptr());
             if !full_name.is_null() {
                 if !sys_modules.is_null() {
-                    PyDict_SetItem(sys_modules, full_name, submodule);
+                    sys_modules.set_item(full_name, submodule);
                 }
                 full_name.decref();
             }
@@ -468,7 +467,7 @@ pub unsafe fn add_submodule(
         }
         canonical.decref();
 
-        if PyModule_AddObject(parent, name, submodule) < 0 {
+        if py::module::add_object(parent, name, submodule) < 0 {
             submodule.decref();
             return -1;
         }
@@ -483,6 +482,6 @@ pub unsafe extern "C" fn PyInit_copium() -> *mut PyObject {
         init_methods();
         MODULE_DEF.m_methods = ptr::addr_of_mut!(MAIN_METHODS).cast::<PyMethodDef>();
         MODULE_DEF.m_slots = ptr::addr_of_mut!(MODULE_SLOTS).cast::<PyModuleDef_Slot>();
-        PyModuleDef_Init(std::ptr::addr_of_mut!(MODULE_DEF))
+        py::module::def_init(std::ptr::addr_of_mut!(MODULE_DEF))
     }
 }

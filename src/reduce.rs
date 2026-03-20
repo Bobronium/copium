@@ -4,8 +4,8 @@ use std::ptr;
 use pyo3_ffi::*;
 
 use crate::deepcopy;
-use crate::ffi_ext;
 use crate::memo::Memo;
+use crate::py;
 use crate::py_obj;
 use crate::py_str;
 use crate::types::*;
@@ -24,38 +24,30 @@ macro_rules! bail {
 
 pub(crate) unsafe fn chain_type_error(msg: *mut PyObject) {
     unsafe {
-        let mut cause_type: *mut PyObject = ptr::null_mut();
-        let mut cause_val: *mut PyObject = ptr::null_mut();
-        let mut cause_tb: *mut PyObject = ptr::null_mut();
-
-        #[allow(deprecated)]
-        PyErr_Fetch(&mut cause_type, &mut cause_val, &mut cause_tb);
+        let (mut cause_type, mut cause_val, mut cause_tb) = py::err::fetch();
 
         if !cause_val.is_null() {
-            #[allow(deprecated)]
-            PyErr_NormalizeException(&mut cause_type, &mut cause_val, &mut cause_tb);
+            py::err::normalize(&mut cause_type, &mut cause_val, &mut cause_tb);
         }
 
         let new_exc = PyExc_TypeError.call_one(msg);
         msg.decref();
 
         if new_exc.is_null() {
-            #[allow(deprecated)]
-            PyErr_Restore(cause_type, cause_val, cause_tb);
+            py::err::restore(cause_type, cause_val, cause_tb);
             return;
         }
 
         if !cause_val.is_null() {
-            PyException_SetCause(cause_val, new_exc);
-            #[allow(deprecated)]
-            PyErr_Restore(cause_type, cause_val, cause_tb);
+            py::err::set_cause(cause_val, new_exc);
+            py::err::restore(cause_type, cause_val, cause_tb);
             return;
         }
 
         cause_type.decref_nullable();
         cause_tb.decref_nullable();
 
-        PyErr_SetObject(PyExc_TypeError, new_exc);
+        py::err::set(PyExc_TypeError, new_exc);
         new_exc.decref();
     }
 }
@@ -72,7 +64,7 @@ pub(crate) unsafe fn try_reduce_via_registry(
             return ptr::null_mut();
         }
         if !reducer.is_callable() {
-            PyErr_SetString(
+            py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("copyreg.dispatch_table value is not callable"),
             );
@@ -87,7 +79,7 @@ pub(crate) unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mu
         let mut reduce_ex: *mut PyObject = ptr::null_mut();
         let has = obj.get_optional_attr(py_str!("__reduce_ex__"), &mut reduce_ex);
         if has > 0 {
-            let four = PyLong_FromLong(4);
+            let four = py::long::from_i64(4).as_object();
             let res = reduce_ex.call_one(four);
             four.decref();
             reduce_ex.decref();
@@ -106,7 +98,7 @@ pub(crate) unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mu
         if has < 0 {
             return ptr::null_mut();
         }
-        PyErr_SetString(
+        py::err::set_string(
             py_obj!("copy.Error"),
             crate::cstr!("un(deep)copyable object (no reduce protocol)"),
         );
@@ -147,7 +139,7 @@ pub(crate) unsafe fn validate_reduce_tuple(
             if reduce_result.is_unicode() || reduce_result.is_bytes() {
                 return (ReduceKind::String, empty);
             }
-            PyErr_SetString(
+            py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("__reduce__ must return a tuple or str"),
             );
@@ -157,7 +149,7 @@ pub(crate) unsafe fn validate_reduce_tuple(
         let tup = reduce_result as *mut PyTupleObject;
         let size = tup.length();
         if size < 2 || size > 5 {
-            PyErr_SetString(
+            py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("tuple returned by __reduce__ must contain 2 through 5 elements"),
             );
@@ -166,7 +158,7 @@ pub(crate) unsafe fn validate_reduce_tuple(
 
         let callable = tup.get_borrowed_unchecked(0);
         let mut argtup = tup.get_borrowed_unchecked(1);
-        let none = ffi_ext::Py_None();
+        let none = py::none();
         let state_raw = if size >= 3 {
             tup.get_borrowed_unchecked(2)
         } else {
@@ -184,9 +176,9 @@ pub(crate) unsafe fn validate_reduce_tuple(
         };
 
         if !argtup.is_tuple() {
-            let coerced = PySequence_Tuple(argtup);
+            let coerced = py::seq::to_tuple(argtup).as_object();
             if coerced.is_null() {
-                let msg = ffi_ext::PyUnicode_FromFormat(
+                let msg = py::unicode::from_format!(
                     crate::cstr!(
                         "second element of the tuple returned by %s.__reduce__ must be a tuple, not %.200s"
                     ),
@@ -194,7 +186,7 @@ pub(crate) unsafe fn validate_reduce_tuple(
                     (*argtup.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg);
+                    chain_type_error(msg.as_object());
                 }
                 return (ReduceKind::Error, empty);
             }
@@ -240,7 +232,7 @@ unsafe fn call_tp_new(
         match (*cls).tp_new {
             Some(f) => f(cls, args, kwargs),
             None => {
-                ffi_ext::PyErr_Format(
+                py::err::format!(
                     PyExc_TypeError,
                     crate::cstr!("cannot create '%.200s' instances: tp_new is NULL"),
                     (*cls).tp_name,
@@ -256,7 +248,7 @@ unsafe fn reconstruct_newobj<M: Memo>(argtup: *mut PyObject, memo: &mut M) -> *m
         let tup = argtup as *mut PyTupleObject;
         let nargs = tup.length();
         if nargs < 1 {
-            PyErr_SetString(
+            py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("__newobj__ requires at least 1 argument"),
             );
@@ -265,7 +257,7 @@ unsafe fn reconstruct_newobj<M: Memo>(argtup: *mut PyObject, memo: &mut M) -> *m
 
         let cls = tup.get_borrowed_unchecked(0);
         if !cls.is_type() {
-            ffi_ext::PyErr_Format(
+            py::err::format!(
                 PyExc_TypeError,
                 crate::cstr!("__newobj__ arg 1 must be a type, not %.200s"),
                 (*cls.class()).tp_name,
@@ -299,7 +291,7 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
     unsafe {
         let tup = argtup as *mut PyTupleObject;
         if tup.length() != 3 {
-            ffi_ext::PyErr_Format(
+            py::err::format!(
                 PyExc_TypeError,
                 crate::cstr!("__newobj_ex__ requires 3 arguments, got %zd"),
                 tup.length(),
@@ -312,7 +304,7 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
         let mut kwargs = tup.get_borrowed_unchecked(2);
 
         if !cls.is_type() {
-            ffi_ext::PyErr_Format(
+            py::err::format!(
                 PyExc_TypeError,
                 crate::cstr!("__newobj_ex__ arg 1 must be a type, not %.200s"),
                 (*cls.class()).tp_name,
@@ -324,9 +316,9 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
         let mut coerced_kwargs: *mut PyDictObject = ptr::null_mut();
 
         if !args.is_tuple() {
-            coerced_args = PySequence_Tuple(args);
+            coerced_args = py::seq::to_tuple(args).as_object();
             if coerced_args.is_null() {
-                let msg = ffi_ext::PyUnicode_FromFormat(
+                let msg = py::unicode::from_format!(
                     crate::cstr!(
                         "__newobj_ex__ args in %s.__reduce__ result must be a tuple, not %.200s"
                     ),
@@ -334,7 +326,7 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
                     (*args.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg);
+                    chain_type_error(msg.as_object());
                 }
                 return ptr::null_mut();
             }
@@ -347,8 +339,8 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
                 coerced_args.decref_nullable();
                 return ptr::null_mut();
             }
-            if coerced_kwargs.merge(kwargs, 1) < 0 {
-                let msg = ffi_ext::PyUnicode_FromFormat(
+            if coerced_kwargs.merge(kwargs, true) < 0 {
+                let msg = py::unicode::from_format!(
                     crate::cstr!(
                         "__newobj_ex__ kwargs in %s.__reduce__ result must be a dict, not %.200s"
                     ),
@@ -356,7 +348,7 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
                     (*kwargs.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg);
+                    chain_type_error(msg.as_object());
                 }
                 coerced_args.decref_nullable();
                 coerced_kwargs.decref();
@@ -476,10 +468,10 @@ unsafe fn apply_dict_state<M: Memo>(
                 copied.decref();
                 return -1;
             }
-            let ret = (instance_dict as *mut PyDictObject).merge(copied, 1);
+            let ret = (instance_dict as *mut PyDictObject).merge(copied, true);
             instance_dict.decref();
             if ret < 0 {
-                let msg = ffi_ext::PyUnicode_FromFormat(
+                let msg = py::unicode::from_format!(
                     crate::cstr!(
                         "dict state from %s.__reduce__ must be a dict or mapping, got %.200s"
                     ),
@@ -487,7 +479,7 @@ unsafe fn apply_dict_state<M: Memo>(
                     (*copied.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg);
+                    chain_type_error(msg.as_object());
                 }
             }
             copied.decref();
@@ -505,7 +497,7 @@ unsafe fn apply_dict_state<M: Memo>(
         let mut pos: Py_ssize_t = 0;
         let mut ret: c_int = 0;
 
-        while (copied as *mut PyDictObject).dict_next(&mut pos, &mut key, &mut value) != 0 {
+        while (copied as *mut PyDictObject).dict_next(&mut pos, &mut key, &mut value) {
             if instance_dict.setitem(key, value) < 0 {
                 ret = -1;
                 break;
@@ -537,7 +529,7 @@ unsafe fn apply_slot_state<M: Memo>(
         if !copied.is_dict() {
             let items_attr = copied.getattr_cstr(crate::cstr!("items"));
             if items_attr.is_null() {
-                let msg = ffi_ext::PyUnicode_FromFormat(
+                let msg = py::unicode::from_format!(
                     crate::cstr!(
                         "slot state from %s.__reduce__ must be a dict or have an items() method, got %.200s"
                     ),
@@ -545,7 +537,7 @@ unsafe fn apply_slot_state<M: Memo>(
                     (*copied.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg);
+                    chain_type_error(msg.as_object());
                 }
                 copied.decref();
                 return -1;
@@ -569,16 +561,16 @@ unsafe fn apply_slot_state<M: Memo>(
                 if pair.is_null() {
                     break;
                 }
-                let seq = ffi_ext::PySequence_Fast(pair, crate::cstr!("items() must return pairs"));
+                let seq = py::seq::fast(pair, crate::cstr!("items() must return pairs"));
                 pair.decref();
                 if seq.is_null() {
                     ret = -1;
                     break;
                 }
-                if ffi_ext::PySequence_Fast_GET_SIZE(seq) != 2 {
+                if py::seq::fast_length(seq) != 2 {
                     seq.decref();
-                    if PyErr_Occurred().is_null() {
-                        PyErr_SetString(
+                    if py::err::occurred().is_null() {
+                        py::err::set_string(
                             PyExc_ValueError,
                             crate::cstr!("not enough values to unpack"),
                         );
@@ -586,8 +578,8 @@ unsafe fn apply_slot_state<M: Memo>(
                     ret = -1;
                     break;
                 }
-                let k = ffi_ext::PySequence_Fast_GET_ITEM(seq, 0);
-                let v = ffi_ext::PySequence_Fast_GET_ITEM(seq, 1);
+                let k = py::seq::fast_borrow_item_unchecked(seq, 0);
+                let v = py::seq::fast_borrow_item_unchecked(seq, 1);
                 let rc = instance.set_attr(k, v);
                 seq.decref();
                 if rc < 0 {
@@ -595,7 +587,7 @@ unsafe fn apply_slot_state<M: Memo>(
                     break;
                 }
             }
-            if ret == 0 && !PyErr_Occurred().is_null() {
+            if ret == 0 && !py::err::occurred().is_null() {
                 ret = -1;
             }
             iterator.decref();
@@ -607,7 +599,7 @@ unsafe fn apply_slot_state<M: Memo>(
         let mut pos: Py_ssize_t = 0;
         let mut ret: c_int = 0;
 
-        while (copied as *mut PyDictObject).dict_next(&mut pos, &mut key, &mut value) != 0 {
+        while (copied as *mut PyDictObject).dict_next(&mut pos, &mut key, &mut value) {
             if instance.set_attr(key, value) < 0 {
                 ret = -1;
                 break;
@@ -687,7 +679,7 @@ unsafe fn apply_listitems<M: Memo>(
             result.decref();
         }
 
-        if ret == 0 && !PyErr_Occurred().is_null() {
+        if ret == 0 && !py::err::occurred().is_null() {
             ret = -1;
         }
         iterator.decref();
@@ -724,25 +716,24 @@ unsafe fn apply_dictitems<M: Memo>(
                 key = ptup.get_borrowed_unchecked(0).newref();
                 value = ptup.get_borrowed_unchecked(1).newref();
             } else {
-                let seq =
-                    ffi_ext::PySequence_Fast(pair, crate::cstr!("cannot unpack non-sequence"));
+                let seq = py::seq::fast(pair, crate::cstr!("cannot unpack non-sequence"));
                 if seq.is_null() {
                     pair.decref();
                     ret = -1;
                     break;
                 }
-                let n = ffi_ext::PySequence_Fast_GET_SIZE(seq);
+                let n = py::seq::fast_length(seq);
                 if n != 2 {
                     seq.decref();
                     pair.decref();
                     if n < 2 {
-                        ffi_ext::PyErr_Format(
+                        py::err::format!(
                             PyExc_ValueError,
                             crate::cstr!("not enough values to unpack (expected 2, got %zd)"),
                             n,
                         );
                     } else {
-                        ffi_ext::PyErr_Format(
+                        py::err::format!(
                             PyExc_ValueError,
                             crate::cstr!("too many values to unpack (expected 2, got %zd)"),
                             n,
@@ -751,8 +742,8 @@ unsafe fn apply_dictitems<M: Memo>(
                     ret = -1;
                     break;
                 }
-                key = ffi_ext::PySequence_Fast_GET_ITEM(seq, 0).newref();
-                value = ffi_ext::PySequence_Fast_GET_ITEM(seq, 1).newref();
+                key = py::seq::fast_borrow_item_unchecked(seq, 0).newref();
+                value = py::seq::fast_borrow_item_unchecked(seq, 1).newref();
                 seq.decref();
             }
             pair.decref();
@@ -784,7 +775,7 @@ unsafe fn apply_dictitems<M: Memo>(
             }
         }
 
-        if ret == 0 && !PyErr_Occurred().is_null() {
+        if ret == 0 && !py::err::occurred().is_null() {
             ret = -1;
         }
         iterator.decref();
@@ -803,7 +794,7 @@ pub unsafe fn reconstruct<M: Memo>(
     unsafe {
         let mut reduce_result = try_reduce_via_registry(original, tp);
         if reduce_result.is_null() {
-            if !PyErr_Occurred().is_null() {
+            if !py::err::occurred().is_null() {
                 return ptr::null_mut();
             }
             reduce_result = call_reduce_method_preferring_ex(original);

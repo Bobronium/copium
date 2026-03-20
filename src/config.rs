@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use pyo3_ffi::PyObject;
 
+use crate::py;
 use crate::state::{MemoMode, OnIncompatible, STATE};
 use crate::types::PyObjectPtr;
 
@@ -112,19 +113,19 @@ fn apply(
     if let Some(suppress_warnings_object) = suppress_warnings {
         unsafe {
             let new_tuple = if suppress_warnings_object.is_none() {
-                pyo3_ffi::PyTuple_New(0)
+                py::tuple::new(0).as_object()
             } else {
-                pyo3_ffi::PySequence_Tuple(suppress_warnings_object.as_ptr())
+                py::seq::to_tuple(suppress_warnings_object.as_ptr()).as_object()
             };
             if new_tuple.is_null() {
                 return Err(PyErr::take(py)
                     .unwrap_or_else(|| PyRuntimeError::new_err("PySequence_Tuple failed")));
             }
 
-            let suppress_warning_count = pyo3_ffi::PyTuple_Size(new_tuple);
+            let suppress_warning_count = py::tuple::size(new_tuple);
             for index in 0..suppress_warning_count {
-                let item = pyo3_ffi::PyTuple_GetItem(new_tuple, index);
-                if pyo3_ffi::PyUnicode_Check(item) == 0 {
+                let item = py::tuple::get_item(new_tuple, index);
+                if !item.is_unicode() {
                     let item_type_name = Bound::<PyAny>::from_borrowed_ptr(py, item)
                         .get_type()
                         .name()
@@ -178,7 +179,7 @@ fn get(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
         if !ignored_errors.is_null() {
             ignored_errors.newref()
         } else {
-            pyo3_ffi::PyTuple_New(0)
+            py::tuple::new(0).as_object()
         }
     };
     let sw_obj = unsafe { Bound::from_owned_ptr(py, sw) }.cast_into::<pyo3::types::PyTuple>()?;

@@ -5,6 +5,7 @@ use std::ptr;
 use crate::critical_section::with_critical_section_raw;
 use crate::dict_iter::DictIterGuard;
 use crate::memo::Memo;
+use crate::py;
 use crate::{ffi_ext::*, py_str};
 
 use crate::types::*;
@@ -111,7 +112,7 @@ pub unsafe fn deepcopy<M: Memo>(object: *mut PyObject, memo: &mut M) -> PyResult
         if !found.is_null() {
             return PyResult::ok(found);
         }
-        if M::RECALL_CAN_ERROR && unlikely(!PyErr_Occurred().is_null()) {
+        if M::RECALL_CAN_ERROR && unlikely(!crate::py::err::occurred().is_null()) {
             return PyResult::error();
         }
 
@@ -167,7 +168,7 @@ impl PyDeepCopy for *mut PyListObject {
             for i in 0..sz {
                 let item = self.get_owned_check_bounds(i);
                 if unlikely(item.is_null()) {
-                    PyErr_SetString(
+                    py::err::set_string(
                         PyExc_RuntimeError,
                         crate::cstr!("list changed size during iteration"),
                     );
@@ -200,7 +201,7 @@ impl PyDeepCopy for *mut PyListObject {
                 });
                 if unlikely(size_changed) {
                     raw.decref();
-                    PyErr_SetString(
+                    py::err::set_string(
                         PyExc_RuntimeError,
                         crate::cstr!("list changed size during iteration"),
                     );
@@ -329,7 +330,7 @@ impl PyDeepCopy for *mut PySetObject {
                 let mut pos: Py_ssize_t = 0;
                 let mut item: *mut PyObject = ptr::null_mut();
                 let mut hash: Py_hash_t = 0;
-                while self.next_entry(&mut pos, &mut item, &mut hash) != 0 {
+                while self.next_entry(&mut pos, &mut item, &mut hash) {
                     item.incref();
                     snapshot.set_slot_steal_unchecked(i, item);
                     i += 1;
@@ -395,7 +396,7 @@ impl PyDeepCopy for *mut PyFrozensetObject {
             let mut item: *mut PyObject = ptr::null_mut();
             let mut hash: Py_hash_t = 0;
             let mut i: Py_ssize_t = 0;
-            while self.next_entry(&mut pos, &mut item, &mut hash) != 0 {
+            while self.next_entry(&mut pos, &mut item, &mut hash) {
                 item.incref();
                 snapshot.set_slot_steal_unchecked(i, item);
                 i += 1;

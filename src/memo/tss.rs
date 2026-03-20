@@ -1,10 +1,10 @@
-use pyo3_ffi::*;
 use std::ffi::c_void;
 use std::hint::{likely, unlikely};
 use std::ptr;
 
 use super::native::PyMemoObject;
 use super::pytype::Memo_Type;
+use crate::py;
 use crate::types::PyObjectPtr;
 
 #[thread_local]
@@ -12,7 +12,7 @@ static mut TSS_MEMO: *mut PyMemoObject = ptr::null_mut();
 
 pub unsafe fn pymemo_alloc() -> *mut PyMemoObject {
     unsafe {
-        let memo = PyObject_GC_New::<PyMemoObject>(ptr::addr_of_mut!(Memo_Type));
+        let memo = py::gc::new::<PyMemoObject>(ptr::addr_of_mut!(Memo_Type));
         if memo.is_null() {
             return ptr::null_mut();
         }
@@ -60,7 +60,7 @@ pub unsafe fn cleanup_memo(memo: *mut PyMemoObject, is_tss: bool) {
             }
         }
 
-        PyObject_GC_Track(memo as *mut c_void);
+        py::gc::track(memo as *mut c_void);
         memo.decref();
     }
 }

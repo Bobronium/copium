@@ -1,7 +1,8 @@
 use crate::deepcopy::PyResult;
+use crate::py;
 use crate::reduce::{self, ReduceKind};
 use crate::types::*;
-use crate::{ffi_ext, py_str};
+use crate::{py_str};
 use pyo3_ffi::*;
 use std::os::raw::c_int;
 use std::ptr;
@@ -154,10 +155,10 @@ unsafe fn apply_dict_state(instance: *mut PyObject, dict_state: *mut PyObject) -
                 return -1;
             }
 
-            let result = (instance_dict as *mut PyDictObject).merge(dict_state, 1);
+            let result = (instance_dict as *mut PyDictObject).merge(dict_state, true);
             instance_dict.decref();
             if result < 0 {
-                let message = ffi_ext::PyUnicode_FromFormat(
+                let message = py::unicode::from_format!(
                     crate::cstr!(
                         "dict state from %s.__reduce__ must be a dict or mapping, got %.200s"
                     ),
@@ -165,7 +166,7 @@ unsafe fn apply_dict_state(instance: *mut PyObject, dict_state: *mut PyObject) -
                     (*dict_state.class()).tp_name,
                 );
                 if !message.is_null() {
-                    reduce::chain_type_error(message);
+                    reduce::chain_type_error(message.as_object());
                 }
             }
             return result;
@@ -181,7 +182,7 @@ unsafe fn apply_dict_state(instance: *mut PyObject, dict_state: *mut PyObject) -
         let mut position: Py_ssize_t = 0;
         let mut result: c_int = 0;
 
-        while (dict_state as *mut PyDictObject).dict_next(&mut position, &mut key, &mut value) != 0
+        while (dict_state as *mut PyDictObject).dict_next(&mut position, &mut key, &mut value)
         {
             if instance_dict.setitem(key, value) < 0 {
                 result = -1;
@@ -203,7 +204,7 @@ unsafe fn apply_slot_state(instance: *mut PyObject, slot_state: *mut PyObject) -
         if !slot_state.is_dict() {
             let items_attribute = slot_state.getattr_cstr(crate::cstr!("items"));
             if items_attribute.is_null() {
-                let message = ffi_ext::PyUnicode_FromFormat(
+                let message = py::unicode::from_format!(
                     crate::cstr!(
                         "slot state from %s.__reduce__ must be a dict or have an items() method, got %.200s"
                     ),
@@ -211,7 +212,7 @@ unsafe fn apply_slot_state(instance: *mut PyObject, slot_state: *mut PyObject) -
                     (*slot_state.class()).tp_name,
                 );
                 if !message.is_null() {
-                    reduce::chain_type_error(message);
+                    reduce::chain_type_error(message.as_object());
                 }
                 return -1;
             }
@@ -235,18 +236,17 @@ unsafe fn apply_slot_state(instance: *mut PyObject, slot_state: *mut PyObject) -
                     break;
                 }
 
-                let sequence =
-                    ffi_ext::PySequence_Fast(pair, crate::cstr!("items() must return pairs"));
+                let sequence = py::seq::fast(pair, crate::cstr!("items() must return pairs"));
                 pair.decref();
                 if sequence.is_null() {
                     result = -1;
                     break;
                 }
 
-                if ffi_ext::PySequence_Fast_GET_SIZE(sequence) != 2 {
+                if py::seq::fast_length(sequence) != 2 {
                     sequence.decref();
-                    if PyErr_Occurred().is_null() {
-                        PyErr_SetString(
+                    if py::err::occurred().is_null() {
+                        py::err::set_string(
                             PyExc_ValueError,
                             crate::cstr!("not enough values to unpack"),
                         );
@@ -255,8 +255,8 @@ unsafe fn apply_slot_state(instance: *mut PyObject, slot_state: *mut PyObject) -
                     break;
                 }
 
-                let key = ffi_ext::PySequence_Fast_GET_ITEM(sequence, 0);
-                let value = ffi_ext::PySequence_Fast_GET_ITEM(sequence, 1);
+                let key = py::seq::fast_borrow_item_unchecked(sequence, 0);
+                let value = py::seq::fast_borrow_item_unchecked(sequence, 1);
                 let set_result = instance.set_attr(key, value);
                 sequence.decref();
                 if set_result < 0 {
@@ -265,7 +265,7 @@ unsafe fn apply_slot_state(instance: *mut PyObject, slot_state: *mut PyObject) -
                 }
             }
 
-            if result == 0 && !PyErr_Occurred().is_null() {
+            if result == 0 && !py::err::occurred().is_null() {
                 result = -1;
             }
             iterator.decref();
@@ -277,7 +277,7 @@ unsafe fn apply_slot_state(instance: *mut PyObject, slot_state: *mut PyObject) -
         let mut position: Py_ssize_t = 0;
         let mut result: c_int = 0;
 
-        while (slot_state as *mut PyDictObject).dict_next(&mut position, &mut key, &mut value) != 0
+        while (slot_state as *mut PyDictObject).dict_next(&mut position, &mut key, &mut value)
         {
             if instance.set_attr(key, value) < 0 {
                 result = -1;
@@ -340,7 +340,7 @@ unsafe fn apply_listitems(instance: *mut PyObject, listitems: *mut PyObject) -> 
             append_result.decref();
         }
 
-        if result == 0 && !PyErr_Occurred().is_null() {
+        if result == 0 && !py::err::occurred().is_null() {
             result = -1;
         }
         iterator.decref();
@@ -374,26 +374,25 @@ unsafe fn apply_dictitems(instance: *mut PyObject, dictitems: *mut PyObject) -> 
                     pair_tuple.get_borrowed_unchecked(1).newref(),
                 )
             } else {
-                let sequence =
-                    ffi_ext::PySequence_Fast(pair, crate::cstr!("cannot unpack non-sequence"));
+                let sequence = py::seq::fast(pair, crate::cstr!("cannot unpack non-sequence"));
                 if sequence.is_null() {
                     pair.decref();
                     result = -1;
                     break;
                 }
 
-                let item_count = ffi_ext::PySequence_Fast_GET_SIZE(sequence);
+                let item_count = py::seq::fast_length(sequence);
                 if item_count != 2 {
                     sequence.decref();
                     pair.decref();
                     if item_count < 2 {
-                        ffi_ext::PyErr_Format(
+                        py::err::format!(
                             PyExc_ValueError,
                             crate::cstr!("not enough values to unpack (expected 2, got %zd)"),
                             item_count,
                         );
                     } else {
-                        ffi_ext::PyErr_Format(
+                        py::err::format!(
                             PyExc_ValueError,
                             crate::cstr!("too many values to unpack (expected 2, got %zd)"),
                             item_count,
@@ -403,8 +402,8 @@ unsafe fn apply_dictitems(instance: *mut PyObject, dictitems: *mut PyObject) -> 
                     break;
                 }
 
-                let key = ffi_ext::PySequence_Fast_GET_ITEM(sequence, 0).newref();
-                let value = ffi_ext::PySequence_Fast_GET_ITEM(sequence, 1).newref();
+                let key = py::seq::fast_borrow_item_unchecked(sequence, 0).newref();
+                let value = py::seq::fast_borrow_item_unchecked(sequence, 1).newref();
                 sequence.decref();
                 (key, value)
             };
@@ -419,7 +418,7 @@ unsafe fn apply_dictitems(instance: *mut PyObject, dictitems: *mut PyObject) -> 
             }
         }
 
-        if result == 0 && !PyErr_Occurred().is_null() {
+        if result == 0 && !py::err::occurred().is_null() {
             result = -1;
         }
         iterator.decref();
@@ -458,7 +457,7 @@ unsafe fn copy_via_reduce(object: *mut PyObject) -> PyResult {
 
         let mut reduce_result = reduce::try_reduce_via_registry(object, class);
         if reduce_result.is_null() {
-            if !PyErr_Occurred().is_null() {
+            if !crate::py::err::occurred().is_null() {
                 return PyResult::error();
             }
 

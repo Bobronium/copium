@@ -1,7 +1,10 @@
 use pyo3_ffi::*;
 use std::ptr;
 
-use crate::types::PyObjectPtr;
+use crate::cstr;
+use crate::py;
+use crate::types::{PyObjectPtr, PySeqPtr};
+use crate::py::unicode::PyUnicodePtr;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -42,7 +45,7 @@ pub unsafe fn init() -> i32 {
     unsafe {
         let s = std::ptr::addr_of_mut!(STATE);
 
-        (*s).sentinel = PyList_New(0);
+        (*s).sentinel = py::list::new(0).as_object();
         if (*s).sentinel.is_null() {
             return -1;
         }
@@ -57,7 +60,7 @@ unsafe fn parse_ignored_errors_from_environment() -> *mut PyObject {
     unsafe {
         let environment_value = match std::env::var("COPIUM_NO_MEMO_FALLBACK_WARNING") {
             Ok(value) if !value.is_empty() => value,
-            _ => return PyTuple_New(0),
+            _ => return py::tuple::new(0).as_object(),
         };
 
         let ignored_error_parts: Vec<&str> = environment_value
@@ -65,29 +68,22 @@ unsafe fn parse_ignored_errors_from_environment() -> *mut PyObject {
             .filter(|part| !part.is_empty())
             .collect();
 
-        let tuple = PyTuple_New(ignored_error_parts.len() as isize);
+        let tuple = py::tuple::new(ignored_error_parts.len() as isize);
         if tuple.is_null() {
             return ptr::null_mut();
         }
 
         for (index, ignored_error_part) in ignored_error_parts.iter().enumerate() {
-            let item = PyUnicode_FromStringAndSize(
-                ignored_error_part.as_ptr() as *const core::ffi::c_char,
-                ignored_error_part.len() as isize,
-            );
+            let item = py::unicode::from_str_and_size(ignored_error_part);
             if item.is_null() {
                 tuple.decref();
                 return ptr::null_mut();
             }
 
-            if PyTuple_SetItem(tuple, index as isize, item) < 0 {
-                item.decref();
-                tuple.decref();
-                return ptr::null_mut();
-            }
+            tuple.steal_item_unchecked(index as isize, item.as_object());
         }
 
-        tuple
+        tuple.as_object()
     }
 }
 
@@ -102,13 +98,13 @@ pub unsafe fn update_suppress_warnings(new_tuple: *mut PyObject) -> i32 {
         (*s).ignored_errors_joined.decref_nullable();
         (*s).ignored_errors_joined = ptr::null_mut();
 
-        if PyTuple_GET_SIZE(new_tuple) > 0 {
-            let separator = PyUnicode_FromString(cstr!("::"));
+        if (new_tuple as *mut PyTupleObject).length() > 0 {
+            let separator = py::unicode::from_cstr(cstr!("::"));
             if separator.is_null() {
                 return -1;
             }
 
-            (*s).ignored_errors_joined = PyUnicode_Join(separator, new_tuple);
+            (*s).ignored_errors_joined = separator.join(new_tuple).as_object();
             separator.decref();
             if (*s).ignored_errors_joined.is_null() {
                 return -1;

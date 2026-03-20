@@ -3,9 +3,10 @@ use std::ffi::c_void;
 use std::ptr;
 
 use super::native::PyMemoObject;
-use crate::ffi_ext::PyUnicode_FromFormat;
+use crate::cstr;
 use crate::memo::table::{hash_pointer, TOMBSTONE};
-use crate::types::{PyObjectPtr, PyObjectSlotPtr};
+use crate::py;
+use crate::types::{PyMapPtr, PyObjectPtr, PyObjectSlotPtr};
 
 #[allow(non_upper_case_globals)]
 pub static mut Memo_Type: PyTypeObject = unsafe { std::mem::zeroed() };
@@ -29,13 +30,13 @@ static mut KEEPALIVE_LIST_METHODS_TABLE: [PyMethodDef; 3] = unsafe { std::mem::z
 
 unsafe fn keepalive_list_new(owner: *mut PyMemoObject) -> *mut PyObject {
     unsafe {
-        let obj = PyObject_GC_New::<PyKeepaliveListObject>(ptr::addr_of_mut!(KEEPALIVE_LIST_TYPE));
+        let obj = py::gc::new::<PyKeepaliveListObject>(ptr::addr_of_mut!(KEEPALIVE_LIST_TYPE));
         if obj.is_null() {
             return ptr::null_mut();
         }
         (*obj).owner = owner;
         (owner as *mut PyObject).incref();
-        PyObject_GC_Track(obj as *mut c_void);
+        py::gc::track(obj as *mut c_void);
         obj as *mut PyObject
     }
 }
@@ -59,9 +60,9 @@ pub(super) unsafe fn memo_keepalive_proxy(self_: *mut PyMemoObject) -> *mut PyOb
 unsafe extern "C" fn keepalive_list_dealloc(obj: *mut PyObject) {
     unsafe {
         let self_ = obj as *mut PyKeepaliveListObject;
-        PyObject_GC_UnTrack(self_ as *mut c_void);
+        py::gc::untrack(self_ as *mut c_void);
         ((*self_).owner as *mut PyObject).decref_nullable();
-        PyObject_GC_Del(self_ as *mut c_void);
+        py::gc::delete(self_ as *mut c_void);
     }
 }
 
@@ -104,7 +105,7 @@ unsafe extern "C" fn keepalive_list_getitem(
     unsafe {
         let self_ = obj as *mut PyKeepaliveListObject;
         if (*self_).owner.is_null() {
-            PyErr_SetString(PyExc_SystemError, cstr!("keepalive has no owner"));
+            py::err::set_string(PyExc_SystemError, cstr!("keepalive has no owner"));
             return ptr::null_mut();
         }
 
@@ -115,7 +116,7 @@ unsafe extern "C" fn keepalive_list_getitem(
             i += n;
         }
         if i < 0 || i >= n {
-            PyErr_SetString(PyExc_IndexError, cstr!("index out of range"));
+            py::err::set_string(PyExc_IndexError, cstr!("index out of range"));
             return ptr::null_mut();
         }
 
@@ -127,23 +128,23 @@ unsafe extern "C" fn keepalive_list_iter(obj: *mut PyObject) -> *mut PyObject {
     unsafe {
         let self_ = obj as *mut PyKeepaliveListObject;
         if (*self_).owner.is_null() {
-            PyErr_SetString(PyExc_SystemError, cstr!("keepalive has no owner"));
+            py::err::set_string(PyExc_SystemError, cstr!("keepalive has no owner"));
             return ptr::null_mut();
         }
 
         let items = &(*(*self_).owner).keepalive.items;
         let n = items.len() as Py_ssize_t;
-        let list = PyList_New(n);
+        let list = py::list::new(n);
         if list.is_null() {
             return ptr::null_mut();
         }
 
         for (i, &item) in items.iter().enumerate() {
             item.incref();
-            PyList_SetItem(list, i as Py_ssize_t, item);
+            py::list::set_item(list, i as Py_ssize_t, item);
         }
 
-        let it = PyObject_GetIter(list);
+        let it = list.get_iter();
         list.decref();
         it
     }
@@ -151,16 +152,16 @@ unsafe extern "C" fn keepalive_list_iter(obj: *mut PyObject) -> *mut PyObject {
 
 unsafe extern "C" fn keepalive_list_repr(obj: *mut PyObject) -> *mut PyObject {
     unsafe {
-        let list = PySequence_List(obj);
+        let list = py::seq::to_list(obj).as_object();
         if list.is_null() {
             return ptr::null_mut();
         }
-        let inner = PyObject_Repr(list);
+        let inner = list.repr().as_object();
         list.decref();
         if inner.is_null() {
             return ptr::null_mut();
         }
-        let wrapped = PyUnicode_FromFormat(cstr!("keepalive(%U)"), inner);
+        let wrapped = py::unicode::from_format!(cstr!("keepalive(%U)"), inner).as_object();
         inner.decref();
         wrapped
     }
@@ -173,11 +174,11 @@ unsafe extern "C" fn keepalive_list_append(
     unsafe {
         let self_ = obj as *mut PyKeepaliveListObject;
         if (*self_).owner.is_null() {
-            PyErr_SetString(PyExc_SystemError, cstr!("keepalive has no owner"));
+            py::err::set_string(PyExc_SystemError, cstr!("keepalive has no owner"));
             return ptr::null_mut();
         }
         (*(*self_).owner).keepalive.append(arg);
-        Py_None().newref()
+        py::none().newref()
     }
 }
 
@@ -188,18 +189,18 @@ unsafe extern "C" fn keepalive_list_clear_py(
     unsafe {
         let self_ = obj as *mut PyKeepaliveListObject;
         if (*self_).owner.is_null() {
-            PyErr_SetString(PyExc_SystemError, cstr!("keepalive has no owner"));
+            py::err::set_string(PyExc_SystemError, cstr!("keepalive has no owner"));
             return ptr::null_mut();
         }
         (*(*self_).owner).keepalive.clear();
-        Py_None().newref()
+        py::none().newref()
     }
 }
 
 unsafe fn init_keepalive_methods() {
     unsafe {
         KEEPALIVE_LIST_METHODS_TABLE[0] = PyMethodDef {
-            ml_name: cstr!("append"),
+            ml_name: cstr!("append").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunction: keepalive_list_append,
             },
@@ -207,7 +208,7 @@ unsafe fn init_keepalive_methods() {
             ml_doc: ptr::null(),
         };
         KEEPALIVE_LIST_METHODS_TABLE[1] = PyMethodDef {
-            ml_name: cstr!("clear"),
+            ml_name: cstr!("clear").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunction: keepalive_list_clear_py,
             },
@@ -230,7 +231,7 @@ unsafe fn init_keepalive_methods() {
         };
 
         let tp = ptr::addr_of_mut!(KEEPALIVE_LIST_TYPE);
-        (*tp).tp_name = cstr!("copium.keepalive");
+        (*tp).tp_name = cstr!("copium.keepalive").as_ptr();
         (*tp).tp_basicsize = size_of::<PyKeepaliveListObject>() as Py_ssize_t;
         (*tp).tp_dealloc = Some(keepalive_list_dealloc);
         (*tp).tp_repr = Some(keepalive_list_repr);
@@ -260,12 +261,12 @@ unsafe fn init_keepalive_methods() {
 unsafe extern "C" fn memo_dealloc(obj: *mut PyObject) {
     unsafe {
         let self_ = obj as *mut PyMemoObject;
-        PyObject_GC_UnTrack(self_ as *mut c_void);
-        if PyObject_CallFinalizerFromDealloc(obj) != 0 {
+        py::gc::untrack(self_ as *mut c_void);
+        if py::gc::call_finalizer_from_dealloc(obj) != 0 {
             return;
         }
         ptr::drop_in_place(self_);
-        PyObject_GC_Del(self_ as *mut c_void);
+        py::gc::delete(self_ as *mut c_void);
     }
 }
 
@@ -348,7 +349,7 @@ unsafe extern "C" fn memo_repr(obj: *mut PyObject) -> *mut PyObject {
         }
 
         if !(*self_).keepalive.items.is_empty() {
-            let py_key = PyLong_FromVoidPtr(self_ as *mut c_void);
+            let py_key = py::long::from_ptr(self_ as *mut c_void).as_object();
             if py_key.is_null() {
                 dict.decref();
                 return ptr::null_mut();
@@ -361,7 +362,7 @@ unsafe extern "C" fn memo_repr(obj: *mut PyObject) -> *mut PyObject {
                 return ptr::null_mut();
             }
 
-            if PyDict_SetItem(dict, py_key, proxy) < 0 {
+            if (dict as *mut PyDictObject).set_item(py_key, proxy) < 0 {
                 proxy.decref();
                 py_key.decref();
                 dict.decref();
@@ -372,13 +373,13 @@ unsafe extern "C" fn memo_repr(obj: *mut PyObject) -> *mut PyObject {
             py_key.decref();
         }
 
-        let inner = PyObject_Repr(dict);
+        let inner = dict.repr().as_object();
         dict.decref();
         if inner.is_null() {
             return ptr::null_mut();
         }
 
-        let wrapped = PyUnicode_FromFormat(cstr!("memo(%U)"), inner);
+        let wrapped = py::unicode::from_format!(cstr!("memo(%U)"), inner).as_object();
         inner.decref();
         wrapped
     }
@@ -389,7 +390,7 @@ unsafe extern "C" fn memo_iter(obj: *mut PyObject) -> *mut PyObject {
         let self_ = obj as *mut PyMemoObject;
         let table = &(*self_).table;
 
-        let list = PyList_New(0);
+        let list = py::list::new(0).as_object();
         if list.is_null() {
             return ptr::null_mut();
         }
@@ -398,8 +399,8 @@ unsafe extern "C" fn memo_iter(obj: *mut PyObject) -> *mut PyObject {
             for i in 0..table.size {
                 let entry = &*table.slots.add(i);
                 if entry.key != 0 && entry.key != TOMBSTONE {
-                    let py_key = PyLong_FromVoidPtr(entry.key as *mut c_void);
-                    if py_key.is_null() || PyList_Append(list, py_key) < 0 {
+                    let py_key = py::long::from_ptr(entry.key as *mut c_void).as_object();
+                    if py_key.is_null() || py::list::append(list, py_key) < 0 {
                         py_key.decref_nullable();
                         list.decref();
                         return ptr::null_mut();
@@ -410,8 +411,8 @@ unsafe extern "C" fn memo_iter(obj: *mut PyObject) -> *mut PyObject {
         }
 
         if !(*self_).keepalive.items.is_empty() {
-            let py_key = PyLong_FromVoidPtr(self_ as *mut c_void);
-            if py_key.is_null() || PyList_Append(list, py_key) < 0 {
+            let py_key = py::long::from_ptr(self_ as *mut c_void).as_object();
+            if py_key.is_null() || py::list::append(list, py_key) < 0 {
                 py_key.decref_nullable();
                 list.decref();
                 return ptr::null_mut();
@@ -419,7 +420,7 @@ unsafe extern "C" fn memo_iter(obj: *mut PyObject) -> *mut PyObject {
             py_key.decref();
         }
 
-        let it = PyObject_GetIter(list);
+        let it = list.get_iter();
         list.decref();
         it
     }
@@ -444,19 +445,19 @@ unsafe extern "C" fn memo_mp_subscript(obj: *mut PyObject, pykey: *mut PyObject)
     unsafe {
         let self_ = obj as *mut PyMemoObject;
 
-        if PyLong_Check(pykey) == 0 {
-            PyErr_SetObject(PyExc_KeyError, pykey);
+        if !py::long::check(pykey) {
+            py::err::set(PyExc_KeyError, pykey);
             return ptr::null_mut();
         }
 
-        let key = PyLong_AsVoidPtr(pykey) as usize;
-        if key == 0 && !PyErr_Occurred().is_null() {
+        let key = py::long::as_ptr(pykey) as usize;
+        if key == 0 && !py::err::occurred().is_null() {
             return ptr::null_mut();
         }
 
         if key == self_ as usize {
             if (*self_).keepalive.items.is_empty() {
-                PyErr_SetObject(PyExc_KeyError, pykey);
+                py::err::set(PyExc_KeyError, pykey);
                 return ptr::null_mut();
             }
             return memo_keepalive_proxy(self_);
@@ -464,7 +465,7 @@ unsafe extern "C" fn memo_mp_subscript(obj: *mut PyObject, pykey: *mut PyObject)
 
         let found = (*self_).table.lookup_h(key, hash_pointer(key));
         if found.is_null() {
-            PyErr_SetObject(PyExc_KeyError, pykey);
+            py::err::set(PyExc_KeyError, pykey);
             return ptr::null_mut();
         }
 
@@ -480,27 +481,27 @@ unsafe extern "C" fn memo_mp_ass_subscript(
     unsafe {
         let self_ = obj as *mut PyMemoObject;
 
-        if PyLong_Check(pykey) == 0 {
-            PyErr_SetString(PyExc_KeyError, cstr!("keys must be integers"));
+        if !py::long::check(pykey) {
+            py::err::set_string(PyExc_KeyError, cstr!("keys must be integers"));
             return -1;
         }
 
-        let key = PyLong_AsVoidPtr(pykey) as usize;
-        if key == 0 && !PyErr_Occurred().is_null() {
+        let key = py::long::as_ptr(pykey) as usize;
+        if key == 0 && !py::err::occurred().is_null() {
             return -1;
         }
 
         if key == self_ as usize {
             if value.is_null() {
                 if (*self_).keepalive.items.is_empty() {
-                    PyErr_SetObject(PyExc_KeyError, pykey);
+                    py::err::set(PyExc_KeyError, pykey);
                     return -1;
                 }
                 (*self_).keepalive.clear();
                 return 0;
             }
 
-            let it = PyObject_GetIter(value);
+            let it = value.get_iter();
             if it.is_null() {
                 return -1;
             }
@@ -508,7 +509,7 @@ unsafe extern "C" fn memo_mp_ass_subscript(
             (*self_).keepalive.clear();
 
             loop {
-                let item = PyIter_Next(it);
+                let item = it.iter_next();
                 if item.is_null() {
                     break;
                 }
@@ -518,7 +519,7 @@ unsafe extern "C" fn memo_mp_ass_subscript(
 
             it.decref();
 
-            if !PyErr_Occurred().is_null() {
+            if !py::err::occurred().is_null() {
                 return -1;
             }
 
@@ -528,7 +529,7 @@ unsafe extern "C" fn memo_mp_ass_subscript(
         if value.is_null() {
             let hash = hash_pointer(key);
             if (*self_).table.remove_h(key, hash) < 0 {
-                PyErr_SetObject(PyExc_KeyError, pykey);
+                py::err::set(PyExc_KeyError, pykey);
                 return -1;
             }
             return 0;
@@ -546,13 +547,13 @@ unsafe extern "C" fn memo_sq_contains(obj: *mut PyObject, pykey: *mut PyObject) 
     unsafe {
         let self_ = obj as *mut PyMemoObject;
 
-        if PyLong_Check(pykey) == 0 {
-            PyErr_SetString(PyExc_TypeError, cstr!("keys must be integers"));
+        if !py::long::check(pykey) {
+            py::err::set_string(PyExc_TypeError, cstr!("keys must be integers"));
             return -1;
         }
 
-        let key = PyLong_AsVoidPtr(pykey) as usize;
-        if key == 0 && !PyErr_Occurred().is_null() {
+        let key = py::long::as_ptr(pykey) as usize;
+        if key == 0 && !py::err::occurred().is_null() {
             return -1;
         }
 
@@ -582,7 +583,7 @@ unsafe extern "C" fn memo_py_clear(obj: *mut PyObject, _: *mut PyObject) -> *mut
             (*self_).dict_proxy.decref();
             (*self_).dict_proxy = ptr::null_mut();
         }
-        Py_None().newref()
+        py::none().newref()
     }
 }
 
@@ -593,20 +594,20 @@ unsafe extern "C" fn memo_py_get(
 ) -> *mut PyObject {
     unsafe {
         if nargs < 1 || nargs > 2 {
-            PyErr_SetString(PyExc_TypeError, cstr!("get expected 1 or 2 arguments"));
+            py::err::set_string(PyExc_TypeError, cstr!("get expected 1 or 2 arguments"));
             return ptr::null_mut();
         }
 
         let self_ = obj as *mut PyMemoObject;
         let pykey = *args;
 
-        if PyLong_Check(pykey) == 0 {
-            PyErr_SetString(PyExc_TypeError, cstr!("keys must be integers"));
+        if !py::long::check(pykey) {
+            py::err::set_string(PyExc_TypeError, cstr!("keys must be integers"));
             return ptr::null_mut();
         }
 
-        let key = PyLong_AsVoidPtr(pykey) as usize;
-        if key == 0 && !PyErr_Occurred().is_null() {
+        let key = py::long::as_ptr(pykey) as usize;
+        if key == 0 && !py::err::occurred().is_null() {
             return ptr::null_mut();
         }
 
@@ -619,7 +620,7 @@ unsafe extern "C" fn memo_py_get(
             return (*args.add(1)).newref();
         }
 
-        Py_None().newref()
+        py::none().newref()
     }
 }
 
@@ -629,7 +630,7 @@ unsafe extern "C" fn memo_py_contains(obj: *mut PyObject, pykey: *mut PyObject) 
         if result < 0 {
             return ptr::null_mut();
         }
-        PyBool_FromLong(result as _)
+        py::boolean::from_bool(result != 0)
     }
 }
 
@@ -641,7 +642,7 @@ unsafe extern "C" fn memo_py_values(obj: *mut PyObject, _: *mut PyObject) -> *mu
             n += 1;
         }
 
-        let list = PyList_New(n);
+        let list = py::list::new(n).as_object();
         if list.is_null() {
             return ptr::null_mut();
         }
@@ -652,7 +653,7 @@ unsafe extern "C" fn memo_py_values(obj: *mut PyObject, _: *mut PyObject) -> *mu
                 let entry = &*(*self_).table.slots.add(i);
                 if entry.key != 0 && entry.key != TOMBSTONE {
                     entry.value.incref();
-                    PyList_SetItem(list, idx, entry.value);
+                    py::list::set_item(list, idx, entry.value);
                     idx += 1;
                 }
             }
@@ -664,7 +665,7 @@ unsafe extern "C" fn memo_py_values(obj: *mut PyObject, _: *mut PyObject) -> *mu
                 list.decref();
                 return ptr::null_mut();
             }
-            PyList_SetItem(list, idx, proxy);
+            py::list::set_item(list, idx, proxy);
         }
 
         list
@@ -679,7 +680,7 @@ unsafe extern "C" fn memo_py_keys(obj: *mut PyObject, _: *mut PyObject) -> *mut 
             n += 1;
         }
 
-        let list = PyList_New(n);
+        let list = py::list::new(n).as_object();
         if list.is_null() {
             return ptr::null_mut();
         }
@@ -689,24 +690,24 @@ unsafe extern "C" fn memo_py_keys(obj: *mut PyObject, _: *mut PyObject) -> *mut 
             for i in 0..(*self_).table.size {
                 let entry = &*(*self_).table.slots.add(i);
                 if entry.key != 0 && entry.key != TOMBSTONE {
-                    let py_key = PyLong_FromVoidPtr(entry.key as *mut c_void);
+                    let py_key = py::long::from_ptr(entry.key as *mut c_void).as_object();
                     if py_key.is_null() {
                         list.decref();
                         return ptr::null_mut();
                     }
-                    PyList_SetItem(list, idx, py_key);
+                    py::list::set_item(list, idx, py_key);
                     idx += 1;
                 }
             }
         }
 
         if !(*self_).keepalive.items.is_empty() {
-            let py_key = PyLong_FromVoidPtr(self_ as *mut c_void);
+            let py_key = py::long::from_ptr(self_ as *mut c_void).as_object();
             if py_key.is_null() {
                 list.decref();
                 return ptr::null_mut();
             }
-            PyList_SetItem(list, idx, py_key);
+            py::list::set_item(list, idx, py_key);
         }
 
         list
@@ -721,7 +722,7 @@ unsafe extern "C" fn memo_py_items(obj: *mut PyObject, _: *mut PyObject) -> *mut
             n += 1;
         }
 
-        let list = PyList_New(n);
+        let list = py::list::new(n).as_object();
         if list.is_null() {
             return ptr::null_mut();
         }
@@ -731,28 +732,28 @@ unsafe extern "C" fn memo_py_items(obj: *mut PyObject, _: *mut PyObject) -> *mut
             for i in 0..(*self_).table.size {
                 let entry = &*(*self_).table.slots.add(i);
                 if entry.key != 0 && entry.key != TOMBSTONE {
-                    let py_key = PyLong_FromVoidPtr(entry.key as *mut c_void);
+                    let py_key = py::long::from_ptr(entry.key as *mut c_void).as_object();
                     if py_key.is_null() {
                         list.decref();
                         return ptr::null_mut();
                     }
-                    let pair = PyTuple_New(2);
+                    let pair = py::tuple::new(2).as_object();
                     if pair.is_null() {
                         py_key.decref();
                         list.decref();
                         return ptr::null_mut();
                     }
-                    PyTuple_SetItem(pair, 0, py_key);
+                    py::tuple::set_item(pair, 0, py_key);
                     entry.value.incref();
-                    PyTuple_SetItem(pair, 1, entry.value);
-                    PyList_SetItem(list, idx, pair);
+                    py::tuple::set_item(pair, 1, entry.value);
+                    py::list::set_item(list, idx, pair);
                     idx += 1;
                 }
             }
         }
 
         if !(*self_).keepalive.items.is_empty() {
-            let py_key = PyLong_FromVoidPtr(self_ as *mut c_void);
+            let py_key = py::long::from_ptr(self_ as *mut c_void).as_object();
             if py_key.is_null() {
                 list.decref();
                 return ptr::null_mut();
@@ -763,16 +764,16 @@ unsafe extern "C" fn memo_py_items(obj: *mut PyObject, _: *mut PyObject) -> *mut
                 list.decref();
                 return ptr::null_mut();
             }
-            let pair = PyTuple_New(2);
+            let pair = py::tuple::new(2).as_object();
             if pair.is_null() {
                 py_key.decref();
                 proxy.decref();
                 list.decref();
                 return ptr::null_mut();
             }
-            PyTuple_SetItem(pair, 0, py_key);
-            PyTuple_SetItem(pair, 1, proxy);
-            PyList_SetItem(list, idx, pair);
+            py::tuple::set_item(pair, 0, py_key);
+            py::tuple::set_item(pair, 1, proxy);
+            py::list::set_item(list, idx, pair);
         }
 
         list
@@ -786,7 +787,7 @@ unsafe extern "C" fn memo_py_setdefault(
 ) -> *mut PyObject {
     unsafe {
         if nargs < 1 || nargs > 2 {
-            PyErr_SetString(
+            py::err::set_string(
                 PyExc_TypeError,
                 cstr!("setdefault expected 1 or 2 arguments"),
             );
@@ -796,13 +797,13 @@ unsafe extern "C" fn memo_py_setdefault(
         let self_ = obj as *mut PyMemoObject;
         let pykey = *args;
 
-        if PyLong_Check(pykey) == 0 {
-            PyErr_SetString(PyExc_KeyError, cstr!("keys must be integers"));
+        if !py::long::check(pykey) {
+            py::err::set_string(PyExc_KeyError, cstr!("keys must be integers"));
             return ptr::null_mut();
         }
 
-        let key = PyLong_AsVoidPtr(pykey) as usize;
-        if key == 0 && !PyErr_Occurred().is_null() {
+        let key = py::long::as_ptr(pykey) as usize;
+        if key == 0 && !py::err::occurred().is_null() {
             return ptr::null_mut();
         }
 
@@ -815,7 +816,7 @@ unsafe extern "C" fn memo_py_setdefault(
             return found.newref();
         }
 
-        let default_value = if nargs == 2 { *args.add(1) } else { Py_None() };
+        let default_value = if nargs == 2 { *args.add(1) } else { py::none() };
         if (*self_).insert_logged(key, default_value, hash_pointer(key)) < 0 {
             return ptr::null_mut();
         }
@@ -831,7 +832,7 @@ unsafe extern "C" fn memo_py_setdefault(
 unsafe fn init_memo_methods() {
     unsafe {
         MEMO_METHODS_TABLE[0] = PyMethodDef {
-            ml_name: cstr!("clear"),
+            ml_name: cstr!("clear").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunction: memo_py_clear,
             },
@@ -839,7 +840,7 @@ unsafe fn init_memo_methods() {
             ml_doc: ptr::null(),
         };
         MEMO_METHODS_TABLE[1] = PyMethodDef {
-            ml_name: cstr!("get"),
+            ml_name: cstr!("get").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunctionFast: memo_py_get,
             },
@@ -847,7 +848,7 @@ unsafe fn init_memo_methods() {
             ml_doc: ptr::null(),
         };
         MEMO_METHODS_TABLE[2] = PyMethodDef {
-            ml_name: cstr!("values"),
+            ml_name: cstr!("values").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunction: memo_py_values,
             },
@@ -855,7 +856,7 @@ unsafe fn init_memo_methods() {
             ml_doc: ptr::null(),
         };
         MEMO_METHODS_TABLE[3] = PyMethodDef {
-            ml_name: cstr!("keys"),
+            ml_name: cstr!("keys").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunction: memo_py_keys,
             },
@@ -863,7 +864,7 @@ unsafe fn init_memo_methods() {
             ml_doc: ptr::null(),
         };
         MEMO_METHODS_TABLE[4] = PyMethodDef {
-            ml_name: cstr!("items"),
+            ml_name: cstr!("items").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunction: memo_py_items,
             },
@@ -871,7 +872,7 @@ unsafe fn init_memo_methods() {
             ml_doc: ptr::null(),
         };
         MEMO_METHODS_TABLE[5] = PyMethodDef {
-            ml_name: cstr!("setdefault"),
+            ml_name: cstr!("setdefault").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunctionFast: memo_py_setdefault,
             },
@@ -879,7 +880,7 @@ unsafe fn init_memo_methods() {
             ml_doc: ptr::null(),
         };
         MEMO_METHODS_TABLE[6] = PyMethodDef {
-            ml_name: cstr!("__contains__"),
+            ml_name: cstr!("__contains__").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunction: memo_py_contains,
             },
@@ -887,7 +888,7 @@ unsafe fn init_memo_methods() {
             ml_doc: ptr::null(),
         };
         MEMO_METHODS_TABLE[7] = PyMethodDef {
-            ml_name: cstr!("__del__"),
+            ml_name: cstr!("__del__").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunction: memo_py_clear,
             },
@@ -901,7 +902,7 @@ unsafe fn init_memo_methods() {
 pub unsafe fn memo_ready_type() -> i32 {
     unsafe {
         init_keepalive_methods();
-        if PyType_Ready(ptr::addr_of_mut!(KEEPALIVE_LIST_TYPE)) < 0 {
+        if py::type_object::ready(ptr::addr_of_mut!(KEEPALIVE_LIST_TYPE)) < 0 {
             return -1;
         }
 
@@ -916,7 +917,7 @@ pub unsafe fn memo_ready_type() -> i32 {
         MEMO_SEQUENCE.sq_contains = Some(memo_sq_contains);
 
         let tp = ptr::addr_of_mut!(Memo_Type);
-        (*tp).tp_name = cstr!("copium.memo");
+        (*tp).tp_name = cstr!("copium.memo").as_ptr();
         (*tp).tp_basicsize = std::mem::size_of::<PyMemoObject>() as Py_ssize_t;
         (*tp).tp_dealloc = Some(memo_dealloc);
         (*tp).tp_repr = Some(memo_repr);
@@ -939,6 +940,6 @@ pub unsafe fn memo_ready_type() -> i32 {
         (*tp).tp_methods = ptr::addr_of_mut!(MEMO_METHODS_TABLE).cast::<PyMethodDef>();
         (*tp).tp_finalize = Some(memo_finalize);
 
-        PyType_Ready(tp)
+        py::type_object::ready(tp)
     }
 }
