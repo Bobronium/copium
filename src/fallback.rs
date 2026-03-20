@@ -5,7 +5,7 @@ use crate::memo::{MemoCheckpoint, PyMemoObject};
 use crate::py;
 use crate::py::frame::PyFramePtr;
 use crate::state::{OnIncompatible, STATE};
-use crate::types::{PyObjectPtr, PySeqPtr};
+use crate::types::PyObjectPtr;
 
 macro_rules! cleanup_traceback_build {
     ($parts:expr, $traceback_module:expr, $format_exception:expr, $traceback_lines:expr, $empty_string:expr, $caller_string:expr) => {{
@@ -243,7 +243,7 @@ unsafe fn get_caller_frame_info() -> *mut PyObject {
                 continue;
             }
 
-            filename = (code as *mut PyObject).getattr_cstr(crate::cstr!("co_filename"));
+            filename = (code as *mut PyObject).getattr_cstr(c"co_filename");
             if filename.is_null() {
                 py::err::clear();
             }
@@ -273,14 +273,7 @@ unsafe fn get_caller_frame_info() -> *mut PyObject {
                     break;
                 }
 
-                let getline_args = py::tuple::new(2);
-                if getline_args.is_null() {
-                    break;
-                }
-                getline_args.steal_item_unchecked(0, filename.newref());
-                getline_args.steal_item_unchecked(1, line_number_object.newref());
-                line = getline.call_with(getline_args);
-                getline_args.decref();
+                line = py::call::function_obj_args!(getline, filename, line_number_object);
                 if line.is_null() {
                     py::err::clear();
                     line = py::unicode::from_cstr(crate::cstr!("")).as_object();
@@ -745,8 +738,6 @@ pub unsafe fn maybe_retry_with_dict_memo(
 ) -> *mut PyObject {
     unsafe {
         let mut result: *mut PyObject = ptr::null_mut();
-        let (mut exception_type, mut exception_value, mut exception_traceback) =
-            py::err::fetch();
         let mut error_identifier: *mut PyObject = ptr::null_mut();
 
         if !py::err::matches_current(PyExc_TypeError)
@@ -759,6 +750,7 @@ pub unsafe fn maybe_retry_with_dict_memo(
             return ptr::null_mut();
         }
 
+        let (mut exception_type, mut exception_value, mut exception_traceback) = py::err::fetch();
         py::err::normalize(
             &mut exception_type,
             &mut exception_value,

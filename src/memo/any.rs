@@ -2,7 +2,7 @@ use pyo3_ffi::*;
 use std::ptr;
 
 use super::Memo;
-use crate::types::{py_list_new, py_tuple_new, PyMutSeqPtr, PyObjectPtr, PySeqPtr, PyTypeInfo};
+use crate::types::{py_list_new, PyMutSeqPtr, PyObjectPtr, PyTypeInfo};
 use crate::{py_cache, py_eval, py_str};
 
 pub struct AnyMemo {
@@ -30,28 +30,20 @@ impl AnyMemo {
                 return -1;
             }
 
-            let getter = self.object.getattr(py_str!("get"));
-            if getter.is_null() {
-                pykey.decref();
-                return -1;
-            }
-            let args = py_tuple_new(2);
-            if args.is_null() {
-                getter.decref();
-                pykey.decref();
-                return -1;
-            }
-            args.steal_item_unchecked(0, pykey.as_object());
-            args.steal_item_unchecked(1, sentinel.newref());
-            let existing = getter.call_with(args);
-            getter.decref();
-            args.decref();
+            let existing = crate::py::call::method_obj_args!(
+                self.object,
+                py_str!("get"),
+                pykey,
+                sentinel,
+            );
             if existing.is_null() {
+                pykey.decref();
                 return -1;
             }
 
             if existing != sentinel {
                 self.keepalive = existing as *mut PyListObject;
+                pykey.decref();
                 return 0;
             }
 
@@ -88,22 +80,13 @@ impl Memo for AnyMemo {
                 return ((), ptr::null_mut());
             }
 
-            let getter = self.object.getattr(py_str!("get"));
-            if getter.is_null() {
-                pykey.decref();
-                return ((), ptr::null_mut());
-            }
-            let args = py_tuple_new(2);
-            if args.is_null() {
-                getter.decref();
-                pykey.decref();
-                return ((), ptr::null_mut());
-            }
-            args.steal_item_unchecked(0, pykey.as_object());
-            args.steal_item_unchecked(1, sentinel.newref());
-            let found = getter.call_with(args);
-            getter.decref();
-            args.decref();
+            let found = crate::py::call::method_obj_args!(
+                self.object,
+                py_str!("get"),
+                pykey,
+                sentinel,
+            );
+            pykey.decref();
 
             if found.is_null() {
                 return ((), ptr::null_mut());

@@ -48,35 +48,17 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             return -1;
         }
 
-        let version_info_name = py::unicode::from_cstr(crate::cstr!("VersionInfo"));
-        let version_info_fields = py::list::new(6);
-        if version_info_name.is_null() || version_info_fields.is_null() {
-            version_info_name.decref_if_nonnull();
-            version_info_fields.decref_if_nonnull();
-            namedtuple.decref();
-            module.decref();
-            return -1;
-        }
-        version_info_fields.steal_item_unchecked(0, py::unicode::from_cstr(crate::cstr!("major")).as_object());
-        version_info_fields.steal_item_unchecked(1, py::unicode::from_cstr(crate::cstr!("minor")).as_object());
-        version_info_fields.steal_item_unchecked(2, py::unicode::from_cstr(crate::cstr!("patch")).as_object());
-        version_info_fields.steal_item_unchecked(3, py::unicode::from_cstr(crate::cstr!("pre")).as_object());
-        version_info_fields.steal_item_unchecked(4, py::unicode::from_cstr(crate::cstr!("dev")).as_object());
-        version_info_fields.steal_item_unchecked(5, py::unicode::from_cstr(crate::cstr!("local")).as_object());
-
-        let version_info_args = py::tuple::new(2);
-        if version_info_args.is_null() {
-            version_info_name.decref();
-            version_info_fields.decref();
-            namedtuple.decref();
-            module.decref();
-            return -1;
-        }
-        version_info_args.steal_item_unchecked(0, version_info_name.as_object());
-        version_info_args.steal_item_unchecked(1, version_info_fields.as_object());
-
-        let vi_cls = namedtuple.call_with(version_info_args);
-        version_info_args.decref();
+        let vi_cls = crate::py::call::call_function!(
+            namedtuple,
+            crate::cstr!("s[ssssss]"),
+            crate::cstr!("VersionInfo"),
+            crate::cstr!("major"),
+            crate::cstr!("minor"),
+            crate::cstr!("patch"),
+            crate::cstr!("pre"),
+            crate::cstr!("dev"),
+            crate::cstr!("local"),
+        );
         if vi_cls.is_null() {
             namedtuple.decref();
             module.decref();
@@ -103,25 +85,16 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
         let build_hash = env!("COPIUM_BUILD_HASH");
         let local_cstring = CString::new(build_hash).unwrap();
 
-        let version_info_value_args = py::tuple::new(6);
-        if version_info_value_args.is_null() {
-            namedtuple.decref();
-            vi_cls.decref();
-            module.decref();
-            return -1;
-        }
-        version_info_value_args.steal_item_unchecked(0, py::long::from_i64(major).as_object());
-        version_info_value_args.steal_item_unchecked(1, py::long::from_i64(minor).as_object());
-        version_info_value_args.steal_item_unchecked(2, py::long::from_i64(patch).as_object());
-        version_info_value_args.steal_item_unchecked(3, py::none().newref());
-        version_info_value_args.steal_item_unchecked(4, py::none().newref());
-        version_info_value_args.steal_item_unchecked(
-            5,
-            py::unicode::from_cstr(local_cstring.as_c_str()).as_object(),
+        let vi = crate::py::call::call_function!(
+            vi_cls,
+            crate::cstr!("lllOOs"),
+            major,
+            minor,
+            patch,
+            py::none(),
+            py::none(),
+            local_cstring.as_c_str(),
         );
-
-        let vi = vi_cls.call_with(version_info_value_args);
-        version_info_value_args.decref();
 
         py::module::add_object(module, crate::cstr!("VersionInfo"), vi_cls);
         if !vi.is_null() {
@@ -136,55 +109,25 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             local_cstring.as_c_str(),
         );
 
-        let author_name = py::unicode::from_cstr(crate::cstr!("Author"));
-        let author_fields = py::list::new(2);
-        if author_name.is_null() || author_fields.is_null() {
-            author_name.decref_if_nonnull();
-            author_fields.decref_if_nonnull();
-            namedtuple.decref();
-            vi_cls.decref();
-            module.decref();
-            return -1;
-        }
-        author_fields.steal_item_unchecked(0, py::unicode::from_cstr(crate::cstr!("name")).as_object());
-        author_fields.steal_item_unchecked(1, py::unicode::from_cstr(crate::cstr!("email")).as_object());
-
-        let author_type_args = py::tuple::new(2);
-        if author_type_args.is_null() {
-            author_name.decref();
-            author_fields.decref();
-            namedtuple.decref();
-            vi_cls.decref();
-            module.decref();
-            return -1;
-        }
-        author_type_args.steal_item_unchecked(0, author_name.as_object());
-        author_type_args.steal_item_unchecked(1, author_fields.as_object());
-
-        let author_cls = namedtuple.call_with(author_type_args);
-        author_type_args.decref();
+        let author_cls = crate::py::call::call_function!(
+            namedtuple,
+            crate::cstr!("s[ss]"),
+            crate::cstr!("Author"),
+            crate::cstr!("name"),
+            crate::cstr!("email"),
+        );
         namedtuple.decref();
         if author_cls.is_null() {
             module.decref();
             return -1;
         }
 
-        let author_value_args = py::tuple::new(2);
-        if author_value_args.is_null() {
-            author_cls.decref();
-            module.decref();
-            return -1;
-        }
-        author_value_args.steal_item_unchecked(
-            0,
-            py::unicode::from_cstr(crate::cstr!("Arseny Boykov (Bobronium)")).as_object(),
+        let author = crate::py::call::call_function!(
+            author_cls,
+            crate::cstr!("ss"),
+            crate::cstr!("Arseny Boykov (Bobronium)"),
+            crate::cstr!("hi@bobronium.me"),
         );
-        author_value_args.steal_item_unchecked(
-            1,
-            py::unicode::from_cstr(crate::cstr!("hi@bobronium.me")).as_object(),
-        );
-        let author = author_cls.call_with(author_value_args);
-        author_value_args.decref();
         py::module::add_object(module, crate::cstr!("Author"), author_cls);
 
         if !author.is_null() {
