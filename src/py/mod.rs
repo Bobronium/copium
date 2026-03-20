@@ -3,6 +3,7 @@
 #![allow(unused_imports)]
 #![allow(unused_unsafe)]
 
+use std::ptr::addr_of_mut;
 use pyo3_ffi::*;
 
 use crate::memo::{Memo_Type, PyMemoObject};
@@ -50,6 +51,7 @@ pub use tuple::*;
 pub use type_object::*;
 pub use unicode::*;
 pub use vectorcall::*;
+use crate::py::ffi::{_Py_EllipsisObject, _Py_NoneStruct};
 
 pub unsafe trait PyTypeInfo: Sized {
     fn type_ptr() -> *mut PyTypeObject;
@@ -103,12 +105,7 @@ pytype! {
     PyCodeObject => PyCode_Type,
 }
 
-#[inline(always)]
-pub unsafe fn none() -> *mut PyObject {
-    ffi::Py_None()
-}
-
-#[inline(always)]
-pub unsafe fn ellipsis() -> *mut PyObject {
-    pyo3_ffi::Py_Ellipsis()
-}
+#[allow(non_upper_case_globals)]
+pub const NoneObject: *mut PyObject = unsafe { &raw const _Py_NoneStruct as *const _ as *mut _ };
+#[allow(non_upper_case_globals)]
+pub const EllipsisObject: *mut PyObject = unsafe { &raw const _Py_EllipsisObject as *const _ as *mut _ };

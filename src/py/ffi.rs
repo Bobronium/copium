@@ -18,6 +18,8 @@ extern "C" {
     pub static mut PyMethod_Type: PyTypeObject;
     pub static mut _PyNone_Type: PyTypeObject;
     pub static mut _PyNotImplemented_Type: PyTypeObject;
+    pub static mut _Py_EllipsisObject: PyObject;
+    pub static mut _Py_NoneStruct: PyObject;
 }
 
 #[repr(C)]

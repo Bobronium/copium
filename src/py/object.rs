@@ -3,7 +3,7 @@ use pyo3_ffi::*;
 use std::ffi::{c_void, CStr};
 use std::os::raw::c_int;
 use std::ptr;
-
+use crate::py;
 use super::{ffi, PyTypeInfo};
 
 pub unsafe trait PyObjectPtr: Sized {
@@ -265,7 +265,7 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
 
     #[inline(always)]
     unsafe fn is_none(self) -> bool {
-        self as *mut PyObject == ffi::Py_None()
+        self as *mut PyObject == py::NoneObject
     }
 }
 

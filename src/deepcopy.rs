@@ -153,8 +153,8 @@ impl PyDeepCopy for *mut PyListObject {
             let sz = self.length();
             let copied = check!(py_list_new(sz));
 
+            let ellipsis = py::EllipsisObject;
             for i in 0..sz {
-                let ellipsis = Py_Ellipsis();
                 #[cfg(not(any(Py_3_12, Py_3_12, Py_3_13, Py_3_14)))]
                 ellipsis.incref();
                 copied.set_slot_steal_unchecked(i, ellipsis);
