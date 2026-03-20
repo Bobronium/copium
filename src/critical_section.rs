@@ -37,7 +37,7 @@
 //! but races are possible and the state of an object may change "underneath" a suspended thread in
 //! possibly surprising ways.
 
-use pyo3_ffi::*;
+use crate::types::PyTypeInfo;
 
 #[cfg(Py_GIL_DISABLED)]
 struct CSGuard(pyo3_ffi::PyCriticalSection);
@@ -64,14 +64,14 @@ impl Drop for CS2Guard {
 }
 
 #[inline(always)]
-pub fn with_critical_section_raw<F, R>(object: *mut PyObject, f: F) -> R
+pub fn with_critical_section_raw<F, R, T: PyTypeInfo>(object: *mut T, f: F) -> R
 where
     F: FnOnce() -> R,
 {
     #[cfg(Py_GIL_DISABLED)]
     {
         let mut guard = CSGuard(unsafe { std::mem::zeroed() });
-        unsafe { pyo3_ffi::PyCriticalSection_Begin(&mut guard.0, object) };
+        unsafe { pyo3_ffi::PyCriticalSection_Begin(&mut guard.0, object as _) };
         f()
     }
     #[cfg(not(Py_GIL_DISABLED))]

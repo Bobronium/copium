@@ -36,7 +36,7 @@ pub(crate) unsafe fn chain_type_error(msg: *mut PyObject) {
             PyErr_NormalizeException(&mut cause_type, &mut cause_val, &mut cause_tb);
         }
 
-        let new_exc = PyObject_CallOneArg(PyExc_TypeError, msg);
+        let new_exc = PyExc_TypeError.call_one(msg);
         msg.decref();
 
         if new_exc.is_null() {
@@ -71,14 +71,14 @@ pub(crate) unsafe fn try_reduce_via_registry(
         if reducer.is_null() {
             return ptr::null_mut();
         }
-        if PyCallable_Check(reducer) == 0 {
+        if !reducer.is_callable() {
             PyErr_SetString(
                 PyExc_TypeError,
                 crate::cstr!("copyreg.dispatch_table value is not callable"),
             );
             return ptr::null_mut();
         }
-        PyObject_CallOneArg(reducer, obj)
+        reducer.call_one(obj)
     }
 }
 
@@ -273,8 +273,7 @@ unsafe fn reconstruct_newobj<M: Memo>(argtup: *mut PyObject, memo: &mut M) -> *m
             return ptr::null_mut();
         }
 
-        let args = bail!(PyTuple_New(nargs - 1));
-        let args_tup = args as *mut PyTupleObject;
+        let args = bail!(py_tuple_new(nargs - 1));
 
         for i in 1..nargs {
             let arg = tup.get_borrowed_unchecked(i);
@@ -283,10 +282,10 @@ unsafe fn reconstruct_newobj<M: Memo>(argtup: *mut PyObject, memo: &mut M) -> *m
                 args.decref();
                 return ptr::null_mut();
             }
-            args_tup.set_slot_steal_unchecked(i - 1, copied.into_raw());
+            args.set_slot_steal_unchecked(i - 1, copied.into_raw());
         }
 
-        let instance = call_tp_new(cls as *mut PyTypeObject, args, ptr::null_mut());
+        let instance = call_tp_new(cls as *mut PyTypeObject, args.as_object(), ptr::null_mut());
         args.decref();
         instance
     }
@@ -322,7 +321,7 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
         }
 
         let mut coerced_args: *mut PyObject = ptr::null_mut();
-        let mut coerced_kwargs: *mut PyObject = ptr::null_mut();
+        let mut coerced_kwargs: *mut PyDictObject = ptr::null_mut();
 
         if !args.is_tuple() {
             coerced_args = PySequence_Tuple(args);
@@ -343,12 +342,12 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
         }
 
         if !kwargs.is_dict() {
-            coerced_kwargs = PyDict_New();
+            coerced_kwargs = py_dict_new(0);
             if coerced_kwargs.is_null() {
                 coerced_args.decref_nullable();
                 return ptr::null_mut();
             }
-            if PyDict_Merge(coerced_kwargs, kwargs, 1) < 0 {
+            if coerced_kwargs.merge(kwargs, 1) < 0 {
                 let msg = ffi_ext::PyUnicode_FromFormat(
                     crate::cstr!(
                         "__newobj_ex__ kwargs in %s.__reduce__ result must be a dict, not %.200s"
@@ -363,7 +362,7 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
                 coerced_kwargs.decref();
                 return ptr::null_mut();
             }
-            kwargs = coerced_kwargs;
+            kwargs = coerced_kwargs.as_object();
         }
 
         let copied_args = deepcopy::deepcopy(args, memo);
@@ -402,8 +401,7 @@ unsafe fn reconstruct_callable<M: Memo>(
             return callable.call();
         }
 
-        let copied_args = bail!(PyTuple_New(nargs));
-        let copied_tup = copied_args as *mut PyTupleObject;
+        let copied_args = bail!(py_tuple_new(nargs));
 
         for i in 0..nargs {
             let arg = tup.get_borrowed_unchecked(i);
@@ -412,10 +410,10 @@ unsafe fn reconstruct_callable<M: Memo>(
                 copied_args.decref();
                 return ptr::null_mut();
             }
-            copied_tup.set_slot_steal_unchecked(i, copied.into_raw());
+            copied_args.set_slot_steal_unchecked(i, copied.into_raw());
         }
 
-        let instance = callable.call_with(copied_args);
+        let instance = callable.call_with(copied_args.as_object());
         copied_args.decref();
         instance
     }
@@ -423,7 +421,6 @@ unsafe fn reconstruct_callable<M: Memo>(
 
 // ── State application ──────────────────────────────────────
 
-/// Returns 1 if __setstate__ found and applied, 0 if not found, -1 on error.
 unsafe fn apply_setstate<M: Memo>(
     instance: *mut PyObject,
     state: *mut PyObject,
@@ -479,7 +476,7 @@ unsafe fn apply_dict_state<M: Memo>(
                 copied.decref();
                 return -1;
             }
-            let ret = PyDict_Merge(instance_dict, copied, 1);
+            let ret = (instance_dict as *mut PyDictObject).merge(copied, 1);
             instance_dict.decref();
             if ret < 0 {
                 let msg = ffi_ext::PyUnicode_FromFormat(
@@ -508,8 +505,8 @@ unsafe fn apply_dict_state<M: Memo>(
         let mut pos: Py_ssize_t = 0;
         let mut ret: c_int = 0;
 
-        while PyDict_Next(copied, &mut pos, &mut key, &mut value) != 0 {
-            if PyObject_SetItem(instance_dict, key, value) < 0 {
+        while (copied as *mut PyDictObject).dict_next(&mut pos, &mut key, &mut value) != 0 {
+            if instance_dict.setitem(key, value) < 0 {
                 ret = -1;
                 break;
             }
@@ -538,7 +535,7 @@ unsafe fn apply_slot_state<M: Memo>(
         let copied = copied.into_raw();
 
         if !copied.is_dict() {
-            let items_attr = PyObject_GetAttrString(copied, crate::cstr!("items"));
+            let items_attr = copied.getattr_cstr(crate::cstr!("items"));
             if items_attr.is_null() {
                 let msg = ffi_ext::PyUnicode_FromFormat(
                     crate::cstr!(
@@ -568,7 +565,7 @@ unsafe fn apply_slot_state<M: Memo>(
 
             let mut ret: c_int = 0;
             loop {
-                let pair = PyIter_Next(iterator);
+                let pair = iterator.iter_next();
                 if pair.is_null() {
                     break;
                 }
@@ -610,7 +607,7 @@ unsafe fn apply_slot_state<M: Memo>(
         let mut pos: Py_ssize_t = 0;
         let mut ret: c_int = 0;
 
-        while PyDict_Next(copied, &mut pos, &mut key, &mut value) != 0 {
+        while (copied as *mut PyDictObject).dict_next(&mut pos, &mut key, &mut value) != 0 {
             if instance.set_attr(key, value) < 0 {
                 ret = -1;
                 break;
@@ -670,7 +667,7 @@ unsafe fn apply_listitems<M: Memo>(
 
         let mut ret: c_int = 0;
         loop {
-            let item = PyIter_Next(iterator);
+            let item = iterator.iter_next();
             if item.is_null() {
                 break;
             }
@@ -716,7 +713,7 @@ unsafe fn apply_dictitems<M: Memo>(
 
         let mut ret: c_int = 0;
         loop {
-            let pair = PyIter_Next(iterator);
+            let pair = iterator.iter_next();
             if pair.is_null() {
                 break;
             }
@@ -778,7 +775,7 @@ unsafe fn apply_dictitems<M: Memo>(
             }
             value = val_copy.into_raw();
 
-            let status = PyObject_SetItem(instance, key, value);
+            let status = instance.setitem(key, value);
             key.decref();
             value.decref();
             if status < 0 {

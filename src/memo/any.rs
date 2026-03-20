@@ -3,12 +3,12 @@ use std::ffi::c_void;
 use std::ptr;
 
 use super::Memo;
-use crate::types::PyObjectPtr;
+use crate::types::{py_list_new, PyMutSeqPtr, PyObjectPtr, PyTypeInfo};
 use crate::{py_cache, py_eval, py_str};
 
 pub struct AnyMemo {
     pub object: *mut PyObject,
-    keepalive: *mut PyObject,
+    keepalive: *mut PyListObject,
 }
 
 impl AnyMemo {
@@ -44,20 +44,20 @@ impl AnyMemo {
             }
 
             if existing != sentinel {
-                self.keepalive = existing;
+                self.keepalive = existing as *mut PyListObject;
                 pykey.decref();
                 return 0;
             }
 
             existing.decref();
 
-            let list = PyList_New(0);
+            let list = py_list_new(0);
             if list.is_null() {
                 pykey.decref();
                 return -1;
             }
 
-            if PyObject_SetItem(self.object, pykey, list) < 0 {
+            if self.object.setitem(pykey, list.as_object()) < 0 {
                 list.decref();
                 pykey.decref();
                 return -1;
@@ -74,7 +74,7 @@ impl Memo for AnyMemo {
     type Probe = ();
     const RECALL_CAN_ERROR: bool = true;
 
-    unsafe fn recall(&mut self, object: *mut PyObject) -> ((), *mut PyObject) {
+    unsafe fn recall<T: PyTypeInfo>(&mut self, object: *mut T) -> ((), *mut T) {
         unsafe {
             let sentinel = py_cache!(py_eval!("object()"));
             let pykey = PyLong_FromVoidPtr(object as *mut c_void);
@@ -99,18 +99,23 @@ impl Memo for AnyMemo {
                 return ((), ptr::null_mut());
             }
 
-            ((), found)
+            ((), T::cast_unchecked(found))
         }
     }
 
-    unsafe fn memoize(&mut self, original: *mut PyObject, copy: *mut PyObject, _probe: &()) -> i32 {
+    unsafe fn memoize<T: PyTypeInfo>(
+        &mut self,
+        original: *mut T,
+        copy: *mut T,
+        _probe: &Self::Probe,
+    ) -> i32 {
         unsafe {
             let pykey = PyLong_FromVoidPtr(original as *mut c_void);
             if pykey.is_null() {
                 return -1;
             }
 
-            let rc = PyObject_SetItem(self.object, pykey, copy);
+            let rc = self.object.setitem(pykey, copy.as_object());
             pykey.decref();
             if rc < 0 {
                 return -1;
@@ -120,11 +125,11 @@ impl Memo for AnyMemo {
                 return -1;
             }
 
-            PyList_Append(self.keepalive, original)
+            self.keepalive.append(original)
         }
     }
 
-    unsafe fn forget(&mut self, _original: *mut PyObject, _probe: &()) {}
+    unsafe fn forget<T: PyTypeInfo>(&mut self, _original: *mut T, _probe: &Self::Probe) {}
 
     #[inline(always)]
     unsafe fn as_call_arg(&mut self) -> *mut PyObject {

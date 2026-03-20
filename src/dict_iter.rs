@@ -3,7 +3,7 @@ use std::hint::{likely, unlikely};
 use std::ptr;
 #[cfg(Py_GIL_DISABLED)]
 use crate::{py_cache_typed, py_obj};
-use crate::types::PyObjectPtr;
+use crate::types::{PyObjectPtr};
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 extern "C" {
@@ -165,23 +165,23 @@ impl DictIterGuard {
     }
 
     #[inline(always)]
-    pub unsafe fn new(dict: *mut PyObject) -> Self {
+    pub unsafe fn new(dict: *mut PyDictObject) -> Self {
         #[cfg(not(Py_3_14))]
         unsafe {
             Self {
                 dict,
                 pos: 0,
-                ver0: dict_version_tag(dict),
-                used0: dict_used(dict),
+                ver0: dict_version_tag(dict as _),
+                used0: dict_used(dict as _),
             }
         }
 
         #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
         unsafe {
             Self {
-                dict,
+                dict: dict as _,
                 pos: 0,
-                size0: PyDict_Size(dict),
+                size0: PyDict_Size(dict as _),
                 mutated: false,
                 size_changed: false,
                 prev: ptr::null_mut(),

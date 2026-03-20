@@ -57,20 +57,20 @@ impl PyCopy for *mut PyListObject {
                 copied.set_slot_steal_unchecked(index, item);
             }
 
-            PyResult::ok(copied as _)
+            PyResult::ok(copied)
         }
     }
 }
 
 impl PyCopy for *mut PyDictObject {
     unsafe fn copy(self) -> PyResult {
-        unsafe { PyResult::ok(check!(PyDict_Copy(self as *mut PyObject))) }
+        unsafe { PyResult::ok(check!(self.dict_copy())) }
     }
 }
 
 impl PyCopy for *mut PySetObject {
     unsafe fn copy(self) -> PyResult {
-        unsafe { PyResult::ok(check!(PySet_New(self as *mut PyObject))) }
+        unsafe { PyResult::ok(check!(py_set_from(self))) }
     }
 }
 
@@ -82,7 +82,7 @@ impl PyCopy for *mut PyByteArrayObject {
             if size > 0 {
                 ptr::copy_nonoverlapping(self.as_ptr(), copied.as_ptr(), size as usize);
             }
-            PyResult::ok(copied as _)
+            PyResult::ok(copied)
         }
     }
 }
@@ -154,7 +154,7 @@ unsafe fn apply_dict_state(instance: *mut PyObject, dict_state: *mut PyObject) -
                 return -1;
             }
 
-            let result = PyDict_Merge(instance_dict, dict_state, 1);
+            let result = (instance_dict as *mut PyDictObject).merge(dict_state, 1);
             instance_dict.decref();
             if result < 0 {
                 let message = ffi_ext::PyUnicode_FromFormat(
@@ -181,8 +181,9 @@ unsafe fn apply_dict_state(instance: *mut PyObject, dict_state: *mut PyObject) -
         let mut position: Py_ssize_t = 0;
         let mut result: c_int = 0;
 
-        while PyDict_Next(dict_state, &mut position, &mut key, &mut value) != 0 {
-            if PyObject_SetItem(instance_dict, key, value) < 0 {
+        while (dict_state as *mut PyDictObject).dict_next(&mut position, &mut key, &mut value) != 0
+        {
+            if instance_dict.setitem(key, value) < 0 {
                 result = -1;
                 break;
             }
@@ -200,7 +201,7 @@ unsafe fn apply_slot_state(instance: *mut PyObject, slot_state: *mut PyObject) -
         }
 
         if !slot_state.is_dict() {
-            let items_attribute = PyObject_GetAttrString(slot_state, crate::cstr!("items"));
+            let items_attribute = slot_state.getattr_cstr(crate::cstr!("items"));
             if items_attribute.is_null() {
                 let message = ffi_ext::PyUnicode_FromFormat(
                     crate::cstr!(
@@ -229,7 +230,7 @@ unsafe fn apply_slot_state(instance: *mut PyObject, slot_state: *mut PyObject) -
 
             let mut result: c_int = 0;
             loop {
-                let pair = PyIter_Next(iterator);
+                let pair = iterator.iter_next();
                 if pair.is_null() {
                     break;
                 }
@@ -276,7 +277,8 @@ unsafe fn apply_slot_state(instance: *mut PyObject, slot_state: *mut PyObject) -
         let mut position: Py_ssize_t = 0;
         let mut result: c_int = 0;
 
-        while PyDict_Next(slot_state, &mut position, &mut key, &mut value) != 0 {
+        while (slot_state as *mut PyDictObject).dict_next(&mut position, &mut key, &mut value) != 0
+        {
             if instance.set_attr(key, value) < 0 {
                 result = -1;
                 break;
@@ -324,7 +326,7 @@ unsafe fn apply_listitems(instance: *mut PyObject, listitems: *mut PyObject) -> 
 
         let mut result: c_int = 0;
         loop {
-            let item = PyIter_Next(iterator);
+            let item = iterator.iter_next();
             if item.is_null() {
                 break;
             }
@@ -360,7 +362,7 @@ unsafe fn apply_dictitems(instance: *mut PyObject, dictitems: *mut PyObject) -> 
 
         let mut result: c_int = 0;
         loop {
-            let pair = PyIter_Next(iterator);
+            let pair = iterator.iter_next();
             if pair.is_null() {
                 break;
             }
@@ -408,7 +410,7 @@ unsafe fn apply_dictitems(instance: *mut PyObject, dictitems: *mut PyObject) -> 
             };
             pair.decref();
 
-            let set_result = PyObject_SetItem(instance, key, value);
+            let set_result = instance.setitem(key, value);
             key.decref();
             value.decref();
             if set_result < 0 {

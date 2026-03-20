@@ -14,6 +14,7 @@ pub use native::PyMemoObject;
 pub use pytype::{memo_ready_type, Memo_Type};
 pub use table::{KeepaliveVec, MemoTable, UndoLog};
 pub use tss::{cleanup_memo, get_memo, pymemo_alloc};
+use crate::types::PyTypeInfo;
 
 pub type MemoCheckpoint = usize;
 
@@ -22,25 +23,25 @@ pub trait Memo: Sized {
 
     const RECALL_CAN_ERROR: bool;
 
-    unsafe fn recall(&mut self, object: *mut PyObject) -> (Self::Probe, *mut PyObject);
+    unsafe fn recall<T: PyTypeInfo>(&mut self, object: *mut T) -> (Self::Probe, *mut T);
 
-    unsafe fn recall_probed(
+    unsafe fn recall_probed<T: PyTypeInfo>(
         &mut self,
-        object: *mut PyObject,
+        object: *mut T,
         probe: &Self::Probe,
-    ) -> *mut PyObject {
+    ) -> *mut T {
         let _ = probe;
         self.recall(object).1
     }
 
-    unsafe fn memoize(
+    unsafe fn memoize<T: PyTypeInfo>(
         &mut self,
-        original: *mut PyObject,
-        copy: *mut PyObject,
+        original: *mut T,
+        copy: *mut T,
         probe: &Self::Probe,
     ) -> i32;
 
-    unsafe fn forget(&mut self, original: *mut PyObject, probe: &Self::Probe);
+    unsafe fn forget<T: PyTypeInfo>(&mut self, original: *mut T, probe: &Self::Probe);
 
     unsafe fn as_call_arg(&mut self) -> *mut PyObject;
 

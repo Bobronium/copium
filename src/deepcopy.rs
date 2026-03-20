@@ -15,8 +15,8 @@ pub struct PyResult(pub *mut PyObject);
 
 impl PyResult {
     #[inline(always)]
-    pub fn ok(p: *mut PyObject) -> Self {
-        Self(p)
+    pub fn ok<T: PyTypeInfo>(p: *mut T) -> Self {
+        unsafe { Self(p.as_object()) }
     }
     #[inline(always)]
     pub fn error() -> Self {
@@ -159,7 +159,7 @@ impl PyDeepCopy for *mut PyListObject {
                 copied.set_slot_steal_unchecked(i, ellipsis);
             }
 
-            if memo.memoize(self as _, copied as _, &probe) < 0 {
+            if memo.memoize(self, copied, &probe) < 0 {
                 copied.decref();
                 return PyResult::error();
             }
@@ -171,7 +171,7 @@ impl PyDeepCopy for *mut PyListObject {
                         PyExc_RuntimeError,
                         crate::cstr!("list changed size during iteration"),
                     );
-                    memo.forget(self as _, &probe);
+                    memo.forget(self, &probe);
                     copied.decref();
                     return PyResult::error();
                 }
@@ -180,14 +180,14 @@ impl PyDeepCopy for *mut PyListObject {
                 item.decref();
 
                 if unlikely(item_copy.is_error()) {
-                    memo.forget(self as _, &probe);
+                    memo.forget(self, &probe);
                     copied.decref();
                     return PyResult::error();
                 }
 
                 let raw = item_copy.into_raw();
                 let mut size_changed = false;
-                with_critical_section_raw(copied as _, || {
+                with_critical_section_raw(copied, || {
                     if unlikely(copied.length() != sz) {
                         size_changed = true;
                     } else {
@@ -204,13 +204,13 @@ impl PyDeepCopy for *mut PyListObject {
                         PyExc_RuntimeError,
                         crate::cstr!("list changed size during iteration"),
                     );
-                    memo.forget(self as _, &probe);
+                    memo.forget(self, &probe);
                     copied.decref();
                     return PyResult::error();
                 }
             }
 
-            PyResult::ok(copied as _)
+            PyResult::ok(copied)
         }
     }
 }
@@ -241,18 +241,18 @@ impl PyDeepCopy for *mut PyTupleObject {
                 return PyResult::ok(self.newref());
             }
 
-            let existing = memo.recall_probed(self as _, &probe);
+            let existing = memo.recall_probed(self, &probe);
             if unlikely(!existing.is_null()) {
                 copied.decref();
                 return PyResult::ok(existing);
             }
 
-            if memo.memoize(self as _, copied as _, &probe) < 0 {
+            if memo.memoize(self, copied, &probe) < 0 {
                 copied.decref();
                 return PyResult::error();
             }
 
-            PyResult::ok(copied as _)
+            PyResult::ok(copied)
         }
     }
 }
@@ -262,12 +262,12 @@ impl PyDeepCopy for *mut PyDictObject {
         unsafe {
             let copied = check!(py_dict_new(self.len()));
 
-            if memo.memoize(self as _, copied as _, &probe) < 0 {
+            if memo.memoize(self, copied, &probe) < 0 {
                 copied.decref();
                 return PyResult::error();
             }
 
-            let mut guard = DictIterGuard::new(self as _);
+            let mut guard = DictIterGuard::new(self);
             guard.activate();
             let mut key: *mut PyObject = ptr::null_mut();
             let mut value: *mut PyObject = ptr::null_mut();
@@ -278,7 +278,7 @@ impl PyDeepCopy for *mut PyDictObject {
                     break;
                 }
                 if flag < 0 {
-                    memo.forget(self as _, &probe);
+                    memo.forget(self, &probe);
                     copied.decref();
                     return PyResult::error();
                 }
@@ -287,7 +287,7 @@ impl PyDeepCopy for *mut PyDictObject {
                 key.decref();
                 if unlikely(key_copy.is_error()) {
                     value.decref();
-                    memo.forget(self as _, &probe);
+                    memo.forget(self, &probe);
                     copied.decref();
                     return PyResult::error();
                 }
@@ -296,7 +296,7 @@ impl PyDeepCopy for *mut PyDictObject {
                 value.decref();
                 if unlikely(val_copy.is_error()) {
                     key_copy.into_raw().decref();
-                    memo.forget(self as _, &probe);
+                    memo.forget(self, &probe);
                     copied.decref();
                     return PyResult::error();
                 }
@@ -304,13 +304,13 @@ impl PyDeepCopy for *mut PyDictObject {
                 let rc = copied.set_item_steal_two(key_copy.into_raw(), val_copy.into_raw());
 
                 if unlikely(rc < 0) {
-                    memo.forget(self as _, &probe);
+                    memo.forget(self, &probe);
                     copied.decref();
                     return PyResult::error();
                 }
             }
 
-            PyResult::ok(copied as _)
+            PyResult::ok(copied)
         }
     }
 }
@@ -325,7 +325,7 @@ impl PyDeepCopy for *mut PySetObject {
             let snapshot = check!(py_tuple_new(sz));
 
             let mut i: Py_ssize_t = 0;
-            with_critical_section_raw(self as _, || {
+            with_critical_section_raw(self, || {
                 let mut pos: Py_ssize_t = 0;
                 let mut item: *mut PyObject = ptr::null_mut();
                 let mut hash: Py_hash_t = 0;
@@ -342,7 +342,7 @@ impl PyDeepCopy for *mut PySetObject {
                 return PyResult::error();
             }
 
-            if memo.memoize(self as _, copied as _, &probe) < 0 {
+            if memo.memoize(self, copied, &probe) < 0 {
                 snapshot.decref();
                 copied.decref();
                 return PyResult::error();
@@ -353,7 +353,7 @@ impl PyDeepCopy for *mut PySetObject {
                 let item_copy = deepcopy(item, memo);
                 if item_copy.is_error() {
                     snapshot.decref();
-                    memo.forget(self as _, &probe);
+                    memo.forget(self, &probe);
                     copied.decref();
                     return PyResult::error();
                 }
@@ -362,14 +362,14 @@ impl PyDeepCopy for *mut PySetObject {
                 raw.decref();
                 if rc < 0 {
                     snapshot.decref();
-                    memo.forget(self as _, &probe);
+                    memo.forget(self, &probe);
                     copied.decref();
                     return PyResult::error();
                 }
             }
 
             snapshot.decref();
-            PyResult::ok(copied as _)
+            PyResult::ok(copied)
         }
     }
 }
@@ -419,13 +419,13 @@ impl PyDeepCopy for *mut PyFrozensetObject {
             }
             snapshot.decref();
 
-            let copied = frozenset_from(items as _);
+            let copied = frozenset_from(items);
             items.decref();
             if copied.is_null() {
                 return PyResult::error();
             }
 
-            if memo.memoize(self as _, copied, &probe) < 0 {
+            if memo.memoize(self, copied, &probe) < 0 {
                 copied.decref();
                 return PyResult::error();
             }
@@ -445,12 +445,12 @@ impl PyDeepCopy for *mut PyByteArrayObject {
                 ptr::copy_nonoverlapping(self.as_ptr(), copied.as_ptr(), sz as usize);
             }
 
-            if memo.memoize(self as _, copied as _, &probe) < 0 {
+            if memo.memoize(self, copied, &probe) < 0 {
                 copied.decref();
                 return PyResult::error();
             }
 
-            PyResult::ok(copied as _)
+            PyResult::ok(copied)
         }
     }
 }
@@ -475,12 +475,12 @@ impl PyDeepCopy for *mut PyMethodObject {
                 return PyResult::error();
             }
 
-            if memo.memoize(self as _, copied as _, &probe) < 0 {
+            if memo.memoize(self, copied, &probe) < 0 {
                 copied.decref();
                 return PyResult::error();
             }
 
-            PyResult::ok(copied as _)
+            PyResult::ok(copied)
         }
     }
 }

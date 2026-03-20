@@ -1,6 +1,6 @@
 use super::{KeepaliveVec, Memo, MemoCheckpoint, MemoTable, UndoLog};
 use crate::memo::table::{hash_pointer, TOMBSTONE};
-use crate::types::PyObjectPtr;
+use crate::types::{PyMapPtr, PyObjectPtr, PyTypeInfo};
 use pyo3_ffi::*;
 use std::ffi::c_void;
 use std::hint::unlikely;
@@ -63,13 +63,13 @@ impl PyMemoObject {
     #[cold]
     pub unsafe fn to_dict(&self) -> *mut PyObject {
         unsafe {
-            let dict = PyDict_New();
+            let dict = crate::types::py_dict_new(0);
             if dict.is_null() {
                 return ptr::null_mut();
             }
 
             if self.table.slots.is_null() {
-                return dict;
+                return dict.as_object();
             }
 
             for i in 0..self.table.size {
@@ -80,7 +80,7 @@ impl PyMemoObject {
                         dict.decref();
                         return ptr::null_mut();
                     }
-                    if PyDict_SetItem(dict, pykey, entry.value) < 0 {
+                    if dict.set_item(pykey, entry.value) < 0 {
                         pykey.decref();
                         dict.decref();
                         return ptr::null_mut();
@@ -89,14 +89,15 @@ impl PyMemoObject {
                 }
             }
 
-            dict
+            dict.as_object()
         }
     }
 
     #[cold]
     pub unsafe fn sync_from_dict(&mut self, dict: *mut PyObject, orig_size: Py_ssize_t) -> i32 {
         unsafe {
-            let cur_size = PyDict_Size(dict);
+            let dict_typed = dict as *mut PyDictObject;
+            let cur_size = dict_typed.len();
             if cur_size <= orig_size {
                 return 0;
             }
@@ -106,7 +107,7 @@ impl PyMemoObject {
             let mut value: *mut PyObject = ptr::null_mut();
             let mut idx: Py_ssize_t = 0;
 
-            while PyDict_Next(dict, &mut pos, &mut py_key, &mut value) != 0 {
+            while dict_typed.dict_next(&mut pos, &mut py_key, &mut value) != 0 {
                 idx += 1;
                 if idx <= orig_size {
                     continue;
@@ -134,7 +135,7 @@ impl Memo for PyMemoObject {
     const RECALL_CAN_ERROR: bool = false;
 
     #[inline(always)]
-    unsafe fn recall(&mut self, object: *mut PyObject) -> (usize, *mut PyObject) {
+    unsafe fn recall<T: PyTypeInfo>(&mut self, object: *mut T) -> (usize, *mut T) {
         let key = object as usize;
         let hash = hash_pointer(key);
         let found = self.recall_probed(object, &hash);
@@ -142,24 +143,28 @@ impl Memo for PyMemoObject {
     }
 
     #[inline(always)]
-    unsafe fn recall_probed(&mut self, object: *mut PyObject, probe: &usize) -> *mut PyObject {
+    unsafe fn recall_probed<T: PyTypeInfo>(
+        &mut self,
+        object: *mut T,
+        probe: &Self::Probe,
+    ) -> *mut T {
         let key = object as usize;
         let found = self.table.lookup_h(key, *probe);
         if !found.is_null() {
             unsafe { found.incref() };
         }
-        found
+        T::cast_unchecked(found)
     }
 
     #[inline(always)]
-    unsafe fn memoize(
+    unsafe fn memoize<T: PyTypeInfo>(
         &mut self,
-        original: *mut PyObject,
-        copy: *mut PyObject,
-        probe: &usize,
+        original: *mut T,
+        copy: *mut T,
+        probe: &Self::Probe,
     ) -> i32 {
         let key = original as usize;
-        if unlikely(self.table.insert_h(key, copy, *probe) < 0) {
+        if unlikely(self.table.insert_h(key, copy.as_object(), *probe) < 0) {
             return -1;
         }
         self.keepalive.append(original);
@@ -167,7 +172,7 @@ impl Memo for PyMemoObject {
     }
 
     #[cold]
-    unsafe fn forget(&mut self, original: *mut PyObject, probe: &usize) {
+    unsafe fn forget<T: PyTypeInfo>(&mut self, original: *mut T, probe: &Self::Probe) {
         let _ = self.table.remove_h(original as usize, *probe);
     }
 
