@@ -13,7 +13,7 @@ pub struct PyResult(pub *mut PyObject);
 impl PyResult {
     #[inline(always)]
     pub fn ok<T: PyTypeInfo>(p: *mut T) -> Self {
-        unsafe { Self(p.as_object()) }
+        Self(p.cast())
     }
     #[inline(always)]
     pub fn error() -> Self {

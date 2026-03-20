@@ -5,7 +5,6 @@ use core::ffi::{c_void, CStr};
 use std::hint::{likely, unlikely};
 use std::ptr;
 
-mod py;
 mod about;
 #[allow(dead_code)]
 mod cache;
@@ -17,12 +16,13 @@ mod extra;
 mod fallback;
 mod memo;
 mod patch;
+mod py;
 mod recursion;
 mod reduce;
 mod state;
-use py::*;
 use crate::memo::PyMemoObject;
 use memo::{AnyMemo, DictMemo};
+use py::*;
 use state::{MemoMode, STATE};
 // ══════════════════════════════════════════════════════════════
 //  copy(obj, /) — METH_O
@@ -43,14 +43,19 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
     kwnames: *mut PyObject,
 ) -> *mut PyObject {
     unsafe {
+        let keyword_names = if kwnames.is_null() {
+            ptr::null_mut()
+        } else {
+            PyTupleObject::cast_unchecked(kwnames)
+        };
         let mut obj: *mut PyObject = ptr::null_mut();
         let mut memo_arg: *mut PyObject = py::NoneObject;
 
         // ── Fast path: no keyword arguments ─────────────────
-        let kwcount = if kwnames.is_null() {
+        let kwcount = if keyword_names.is_null() {
             0
         } else {
-            py::tuple::size(kwnames)
+            keyword_names.length()
         };
 
         if likely(kwcount == 0) {
@@ -93,10 +98,10 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
 
             let mut seen_memo_kw = false;
             for i in 0..kwcount {
-                let name = py::tuple::get_item(kwnames, i);
+                let name = keyword_names.get_borrowed_unchecked(i);
                 let val = *args.offset(nargs + i);
 
-                if py::unicode::compare_ascii(name, cstr!("x")) == 0 {
+                if name.compare_ascii(cstr!("x")) == 0 {
                     if !obj.is_null() {
                         py::err::set_string(
                             PyExc_TypeError,
@@ -105,7 +110,7 @@ pub(crate) unsafe extern "C" fn py_deepcopy(
                         return ptr::null_mut();
                     }
                     obj = val;
-                } else if py::unicode::compare_ascii(name, cstr!("memo")) == 0 {
+                } else if name.compare_ascii(cstr!("memo")) == 0 {
                     if seen_memo_kw || nargs == 2 {
                         py::err::set_string(
                             PyExc_TypeError,
@@ -195,6 +200,11 @@ unsafe extern "C" fn py_replace(
     kwnames: *mut PyObject,
 ) -> *mut PyObject {
     unsafe {
+        let keyword_names = if kwnames.is_null() {
+            ptr::null_mut()
+        } else {
+            PyTupleObject::cast_unchecked(kwnames)
+        };
         if nargs == 0 {
             py::err::set_string(
                 PyExc_TypeError,
@@ -213,8 +223,7 @@ unsafe extern "C" fn py_replace(
 
         let obj = *args;
         let type_pointer = obj.class();
-        let class_object = type_pointer as *mut PyObject;
-        let func = class_object.getattr_cstr(cstr!("__replace__"));
+        let func = type_pointer.getattr_cstr(cstr!("__replace__"));
         if func.is_null() {
             py::err::clear();
             py::err::format!(
@@ -233,22 +242,23 @@ unsafe extern "C" fn py_replace(
         posargs.steal_item_unchecked(0, obj.newref());
 
         let mut kwargs: *mut PyObject = ptr::null_mut();
-        let kwcount = if kwnames.is_null() {
+        let kwcount = if keyword_names.is_null() {
             0
         } else {
-            py::tuple::size(kwnames)
+            keyword_names.length()
         };
         if kwcount > 0 {
-            kwargs = py::dict::new().as_object();
+            let keyword_arguments = py::dict::new();
+            kwargs = keyword_arguments.cast();
             if kwargs.is_null() {
                 func.decref();
                 posargs.decref();
                 return ptr::null_mut();
             }
             for i in 0..kwcount {
-                let key = py::tuple::get_item(kwnames, i);
+                let key = keyword_names.get_borrowed_unchecked(i);
                 let val = *args.offset(nargs + i);
-                (kwargs as *mut PyDictObject).set_item(key, val);
+                keyword_arguments.set_item(key, val);
             }
         }
 
@@ -326,12 +336,12 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
             return -1;
         }
 
-        if py::module::add_object(module, cstr!("Error"), py_obj!("copy.Error").newref()) < 0 {
+        if module.add_module_object(cstr!("Error"), py_obj!("copy.Error").newref()) < 0 {
             return -1;
         }
 
-        let memo_type = ptr::addr_of_mut!(memo::Memo_Type) as *mut PyObject;
-        if py::module::add_object(module, cstr!("memo"), memo_type.newref()) < 0 {
+        let memo_type = ptr::addr_of_mut!(memo::Memo_Type);
+        if module.add_module_object(cstr!("memo"), memo_type.newref()) < 0 {
             return -1;
         }
 
@@ -355,7 +365,7 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
             config_module.decref();
             return -1;
         }
-        if py::module::add_object(module, cstr!("configure"), configure) < 0 {
+        if module.add_module_object(cstr!("configure"), configure) < 0 {
             config_module.decref();
             configure.decref();
             return -1;
@@ -366,7 +376,7 @@ unsafe extern "C" fn orcopium_exec(module: *mut PyObject) -> i32 {
         if get_config.is_null() {
             return -1;
         }
-        if py::module::add_object(module, cstr!("get_config"), get_config) < 0 {
+        if module.add_module_object(cstr!("get_config"), get_config) < 0 {
             get_config.decref();
             return -1;
         }
@@ -429,11 +439,7 @@ static mut MODULE_DEF: PyModuleDef = PyModuleDef {
 };
 
 /// Register a submodule on the parent and in sys.modules.
-pub unsafe fn add_submodule(
-    parent: *mut PyObject,
-    name: &CStr,
-    submodule: *mut PyObject,
-) -> i32 {
+pub unsafe fn add_submodule(parent: *mut PyObject, name: &CStr, submodule: *mut PyObject) -> i32 {
     unsafe {
         let canonical = py::unicode::from_format!(cstr!("copium.%s"), name.as_ptr());
         if canonical.is_null() {
@@ -448,7 +454,7 @@ pub unsafe fn add_submodule(
             sys_modules.set_item(canonical, submodule);
         }
 
-        let parent_name = py::module::get_name(parent);
+        let parent_name = parent.module_name();
         if !parent_name.is_null() {
             let full_name = py::unicode::from_format!(cstr!("%U.%s"), parent_name, name.as_ptr());
             if !full_name.is_null() {
@@ -461,7 +467,7 @@ pub unsafe fn add_submodule(
         }
         canonical.decref();
 
-        if py::module::add_object(parent, name, submodule) < 0 {
+        if parent.add_module_object(name, submodule) < 0 {
             submodule.decref();
             return -1;
         }

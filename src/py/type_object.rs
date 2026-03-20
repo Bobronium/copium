@@ -11,6 +11,7 @@ pub unsafe trait PyTypeObjectPtr {
     unsafe fn is_type_subclass(self) -> bool;
     unsafe fn is_atomic_immutable(self) -> bool;
     unsafe fn is_immutable_collection(self) -> bool;
+    unsafe fn ready(self) -> c_int;
 }
 
 unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
@@ -63,9 +64,14 @@ unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
             | (self == std::ptr::addr_of_mut!(PyFrozenSet_Type))
             | (self == std::ptr::addr_of_mut!(PySlice_Type))
     }
+
+    #[inline(always)]
+    unsafe fn ready(self) -> c_int {
+        pyo3_ffi::PyType_Ready(self)
+    }
 }
 
 #[inline(always)]
 pub unsafe fn ready(type_object: *mut PyTypeObject) -> c_int {
-    pyo3_ffi::PyType_Ready(type_object)
+    type_object.ready()
 }

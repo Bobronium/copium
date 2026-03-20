@@ -19,12 +19,12 @@ pub enum OnIncompatible {
 }
 
 pub struct ModuleState {
-    pub sentinel: *mut PyObject,
+    pub sentinel: *mut PyListObject,
 
     pub memo_mode: MemoMode,
     pub on_incompatible: OnIncompatible,
-    pub ignored_errors: *mut PyObject,
-    pub ignored_errors_joined: *mut PyObject,
+    pub ignored_errors: *mut PyTupleObject,
+    pub ignored_errors_joined: *mut PyUnicodeObject,
 }
 
 unsafe impl Sync for ModuleState {}
@@ -42,7 +42,7 @@ pub unsafe fn init() -> i32 {
     unsafe {
         let s = std::ptr::addr_of_mut!(STATE);
 
-        (*s).sentinel = py::list::new(0).as_object();
+        (*s).sentinel = py::list::new(0);
         if (*s).sentinel.is_null() {
             return -1;
         }
@@ -53,11 +53,11 @@ pub unsafe fn init() -> i32 {
 
 pub unsafe fn cleanup() {}
 
-unsafe fn parse_ignored_errors_from_environment() -> *mut PyObject {
+unsafe fn parse_ignored_errors_from_environment() -> *mut PyTupleObject {
     unsafe {
         let environment_value = match std::env::var("COPIUM_NO_MEMO_FALLBACK_WARNING") {
             Ok(value) if !value.is_empty() => value,
-            _ => return py::tuple::new(0).as_object(),
+            _ => return py::tuple::new(0),
         };
 
         let ignored_error_parts: Vec<&str> = environment_value
@@ -77,14 +77,14 @@ unsafe fn parse_ignored_errors_from_environment() -> *mut PyObject {
                 return ptr::null_mut();
             }
 
-            tuple.steal_item_unchecked(index as isize, item.as_object());
+            tuple.steal_item_unchecked(index as isize, item);
         }
 
-        tuple.as_object()
+        tuple
     }
 }
 
-pub unsafe fn update_suppress_warnings(new_tuple: *mut PyObject) -> i32 {
+pub unsafe fn update_suppress_warnings(new_tuple: *mut PyTupleObject) -> i32 {
     unsafe {
         let s = std::ptr::addr_of_mut!(STATE);
 
@@ -95,13 +95,13 @@ pub unsafe fn update_suppress_warnings(new_tuple: *mut PyObject) -> i32 {
         (*s).ignored_errors_joined.decref_nullable();
         (*s).ignored_errors_joined = ptr::null_mut();
 
-        if (new_tuple as *mut PyTupleObject).length() > 0 {
+        if new_tuple.length() > 0 {
             let separator = py::unicode::from_cstr(cstr!("::"));
             if separator.is_null() {
                 return -1;
             }
 
-            (*s).ignored_errors_joined = separator.join(new_tuple).as_object();
+            (*s).ignored_errors_joined = separator.join(new_tuple);
             separator.decref();
             if (*s).ignored_errors_joined.is_null() {
                 return -1;

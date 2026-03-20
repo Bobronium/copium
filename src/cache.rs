@@ -68,7 +68,7 @@ init_phase!(StrEntry, ObjEntry, CacheEntry);
 // ── Primitives ─────────────────────────────────────────────
 
 pub unsafe fn intern_str(string: &CStr) -> *mut PyObject {
-    unsafe { py::unicode::intern(string).as_object() }
+    unsafe { py::unicode::intern(string).cast() }
 }
 
 /// Resolve a dotted path like "decimal.Decimal" or "xml.etree.ElementTree.Element".
@@ -161,7 +161,7 @@ pub unsafe fn resolve_path_optional(path: &str) -> *mut PyObject {
     result
 }
 
-unsafe fn make_globals() -> *mut PyObject {
+unsafe fn make_globals() -> *mut PyDictObject {
     unsafe {
         let globals = py::dict::new();
         if globals.is_null() {
@@ -174,7 +174,7 @@ unsafe fn make_globals() -> *mut PyObject {
             globals.decref();
             return ptr::null_mut();
         }
-        globals.as_object()
+        globals
     }
 }
 
@@ -202,7 +202,7 @@ pub unsafe fn exec_cstr(code: &CStr) -> *mut PyDictObject {
             return ptr::null_mut();
         }
         result.decref();
-        globals as *mut PyDictObject
+        globals
     }
 }
 

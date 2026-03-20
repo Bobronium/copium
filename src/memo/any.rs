@@ -41,7 +41,17 @@ impl AnyMemo {
             }
 
             if existing != sentinel {
-                self.keepalive = existing as *mut PyListObject;
+                if !existing.is_list() {
+                    existing.decref();
+                    pykey.decref();
+                    py::err::set_string(
+                        PyExc_TypeError,
+                        crate::cstr!("memo keepalive slot must contain a list"),
+                    );
+                    return -1;
+                }
+
+                self.keepalive = PyListObject::cast_unchecked(existing);
                 pykey.decref();
                 return 0;
             }
@@ -54,7 +64,7 @@ impl AnyMemo {
                 return -1;
             }
 
-            if self.object.setitem(pykey, list.as_object()) < 0 {
+            if self.object.setitem(pykey, list) < 0 {
                 list.decref();
                 pykey.decref();
                 return -1;
@@ -111,7 +121,7 @@ impl Memo for AnyMemo {
                 return -1;
             }
 
-            let rc = self.object.setitem(pykey, copy.as_object());
+            let rc = self.object.setitem(pykey, copy);
             pykey.decref();
             if rc < 0 {
                 return -1;

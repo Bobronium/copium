@@ -30,8 +30,17 @@ impl DictMemo {
 
             let existing = self.dict.get_item(pykey);
             if !existing.is_null() {
+                if !existing.is_list() {
+                    pykey.decref();
+                    py::err::set_string(
+                        PyExc_TypeError,
+                        crate::cstr!("memo keepalive slot must contain a list"),
+                    );
+                    return -1;
+                }
+
                 existing.incref();
-                self.keepalive = existing as *mut PyListObject;
+                self.keepalive = PyListObject::cast_unchecked(existing);
                 pykey.decref();
                 return 0;
             }
@@ -112,7 +121,7 @@ impl Memo for DictMemo {
 
     #[inline(always)]
     unsafe fn as_call_arg(&mut self) -> *mut PyObject {
-        self.dict as *mut PyObject
+        self.dict.cast()
     }
 
     unsafe fn ensure_memo_is_valid(&mut self) -> i32 {

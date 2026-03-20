@@ -1,10 +1,10 @@
+use super::{ffi, PyTypeInfo};
+use crate::py;
 use libc::c_ulong;
 use pyo3_ffi::*;
 use std::ffi::{c_void, CStr};
 use std::os::raw::c_int;
 use std::ptr;
-use crate::py;
-use super::{ffi, PyTypeInfo};
 
 pub unsafe trait PyObjectPtr: Sized {
     unsafe fn id(self) -> *mut PyLongObject;
@@ -18,10 +18,8 @@ pub unsafe trait PyObjectPtr: Sized {
 
     unsafe fn getattr<N: PyTypeInfo>(self, name: *mut N) -> *mut PyObject;
     unsafe fn getattr_cstr(self, name: &CStr) -> *mut PyObject;
-    unsafe fn getattr_opt<N: PyTypeInfo>(self, name: *mut N, result: &mut *mut PyObject)
-        -> c_int;
-    unsafe fn set_attr<N: PyTypeInfo, V: PyTypeInfo>(self, name: *mut N, value: *mut V)
-        -> c_int;
+    unsafe fn getattr_opt<N: PyTypeInfo>(self, name: *mut N, result: &mut *mut PyObject) -> c_int;
+    unsafe fn set_attr<N: PyTypeInfo, V: PyTypeInfo>(self, name: *mut N, value: *mut V) -> c_int;
     unsafe fn set_attr_cstr<V: PyTypeInfo>(self, name: &CStr, value: *mut V) -> c_int;
     unsafe fn del_attr<N: PyTypeInfo>(self, name: *mut N) -> c_int;
     unsafe fn del_attr_cstr(self, name: &CStr) -> c_int;
@@ -40,6 +38,13 @@ pub unsafe trait PyObjectPtr: Sized {
     unsafe fn getitem<K: PyTypeInfo>(self, key: *mut K) -> *mut PyObject;
     unsafe fn get_iter(self) -> *mut PyObject;
     unsafe fn iter_next(self) -> *mut PyObject;
+    unsafe fn fast_sequence(self, message: &CStr) -> *mut PyObject;
+    unsafe fn fast_sequence_item_unchecked(self, index: Py_ssize_t) -> *mut PyObject;
+    unsafe fn fast_sequence_length(self) -> Py_ssize_t;
+    unsafe fn sequence_to_tuple(self) -> *mut PyTupleObject;
+    unsafe fn sequence_to_list(self) -> *mut PyListObject;
+    #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+    unsafe fn iter_next_item(self, item: &mut *mut PyObject) -> i32;
 
     unsafe fn repr(self) -> *mut PyUnicodeObject;
     unsafe fn str_(self) -> *mut PyUnicodeObject;
@@ -47,7 +52,9 @@ pub unsafe trait PyObjectPtr: Sized {
 
     unsafe fn is_type(self) -> bool;
     unsafe fn is_tuple(self) -> bool;
+    unsafe fn is_list(self) -> bool;
     unsafe fn is_dict(self) -> bool;
+    unsafe fn is_long(self) -> bool;
     unsafe fn is_unicode(self) -> bool;
     unsafe fn is_bytes(self) -> bool;
     unsafe fn is_none(self) -> bool;
@@ -65,7 +72,6 @@ pub unsafe trait PyObjectPtr: Sized {
     ) -> c_int {
         self.getattr_opt(name, result)
     }
-
 }
 
 unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
@@ -122,20 +128,12 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     }
 
     #[inline(always)]
-    unsafe fn getattr_opt<N: PyTypeInfo>(
-        self,
-        name: *mut N,
-        result: &mut *mut PyObject,
-    ) -> c_int {
+    unsafe fn getattr_opt<N: PyTypeInfo>(self, name: *mut N, result: &mut *mut PyObject) -> c_int {
         ffi::PyObject_GetOptionalAttr(self as *mut PyObject, name as *mut PyObject, result)
     }
 
     #[inline(always)]
-    unsafe fn set_attr<N: PyTypeInfo, V: PyTypeInfo>(
-        self,
-        name: *mut N,
-        value: *mut V,
-    ) -> c_int {
+    unsafe fn set_attr<N: PyTypeInfo, V: PyTypeInfo>(self, name: *mut N, value: *mut V) -> c_int {
         pyo3_ffi::PyObject_SetAttr(
             self as *mut PyObject,
             name as *mut PyObject,
@@ -224,6 +222,37 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     }
 
     #[inline(always)]
+    unsafe fn fast_sequence(self, message: &CStr) -> *mut PyObject {
+        ffi::PySequence_Fast(self as *mut PyObject, message.as_ptr())
+    }
+
+    #[inline(always)]
+    unsafe fn fast_sequence_item_unchecked(self, index: Py_ssize_t) -> *mut PyObject {
+        ffi::PySequence_Fast_GET_ITEM(self as *mut PyObject, index)
+    }
+
+    #[inline(always)]
+    unsafe fn fast_sequence_length(self) -> Py_ssize_t {
+        ffi::PySequence_Fast_GET_SIZE(self as *mut PyObject)
+    }
+
+    #[inline(always)]
+    unsafe fn sequence_to_tuple(self) -> *mut PyTupleObject {
+        pyo3_ffi::PySequence_Tuple(self as *mut PyObject) as *mut PyTupleObject
+    }
+
+    #[inline(always)]
+    unsafe fn sequence_to_list(self) -> *mut PyListObject {
+        pyo3_ffi::PySequence_List(self as *mut PyObject) as *mut PyListObject
+    }
+
+    #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
+    #[inline(always)]
+    unsafe fn iter_next_item(self, item: &mut *mut PyObject) -> i32 {
+        ffi::PyIter_NextItem(self as *mut PyObject, item)
+    }
+
+    #[inline(always)]
     unsafe fn repr(self) -> *mut PyUnicodeObject {
         pyo3_ffi::PyObject_Repr(self as *mut PyObject) as *mut PyUnicodeObject
     }
@@ -249,8 +278,18 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     }
 
     #[inline(always)]
+    unsafe fn is_list(self) -> bool {
+        (ffi::tp_flags_of(self.class()) & (Py_TPFLAGS_LIST_SUBCLASS as c_ulong)) != 0
+    }
+
+    #[inline(always)]
     unsafe fn is_dict(self) -> bool {
         (ffi::tp_flags_of(self.class()) & (Py_TPFLAGS_DICT_SUBCLASS as c_ulong)) != 0
+    }
+
+    #[inline(always)]
+    unsafe fn is_long(self) -> bool {
+        (ffi::tp_flags_of(self.class()) & (Py_TPFLAGS_LONG_SUBCLASS as c_ulong)) != 0
     }
 
     #[inline(always)]
@@ -307,7 +346,10 @@ pub unsafe fn call_one_arg<O: PyTypeInfo, A: PyTypeInfo>(
 }
 
 #[inline(always)]
-pub unsafe fn call_with<O: PyTypeInfo, A: PyTypeInfo>(object: *mut O, args: *mut A) -> *mut PyObject {
+pub unsafe fn call_with<O: PyTypeInfo, A: PyTypeInfo>(
+    object: *mut O,
+    args: *mut A,
+) -> *mut PyObject {
     object.call_with(args)
 }
 
@@ -327,11 +369,8 @@ pub unsafe fn get_iter<O: PyTypeInfo>(object: *mut O) -> *mut PyObject {
 
 #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
 #[inline(always)]
-pub unsafe fn iter_next_item<I: PyTypeInfo>(
-    iterator: *mut I,
-    item: &mut *mut PyObject,
-) -> i32 {
-    ffi::PyIter_NextItem(iterator as *mut PyObject, item)
+pub unsafe fn iter_next_item<I: PyTypeInfo>(iterator: *mut I, item: &mut *mut PyObject) -> i32 {
+    iterator.iter_next_item(item)
 }
 
 #[inline(always)]

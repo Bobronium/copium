@@ -77,7 +77,7 @@ unsafe fn apply_patch(_py: Python<'_>, fn_ptr: *mut PyObject, target: *mut PyObj
             return -1;
         }
 
-        py::vectorcall::set_function_vectorcall(fn_ptr, copium_deepcopy_vectorcall);
+        fn_ptr.set_vectorcall_function(copium_deepcopy_vectorcall);
         1
     }
 }
@@ -95,17 +95,14 @@ unsafe fn unapply_patch(_py: Python<'_>, fn_ptr: *mut PyObject) -> i32 {
             return -1;
         }
 
-        let raw = py::capsule::PyCapsulePtr::get_pointer(
-            capsule,
-            capsule_name(),
-        );
+        let raw = capsule.get_pointer(capsule_name());
         capsule.decref();
         if raw.is_null() {
             return -1;
         }
         let original_vc = std::mem::transmute::<*mut std::ffi::c_void, vectorcallfunc>(raw);
 
-        py::vectorcall::set_function_vectorcall(fn_ptr, original_vc);
+        fn_ptr.set_vectorcall_function(original_vc);
 
         fn_ptr.del_attr_cstr(crate::cstr!("__copium_original__"));
         py::err::clear();
@@ -131,7 +128,7 @@ unsafe fn template_code() -> *mut PyObject {
     use crate::{py_cache, py_exec, py_obj, py_str};
     py_cache!({
         let filters = py_obj!("warnings.filters");
-        let saved_warnings = py::seq::to_list(filters).as_object();
+        let saved_warnings = filters.sequence_to_list();
 
         let warnings_set = py_obj!("warnings.simplefilter").call_one(py_str!("ignore"));
         if !warnings_set.is_null() {
@@ -170,12 +167,13 @@ unsafe fn template_code() -> *mut PyObject {
 unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
     unsafe {
         let tc = template_code();
-        let template_consts = tc.getattr_cstr(crate::cstr!("co_consts"));
-        if template_consts.is_null() {
+        let template_consts_object = tc.getattr_cstr(crate::cstr!("co_consts"));
+        if template_consts_object.is_null() {
             return ptr::null_mut();
         }
+        let template_consts = PyTupleObject::cast_unchecked(template_consts_object);
 
-        let n = py::tuple::size(template_consts);
+        let n = template_consts.length();
         if n < 0 {
             template_consts.decref();
             return ptr::null_mut();
@@ -183,10 +181,10 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
 
         let mut sentinel_idx: Py_ssize_t = -1;
         for i in 0..n {
-            let item = py::tuple::get_item(template_consts, i);
+            let item = template_consts.get_borrowed_unchecked(i);
             if !item.is_null()
                 && item.is_unicode()
-                && py::unicode::compare_ascii(item, crate::cstr!("copium.deepcopy")) == 0
+                && item.compare_ascii(crate::cstr!("copium.deepcopy")) == 0
             {
                 sentinel_idx = i;
                 break;
@@ -202,7 +200,7 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
             return ptr::null_mut();
         }
 
-        let new_consts = py::list::new(n).as_object();
+        let new_consts = py::list::new(n);
         if new_consts.is_null() {
             template_consts.decref();
             return ptr::null_mut();
@@ -212,14 +210,14 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
             let item = if j == sentinel_idx {
                 target
             } else {
-                py::tuple::get_item(template_consts, j)
+                template_consts.get_borrowed_unchecked(j)
             };
             if item.is_null() {
                 new_consts.decref();
                 template_consts.decref();
                 return ptr::null_mut();
             }
-            if py::list::set_item(new_consts, j, item.newref()) < 0 {
+            if new_consts.steal_item(j, item.newref()) < 0 {
                 new_consts.decref();
                 template_consts.decref();
                 return ptr::null_mut();
@@ -227,7 +225,7 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
         }
         template_consts.decref();
 
-        let consts_tuple = py::list::as_tuple(new_consts).as_object();
+        let consts_tuple = new_consts.as_tuple();
         new_consts.decref();
         if consts_tuple.is_null() {
             return ptr::null_mut();
@@ -239,14 +237,13 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
             return ptr::null_mut();
         }
 
-        let kwargs = py::dict::new().as_object();
+        let kwargs = py::dict::new();
         if kwargs.is_null() {
             replace.decref();
             consts_tuple.decref();
             return ptr::null_mut();
         }
-        if (kwargs as *mut PyDictObject).set_item_cstr(crate::cstr!("co_consts"), consts_tuple) < 0
-        {
+        if kwargs.set_item_cstr(crate::cstr!("co_consts"), consts_tuple) < 0 {
             kwargs.decref();
             replace.decref();
             consts_tuple.decref();
@@ -254,7 +251,7 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
         }
         consts_tuple.decref();
 
-        let empty = py::tuple::new(0).as_object();
+        let empty = py::tuple::new(0);
         if empty.is_null() {
             kwargs.decref();
             replace.decref();

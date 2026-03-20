@@ -49,6 +49,10 @@ pub(crate) unsafe fn chain_type_error(msg: *mut PyObject) {
     }
 }
 
+pub(crate) unsafe fn chain_typed_type_error<T: PyTypeInfo>(message: *mut T) {
+    unsafe { chain_type_error(message.cast()) }
+}
+
 // ── Registry & reduce dispatch ─────────────────────────────
 
 pub(crate) unsafe fn try_reduce_via_registry(
@@ -56,7 +60,7 @@ pub(crate) unsafe fn try_reduce_via_registry(
     tp: *mut PyTypeObject,
 ) -> *mut PyObject {
     unsafe {
-        let reducer = py_obj!(PyDictObject, "copyreg.dispatch_table").get_item(tp as *mut PyObject);
+        let reducer = py_obj!(PyDictObject, "copyreg.dispatch_table").get_item(tp);
         if reducer.is_null() {
             return ptr::null_mut();
         }
@@ -76,7 +80,7 @@ pub(crate) unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mu
         let mut reduce_ex: *mut PyObject = ptr::null_mut();
         let has = obj.get_optional_attr(py_str!("__reduce_ex__"), &mut reduce_ex);
         if has > 0 {
-            let four = py::long::from_i64(4).as_object();
+            let four = py::long::from_i64(4);
             let res = reduce_ex.call_one(four);
             four.decref();
             reduce_ex.decref();
@@ -107,7 +111,7 @@ pub(crate) unsafe fn call_reduce_method_preferring_ex(obj: *mut PyObject) -> *mu
 
 pub(crate) struct ReduceParts {
     pub(crate) callable: *mut PyObject,
-    pub(crate) argtup: *mut PyObject,
+    pub(crate) argument_tuple: *mut PyTupleObject,
     pub(crate) state: *mut PyObject,
     pub(crate) listitems: *mut PyObject,
     pub(crate) dictitems: *mut PyObject,
@@ -126,7 +130,7 @@ pub(crate) unsafe fn validate_reduce_tuple(
     unsafe {
         let empty = ReduceParts {
             callable: ptr::null_mut(),
-            argtup: ptr::null_mut(),
+            argument_tuple: ptr::null_mut(),
             state: ptr::null_mut(),
             listitems: ptr::null_mut(),
             dictitems: ptr::null_mut(),
@@ -143,8 +147,8 @@ pub(crate) unsafe fn validate_reduce_tuple(
             return (ReduceKind::Error, empty);
         }
 
-        let tup = reduce_result as *mut PyTupleObject;
-        let size = tup.length();
+        let reduce_tuple = PyTupleObject::cast_unchecked(reduce_result);
+        let size = reduce_tuple.length();
         if size < 2 || size > 5 {
             py::err::set_string(
                 PyExc_TypeError,
@@ -153,51 +157,53 @@ pub(crate) unsafe fn validate_reduce_tuple(
             return (ReduceKind::Error, empty);
         }
 
-        let callable = tup.get_borrowed_unchecked(0);
-        let mut argtup = tup.get_borrowed_unchecked(1);
+        let callable = reduce_tuple.get_borrowed_unchecked(0);
+        let argument_tuple_object = reduce_tuple.get_borrowed_unchecked(1);
         let none = py::NoneObject;
         let state_raw = if size >= 3 {
-            tup.get_borrowed_unchecked(2)
+            reduce_tuple.get_borrowed_unchecked(2)
         } else {
             none
         };
         let list_raw = if size >= 4 {
-            tup.get_borrowed_unchecked(3)
+            reduce_tuple.get_borrowed_unchecked(3)
         } else {
             none
         };
         let dict_raw = if size == 5 {
-            tup.get_borrowed_unchecked(4)
+            reduce_tuple.get_borrowed_unchecked(4)
         } else {
             none
         };
 
-        if !argtup.is_tuple() {
-            let coerced = py::seq::to_tuple(argtup).as_object();
+        let argument_tuple = if argument_tuple_object.is_tuple() {
+            argument_tuple_object.cast::<PyTupleObject>()
+        } else {
+            let coerced = argument_tuple_object.sequence_to_tuple();
             if coerced.is_null() {
                 let msg = py::unicode::from_format!(
                     crate::cstr!(
                         "second element of the tuple returned by %s.__reduce__ must be a tuple, not %.200s"
                     ),
                     (*reducing_type).tp_name,
-                    (*argtup.class()).tp_name,
+                    (*argument_tuple_object.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg.as_object());
+                    chain_typed_type_error(msg);
                 }
                 return (ReduceKind::Error, empty);
             }
-            let old = argtup;
-            tup.set_slot_steal_unchecked(1, coerced);
+            let old = argument_tuple_object;
+            reduce_tuple.set_slot_steal_unchecked(1, coerced);
             old.decref();
-            argtup = coerced;
-        }
+            coerced
+        };
 
         (
             ReduceKind::Tuple,
             ReduceParts {
                 callable,
-                argtup,
+                argument_tuple,
                 state: if state_raw == none {
                     ptr::null_mut()
                 } else {
@@ -240,11 +246,14 @@ unsafe fn call_tp_new(
     }
 }
 
-unsafe fn reconstruct_newobj<M: Memo>(argtup: *mut PyObject, memo: &mut M) -> *mut PyObject {
+unsafe fn reconstruct_newobj<M: Memo>(
+    argument_tuple: *mut PyTupleObject,
+    memo: &mut M,
+) -> *mut PyObject {
     unsafe {
-        let tup = argtup as *mut PyTupleObject;
-        let nargs = tup.length();
-        if nargs < 1 {
+        let tuple = argument_tuple;
+        let argument_count = tuple.length();
+        if argument_count < 1 {
             py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("__newobj__ requires at least 1 argument"),
@@ -252,116 +261,117 @@ unsafe fn reconstruct_newobj<M: Memo>(argtup: *mut PyObject, memo: &mut M) -> *m
             return ptr::null_mut();
         }
 
-        let cls = tup.get_borrowed_unchecked(0);
-        if !cls.is_type() {
+        let class_object = tuple.get_borrowed_unchecked(0);
+        if !class_object.is_type() {
             py::err::format!(
                 PyExc_TypeError,
                 crate::cstr!("__newobj__ arg 1 must be a type, not %.200s"),
-                (*cls.class()).tp_name,
+                (*class_object.class()).tp_name,
             );
             return ptr::null_mut();
         }
+        let class_pointer = class_object.cast::<PyTypeObject>();
 
-        let args = bail!(py::tuple::new(nargs - 1));
+        let arguments = bail!(py::tuple::new(argument_count - 1));
 
-        for i in 1..nargs {
-            let arg = tup.get_borrowed_unchecked(i);
-            let copied = deepcopy::deepcopy(arg, memo);
+        for argument_index in 1..argument_count {
+            let argument = tuple.get_borrowed_unchecked(argument_index);
+            let copied = deepcopy::deepcopy(argument, memo);
             if copied.is_error() {
-                args.decref();
+                arguments.decref();
                 return ptr::null_mut();
             }
-            args.set_slot_steal_unchecked(i - 1, copied.into_raw());
+            arguments.set_slot_steal_unchecked(argument_index - 1, copied.into_raw());
         }
 
-        let instance = call_tp_new(cls as *mut PyTypeObject, args.as_object(), ptr::null_mut());
-        args.decref();
+        let instance = call_tp_new(class_pointer, arguments.cast(), ptr::null_mut());
+        arguments.decref();
         instance
     }
 }
 
 unsafe fn reconstruct_newobj_ex<M: Memo>(
-    argtup: *mut PyObject,
+    argument_tuple: *mut PyTupleObject,
     memo: &mut M,
     reducing_type: *mut PyTypeObject,
 ) -> *mut PyObject {
     unsafe {
-        let tup = argtup as *mut PyTupleObject;
-        if tup.length() != 3 {
+        if argument_tuple.length() != 3 {
             py::err::format!(
                 PyExc_TypeError,
                 crate::cstr!("__newobj_ex__ requires 3 arguments, got %zd"),
-                tup.length(),
+                argument_tuple.length(),
             );
             return ptr::null_mut();
         }
 
-        let cls = tup.get_borrowed_unchecked(0);
-        let mut args = tup.get_borrowed_unchecked(1);
-        let mut kwargs = tup.get_borrowed_unchecked(2);
+        let class_object = argument_tuple.get_borrowed_unchecked(0);
+        let mut arguments_object = argument_tuple.get_borrowed_unchecked(1);
+        let mut keyword_arguments_object = argument_tuple.get_borrowed_unchecked(2);
 
-        if !cls.is_type() {
+        if !class_object.is_type() {
             py::err::format!(
                 PyExc_TypeError,
                 crate::cstr!("__newobj_ex__ arg 1 must be a type, not %.200s"),
-                (*cls.class()).tp_name,
+                (*class_object.class()).tp_name,
             );
             return ptr::null_mut();
         }
+        let class_pointer = class_object.cast::<PyTypeObject>();
 
-        let mut coerced_args: *mut PyObject = ptr::null_mut();
+        let mut coerced_arguments: *mut PyTupleObject = ptr::null_mut();
         let mut coerced_kwargs: *mut PyDictObject = ptr::null_mut();
 
-        if !args.is_tuple() {
-            coerced_args = py::seq::to_tuple(args).as_object();
-            if coerced_args.is_null() {
+        if !arguments_object.is_tuple() {
+            coerced_arguments = arguments_object.sequence_to_tuple();
+            if coerced_arguments.is_null() {
                 let msg = py::unicode::from_format!(
                     crate::cstr!(
                         "__newobj_ex__ args in %s.__reduce__ result must be a tuple, not %.200s"
                     ),
                     (*reducing_type).tp_name,
-                    (*args.class()).tp_name,
+                    (*arguments_object.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg.as_object());
+                    chain_typed_type_error(msg);
                 }
                 return ptr::null_mut();
             }
-            args = coerced_args;
+            arguments_object = coerced_arguments.cast();
         }
 
-        if !kwargs.is_dict() {
+        if !keyword_arguments_object.is_dict() {
             coerced_kwargs = py::dict::new_presized(0);
             if coerced_kwargs.is_null() {
-                coerced_args.decref_nullable();
+                coerced_arguments.decref_nullable();
                 return ptr::null_mut();
             }
-            if coerced_kwargs.merge(kwargs, true) < 0 {
+            if coerced_kwargs.merge(keyword_arguments_object, true) < 0 {
                 let msg = py::unicode::from_format!(
                     crate::cstr!(
                         "__newobj_ex__ kwargs in %s.__reduce__ result must be a dict, not %.200s"
                     ),
                     (*reducing_type).tp_name,
-                    (*kwargs.class()).tp_name,
+                    (*keyword_arguments_object.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg.as_object());
+                    chain_typed_type_error(msg);
                 }
-                coerced_args.decref_nullable();
+                coerced_arguments.decref_nullable();
                 coerced_kwargs.decref();
                 return ptr::null_mut();
             }
-            kwargs = coerced_kwargs.as_object();
+            keyword_arguments_object = coerced_kwargs.cast();
         }
 
-        let copied_args = deepcopy::deepcopy(args, memo);
-        coerced_args.decref_nullable();
+        let copied_args = deepcopy::deepcopy(arguments_object, memo);
+        coerced_arguments.decref_nullable();
         if copied_args.is_error() {
             coerced_kwargs.decref_nullable();
             return ptr::null_mut();
         }
 
-        let copied_kwargs = deepcopy::deepcopy(kwargs, memo);
+        let copied_kwargs = deepcopy::deepcopy(keyword_arguments_object, memo);
         coerced_kwargs.decref_nullable();
         if copied_kwargs.is_error() {
             copied_args.into_raw().decref();
@@ -370,7 +380,7 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
 
         let ca = copied_args.into_raw();
         let ck = copied_kwargs.into_raw();
-        let instance = call_tp_new(cls as *mut PyTypeObject, ca, ck);
+        let instance = call_tp_new(class_pointer, ca, ck);
         ca.decref();
         ck.decref();
         instance
@@ -379,30 +389,29 @@ unsafe fn reconstruct_newobj_ex<M: Memo>(
 
 unsafe fn reconstruct_callable<M: Memo>(
     callable: *mut PyObject,
-    argtup: *mut PyObject,
+    argument_tuple: *mut PyTupleObject,
     memo: &mut M,
 ) -> *mut PyObject {
     unsafe {
-        let tup = argtup as *mut PyTupleObject;
-        let nargs = tup.length();
+        let argument_count = argument_tuple.length();
 
-        if nargs == 0 {
+        if argument_count == 0 {
             return callable.call();
         }
 
-        let copied_args = bail!(py::tuple::new(nargs));
+        let copied_args = bail!(py::tuple::new(argument_count));
 
-        for i in 0..nargs {
-            let arg = tup.get_borrowed_unchecked(i);
-            let copied = deepcopy::deepcopy(arg, memo);
+        for argument_index in 0..argument_count {
+            let argument = argument_tuple.get_borrowed_unchecked(argument_index);
+            let copied = deepcopy::deepcopy(argument, memo);
             if copied.is_error() {
                 copied_args.decref();
                 return ptr::null_mut();
             }
-            copied_args.set_slot_steal_unchecked(i, copied.into_raw());
+            copied_args.set_slot_steal_unchecked(argument_index, copied.into_raw());
         }
 
-        let instance = callable.call_with(copied_args.as_object());
+        let instance = callable.call_with(copied_args);
         copied_args.decref();
         instance
     }
@@ -465,7 +474,8 @@ unsafe fn apply_dict_state<M: Memo>(
                 copied.decref();
                 return -1;
             }
-            let ret = (instance_dict as *mut PyDictObject).merge(copied, true);
+            let instance_dictionary = PyDictObject::cast_unchecked(instance_dict);
+            let ret = instance_dictionary.merge(copied, true);
             instance_dict.decref();
             if ret < 0 {
                 let msg = py::unicode::from_format!(
@@ -476,13 +486,14 @@ unsafe fn apply_dict_state<M: Memo>(
                     (*copied.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg.as_object());
+                    chain_typed_type_error(msg);
                 }
             }
             copied.decref();
             return ret;
         }
 
+        let copied_dictionary = PyDictObject::cast_unchecked(copied);
         let instance_dict = instance.getattr(py_str!("__dict__"));
         if instance_dict.is_null() {
             copied.decref();
@@ -494,7 +505,7 @@ unsafe fn apply_dict_state<M: Memo>(
         let mut pos: Py_ssize_t = 0;
         let mut ret: c_int = 0;
 
-        while (copied as *mut PyDictObject).dict_next(&mut pos, &mut key, &mut value) {
+        while copied_dictionary.dict_next(&mut pos, &mut key, &mut value) {
             if instance_dict.setitem(key, value) < 0 {
                 ret = -1;
                 break;
@@ -534,7 +545,7 @@ unsafe fn apply_slot_state<M: Memo>(
                     (*copied.class()).tp_name,
                 );
                 if !msg.is_null() {
-                    chain_type_error(msg.as_object());
+                    chain_typed_type_error(msg);
                 }
                 copied.decref();
                 return -1;
@@ -558,13 +569,13 @@ unsafe fn apply_slot_state<M: Memo>(
                 if pair.is_null() {
                     break;
                 }
-                let seq = py::seq::fast(pair, crate::cstr!("items() must return pairs"));
+                let seq = pair.fast_sequence(crate::cstr!("items() must return pairs"));
                 pair.decref();
                 if seq.is_null() {
                     ret = -1;
                     break;
                 }
-                if py::seq::fast_length(seq) != 2 {
+                if seq.fast_sequence_length() != 2 {
                     seq.decref();
                     if py::err::occurred().is_null() {
                         py::err::set_string(
@@ -575,8 +586,8 @@ unsafe fn apply_slot_state<M: Memo>(
                     ret = -1;
                     break;
                 }
-                let k = py::seq::fast_borrow_item_unchecked(seq, 0);
-                let v = py::seq::fast_borrow_item_unchecked(seq, 1);
+                let k = seq.fast_sequence_item_unchecked(0);
+                let v = seq.fast_sequence_item_unchecked(1);
                 let rc = instance.set_attr(k, v);
                 seq.decref();
                 if rc < 0 {
@@ -596,7 +607,9 @@ unsafe fn apply_slot_state<M: Memo>(
         let mut pos: Py_ssize_t = 0;
         let mut ret: c_int = 0;
 
-        while (copied as *mut PyDictObject).dict_next(&mut pos, &mut key, &mut value) {
+        let copied_dictionary = PyDictObject::cast_unchecked(copied);
+
+        while copied_dictionary.dict_next(&mut pos, &mut key, &mut value) {
             if instance.set_attr(key, value) < 0 {
                 ret = -1;
                 break;
@@ -617,10 +630,12 @@ unsafe fn apply_state_tuple<M: Memo>(
         let mut dict_state = state;
         let mut slotstate: *mut PyObject = ptr::null_mut();
 
-        if state.is_tuple() && (state as *mut PyTupleObject).length() == 2 {
-            let tup = state as *mut PyTupleObject;
-            dict_state = tup.get_borrowed_unchecked(0);
-            slotstate = tup.get_borrowed_unchecked(1);
+        if state.is_tuple() {
+            let tuple_state = PyTupleObject::cast_unchecked(state);
+            if tuple_state.length() == 2 {
+                dict_state = tuple_state.get_borrowed_unchecked(0);
+                slotstate = tuple_state.get_borrowed_unchecked(1);
+            }
         }
 
         if apply_dict_state(instance, dict_state, memo) < 0 {
@@ -708,18 +723,50 @@ unsafe fn apply_dictitems<M: Memo>(
             }
 
             let (mut key, mut value);
-            if pair.is_tuple() && (pair as *mut PyTupleObject).length() == 2 {
-                let ptup = pair as *mut PyTupleObject;
-                key = ptup.get_borrowed_unchecked(0).newref();
-                value = ptup.get_borrowed_unchecked(1).newref();
+            if pair.is_tuple() {
+                let pair_tuple = PyTupleObject::cast_unchecked(pair);
+                if pair_tuple.length() == 2 {
+                    key = pair_tuple.get_borrowed_unchecked(0).newref();
+                    value = pair_tuple.get_borrowed_unchecked(1).newref();
+                } else {
+                    let seq = pair.fast_sequence(crate::cstr!("cannot unpack non-sequence"));
+                    if seq.is_null() {
+                        pair.decref();
+                        ret = -1;
+                        break;
+                    }
+                    let n = seq.fast_sequence_length();
+                    if n != 2 {
+                        seq.decref();
+                        pair.decref();
+                        if n < 2 {
+                            py::err::format!(
+                                PyExc_ValueError,
+                                crate::cstr!("not enough values to unpack (expected 2, got %zd)"),
+                                n,
+                            );
+                        } else {
+                            py::err::format!(
+                                PyExc_ValueError,
+                                crate::cstr!("too many values to unpack (expected 2, got %zd)"),
+                                n,
+                            );
+                        }
+                        ret = -1;
+                        break;
+                    }
+                    key = seq.fast_sequence_item_unchecked(0).newref();
+                    value = seq.fast_sequence_item_unchecked(1).newref();
+                    seq.decref();
+                }
             } else {
-                let seq = py::seq::fast(pair, crate::cstr!("cannot unpack non-sequence"));
+                let seq = pair.fast_sequence(crate::cstr!("cannot unpack non-sequence"));
                 if seq.is_null() {
                     pair.decref();
                     ret = -1;
                     break;
                 }
-                let n = py::seq::fast_length(seq);
+                let n = seq.fast_sequence_length();
                 if n != 2 {
                     seq.decref();
                     pair.decref();
@@ -739,8 +786,8 @@ unsafe fn apply_dictitems<M: Memo>(
                     ret = -1;
                     break;
                 }
-                key = py::seq::fast_borrow_item_unchecked(seq, 0).newref();
-                value = py::seq::fast_borrow_item_unchecked(seq, 1).newref();
+                key = seq.fast_sequence_item_unchecked(0).newref();
+                value = seq.fast_sequence_item_unchecked(1).newref();
                 seq.decref();
             }
             pair.decref();
@@ -815,11 +862,11 @@ pub unsafe fn reconstruct<M: Memo>(
         }
 
         let instance = if parts.callable == py_obj!("copyreg.__newobj__") {
-            reconstruct_newobj(parts.argtup, memo)
+            reconstruct_newobj(parts.argument_tuple, memo)
         } else if parts.callable == py_obj!("copyreg.__newobj_ex__") {
-            reconstruct_newobj_ex(parts.argtup, memo, tp)
+            reconstruct_newobj_ex(parts.argument_tuple, memo, tp)
         } else {
-            reconstruct_callable(parts.callable, parts.argtup, memo)
+            reconstruct_callable(parts.callable, parts.argument_tuple, memo)
         };
 
         if instance.is_null() {

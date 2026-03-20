@@ -60,7 +60,7 @@ impl PyMemoObject {
     }
 
     #[cold]
-    pub unsafe fn to_dict(&self) -> *mut PyObject {
+    pub unsafe fn to_dict(&self) -> *mut PyDictObject {
         unsafe {
             let dict = py::dict::new_presized(0);
             if dict.is_null() {
@@ -68,13 +68,13 @@ impl PyMemoObject {
             }
 
             if self.table.slots.is_null() {
-                return dict.as_object();
+                return dict;
             }
 
             for i in 0..self.table.size {
                 let entry = &*self.table.slots.add(i);
                 if entry.key != 0 && entry.key != TOMBSTONE {
-                    let pykey = py::long::from_ptr(entry.key as *mut c_void).as_object();
+                    let pykey = py::long::from_ptr(entry.key as *mut c_void);
                     if pykey.is_null() {
                         dict.decref();
                         return ptr::null_mut();
@@ -88,15 +88,14 @@ impl PyMemoObject {
                 }
             }
 
-            dict.as_object()
+            dict
         }
     }
 
     #[cold]
-    pub unsafe fn sync_from_dict(&mut self, dict: *mut PyObject, orig_size: Py_ssize_t) -> i32 {
+    pub unsafe fn sync_from_dict(&mut self, dict: *mut PyDictObject, orig_size: Py_ssize_t) -> i32 {
         unsafe {
-            let dict_typed = dict as *mut PyDictObject;
-            let cur_size = dict_typed.len();
+            let cur_size = dict.len();
             if cur_size <= orig_size {
                 return 0;
             }
@@ -106,15 +105,15 @@ impl PyMemoObject {
             let mut value: *mut PyObject = ptr::null_mut();
             let mut idx: Py_ssize_t = 0;
 
-            while dict_typed.dict_next(&mut pos, &mut py_key, &mut value) {
+            while dict.dict_next(&mut pos, &mut py_key, &mut value) {
                 idx += 1;
                 if idx <= orig_size {
                     continue;
                 }
-                if !py::long::check(py_key) {
+                if !py_key.is_long() {
                     continue;
                 }
-                let key = py::long::as_ptr(py_key) as usize;
+                let key = py_key.as_void_ptr() as usize;
                 if key == 0 && !py::err::occurred().is_null() {
                     return -1;
                 }
@@ -163,7 +162,7 @@ impl Memo for PyMemoObject {
         probe: &Self::Probe,
     ) -> i32 {
         let key = original as usize;
-        if unlikely(self.table.insert_h(key, copy.as_object(), *probe) < 0) {
+        if unlikely(self.table.insert_h(key, copy.cast(), *probe) < 0) {
             return -1;
         }
         self.keepalive.append(original);
@@ -176,7 +175,7 @@ impl Memo for PyMemoObject {
     }
 
     unsafe fn as_call_arg(&mut self) -> *mut PyObject {
-        self as *mut PyMemoObject as *mut PyObject
+        std::ptr::from_mut(self).cast()
     }
 
     unsafe fn checkpoint(&mut self) -> Option<MemoCheckpoint> {

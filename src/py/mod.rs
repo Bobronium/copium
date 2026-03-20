@@ -29,13 +29,15 @@ pub mod type_object;
 pub mod unicode;
 pub mod vectorcall;
 
-pub use ffi::*;
 pub use bytearray::PyBufPtr;
 pub use capsule::PyCapsulePtr;
 pub use dict::PyMapPtr;
+pub use ffi::*;
 pub use frame::PyFramePtr;
 pub use list::PyMutSeqPtr;
+pub use long::PyLongPtr;
 pub use method::PyBoundMethodPtr;
+pub use module::PyModulePtr;
 pub use object::{PyObjectPtr, PyObjectSlotPtr};
 pub use seq::PySeqPtr;
 pub use set::{PyMutSetPtr, PySetPtr};
@@ -93,9 +95,12 @@ pytype! {
     PySliceObject => PySlice_Type,
     PyLongObject => PyLong_Type,
     PyCodeObject => PyCode_Type,
+    PyFrameObject => PyFrame_Type,
+    PyTypeObject => PyType_Type,
 }
 
 #[allow(non_upper_case_globals)]
 pub const NoneObject: *mut PyObject = unsafe { &raw const _Py_NoneStruct as *const _ as *mut _ };
 #[allow(non_upper_case_globals)]
-pub const EllipsisObject: *mut PyObject = unsafe { &raw const _Py_EllipsisObject as *const _ as *mut _ };
+pub const EllipsisObject: *mut PyObject =
+    unsafe { &raw const _Py_EllipsisObject as *const _ as *mut _ };

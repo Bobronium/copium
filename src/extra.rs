@@ -10,11 +10,16 @@ unsafe extern "C" fn py_replicate(
     kwnames: *mut PyObject,
 ) -> *mut PyObject {
     unsafe {
+        let keyword_names = if kwnames.is_null() {
+            ptr::null_mut()
+        } else {
+            PyTupleObject::cast_unchecked(kwnames)
+        };
         if nargs != 2 {
             py::err::set_string(PyExc_TypeError, crate::cstr!("replicate(obj, n, /)"));
             return ptr::null_mut();
         }
-        if !kwnames.is_null() && (kwnames as *mut PyTupleObject).length() > 0 {
+        if !keyword_names.is_null() && keyword_names.length() > 0 {
             py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("replicate() does not accept keyword arguments"),
@@ -23,7 +28,7 @@ unsafe extern "C" fn py_replicate(
         }
 
         let obj = *args;
-        let n = py::long::as_i64(*args.add(1));
+        let n = (*args.add(1)).as_i64();
         if n == -1 && !py::err::occurred().is_null() {
             return ptr::null_mut();
         }
@@ -33,7 +38,7 @@ unsafe extern "C" fn py_replicate(
         }
 
         if n == 0 {
-            return py::list::new(0).as_object();
+            return py::list::new(0).cast();
         }
 
         let type_pointer = obj.class();
@@ -45,7 +50,7 @@ unsafe extern "C" fn py_replicate(
             for i in 0..n as Py_ssize_t {
                 out.steal_item_unchecked(i, obj.newref());
             }
-            return out.as_object();
+            return out.cast();
         }
 
         let out = py::list::new(n as Py_ssize_t);
@@ -63,7 +68,7 @@ unsafe extern "C" fn py_replicate(
             }
             out.steal_item_unchecked(i, copy.into_raw());
         }
-        out.as_object()
+        out.cast()
     }
 }
 
@@ -74,6 +79,11 @@ unsafe extern "C" fn py_repeatcall(
     kwnames: *mut PyObject,
 ) -> *mut PyObject {
     unsafe {
+        let keyword_names = if kwnames.is_null() {
+            ptr::null_mut()
+        } else {
+            PyTupleObject::cast_unchecked(kwnames)
+        };
         if nargs != 2 {
             py::err::set_string(
                 PyExc_TypeError,
@@ -81,7 +91,7 @@ unsafe extern "C" fn py_repeatcall(
             );
             return ptr::null_mut();
         }
-        if !kwnames.is_null() && (kwnames as *mut PyTupleObject).length() > 0 {
+        if !keyword_names.is_null() && keyword_names.length() > 0 {
             py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("repeatcall() takes no keyword arguments"),
@@ -95,7 +105,7 @@ unsafe extern "C" fn py_repeatcall(
             return ptr::null_mut();
         }
 
-        let n = py::long::as_i64(*args.add(1));
+        let n = (*args.add(1)).as_i64();
         if n == -1 && !py::err::occurred().is_null() {
             return ptr::null_mut();
         }
@@ -117,7 +127,7 @@ unsafe extern "C" fn py_repeatcall(
             }
             out.steal_item_unchecked(i, item);
         }
-        out.as_object()
+        out.cast()
     }
 }
 

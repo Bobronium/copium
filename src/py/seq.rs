@@ -14,7 +14,7 @@ unsafe fn is_valid_index(index: Py_ssize_t, limit: Py_ssize_t) -> bool {
 pub unsafe trait PySeqPtr: Sized {
     unsafe fn length(&self) -> Py_ssize_t;
     unsafe fn borrow_item_unchecked(self, index: Py_ssize_t) -> *mut PyObject;
-    unsafe fn steal_item_unchecked(self, index: Py_ssize_t, value: *mut PyObject);
+    unsafe fn steal_item_unchecked<T: PyTypeInfo>(self, index: Py_ssize_t, value: *mut T);
 
     #[inline(always)]
     unsafe fn borrow_item(self, index: Py_ssize_t) -> *mut PyObject {
@@ -25,7 +25,7 @@ pub unsafe trait PySeqPtr: Sized {
     }
 
     #[inline(always)]
-    unsafe fn steal_item(self, index: Py_ssize_t, value: *mut PyObject) -> c_int {
+    unsafe fn steal_item<T: PyTypeInfo>(self, index: Py_ssize_t, value: *mut T) -> c_int {
         if unlikely(!is_valid_index(index, self.length())) {
             return -1;
         }
@@ -47,7 +47,7 @@ pub unsafe trait PySeqPtr: Sized {
     }
 
     #[inline(always)]
-    unsafe fn set_slot_steal_unchecked(self, index: Py_ssize_t, value: *mut PyObject) {
+    unsafe fn set_slot_steal_unchecked<T: PyTypeInfo>(self, index: Py_ssize_t, value: *mut T) {
         self.steal_item_unchecked(index, value)
     }
 
@@ -69,8 +69,8 @@ unsafe impl PySeqPtr for *mut PyListObject {
     }
 
     #[inline(always)]
-    unsafe fn steal_item_unchecked(self, index: Py_ssize_t, value: *mut PyObject) {
-        pyo3_ffi::PyList_SET_ITEM(self as *mut PyObject, index, value)
+    unsafe fn steal_item_unchecked<T: PyTypeInfo>(self, index: Py_ssize_t, value: *mut T) {
+        pyo3_ffi::PyList_SET_ITEM(self as *mut PyObject, index, value as *mut PyObject)
     }
 }
 
@@ -86,8 +86,8 @@ unsafe impl PySeqPtr for *mut PyTupleObject {
     }
 
     #[inline(always)]
-    unsafe fn steal_item_unchecked(self, index: Py_ssize_t, value: *mut PyObject) {
-        pyo3_ffi::PyTuple_SET_ITEM(self as *mut PyObject, index, value)
+    unsafe fn steal_item_unchecked<T: PyTypeInfo>(self, index: Py_ssize_t, value: *mut T) {
+        pyo3_ffi::PyTuple_SET_ITEM(self as *mut PyObject, index, value as *mut PyObject)
     }
 }
 

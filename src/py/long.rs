@@ -5,12 +5,18 @@ use super::PyTypeInfo;
 
 pub unsafe trait PyLongPtr {
     unsafe fn as_i64(self) -> i64;
+    unsafe fn as_void_ptr(self) -> *mut c_void;
 }
 
-unsafe impl PyLongPtr for *mut PyLongObject {
+unsafe impl<T: PyTypeInfo> PyLongPtr for *mut T {
     #[inline(always)]
     unsafe fn as_i64(self) -> i64 {
         pyo3_ffi::PyLong_AsLong(self as *mut PyObject) as i64
+    }
+
+    #[inline(always)]
+    unsafe fn as_void_ptr(self) -> *mut c_void {
+        pyo3_ffi::PyLong_AsVoidPtr(self as *mut PyObject)
     }
 }
 
@@ -21,7 +27,7 @@ pub unsafe fn from_i64(value: i64) -> *mut PyLongObject {
 
 #[inline(always)]
 pub unsafe fn as_i64<T: PyTypeInfo>(value: *mut T) -> i64 {
-    pyo3_ffi::PyLong_AsLong(value as *mut PyObject) as i64
+    value.as_i64()
 }
 
 #[inline(always)]
@@ -31,7 +37,7 @@ pub unsafe fn from_ptr<T>(pointer: *mut T) -> *mut PyLongObject {
 
 #[inline(always)]
 pub unsafe fn as_ptr<T: PyTypeInfo>(value: *mut T) -> *mut c_void {
-    pyo3_ffi::PyLong_AsVoidPtr(value as *mut PyObject)
+    value.as_void_ptr()
 }
 
 #[inline(always)]

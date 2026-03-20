@@ -28,11 +28,7 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
 
         let version = env!("CARGO_PKG_VERSION");
         let version_cstring = CString::new(version).unwrap();
-        py::module::add_string_constant(
-            module,
-            crate::cstr!("__version__"),
-            version_cstring.as_c_str(),
-        );
+        module.add_module_string_constant(crate::cstr!("__version__"), version_cstring.as_c_str());
 
         let collections = py::module::import(crate::cstr!("collections"));
         if collections.is_null() {
@@ -94,18 +90,14 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             local_cstring.as_c_str(),
         );
 
-        py::module::add_object(module, crate::cstr!("VersionInfo"), vi_cls);
+        module.add_module_object(crate::cstr!("VersionInfo"), vi_cls);
         if !vi.is_null() {
-            py::module::add_object(module, crate::cstr!("__version_tuple__"), vi);
+            module.add_module_object(crate::cstr!("__version_tuple__"), vi);
         }
 
-        py::module::add_object(module, crate::cstr!("__commit_id__"), py::NoneObject.newref());
+        module.add_module_object(crate::cstr!("__commit_id__"), py::NoneObject.newref());
 
-        py::module::add_string_constant(
-            module,
-            crate::cstr!("__build_hash__"),
-            local_cstring.as_c_str(),
-        );
+        module.add_module_string_constant(crate::cstr!("__build_hash__"), local_cstring.as_c_str());
 
         let author_cls = py::call::call_function!(
             namedtuple,
@@ -126,7 +118,7 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             crate::cstr!("Arseny Boykov (Bobronium)"),
             crate::cstr!("hi@bobronium.me"),
         );
-        py::module::add_object(module, crate::cstr!("Author"), author_cls);
+        module.add_module_object(crate::cstr!("Author"), author_cls);
 
         if !author.is_null() {
             let authors = py::tuple::new(1);
@@ -135,7 +127,7 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
                 return -1;
             }
             authors.steal_item_unchecked(0, author);
-            py::module::add_object(module, crate::cstr!("__authors__"), authors);
+            module.add_module_object(crate::cstr!("__authors__"), authors);
         }
 
         crate::add_submodule(parent, crate::cstr!("__about__"), module)
