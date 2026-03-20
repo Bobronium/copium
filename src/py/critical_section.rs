@@ -1,12 +1,13 @@
-use pyo3_ffi::*;
-
-use super::PyTypeInfo;
+use super::{PyObject, PyTypeInfo};
 
 #[cfg(Py_GIL_DISABLED)]
 #[inline(always)]
 pub unsafe fn begin<T: PyTypeInfo>(critical_section: &mut PyCriticalSection, object: *mut T) {
     pyo3_ffi::PyCriticalSection_Begin(critical_section, object as *mut PyObject)
 }
+
+#[cfg(Py_GIL_DISABLED)]
+pub use pyo3_ffi::{PyCriticalSection, PyCriticalSection2};
 
 #[cfg(not(Py_GIL_DISABLED))]
 #[inline(always)]
@@ -28,13 +29,31 @@ pub unsafe fn end(critical_section: &mut ()) {
 }
 
 #[cfg(Py_GIL_DISABLED)]
-#[inline(always)]
-pub unsafe fn end2(critical_section: &mut PyCriticalSection2) {
-    pyo3_ffi::PyCriticalSection2_End(critical_section)
+struct CriticalSectionGuard(PyCriticalSection);
+
+#[cfg(Py_GIL_DISABLED)]
+impl Drop for CriticalSectionGuard {
+    fn drop(&mut self) {
+        unsafe {
+            end(&mut self.0);
+        }
+    }
 }
 
-#[cfg(not(Py_GIL_DISABLED))]
 #[inline(always)]
-pub unsafe fn end2(critical_section: &mut ()) {
-    let _ = critical_section;
+pub fn enter<F, R, T: PyTypeInfo>(object: *mut T, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    #[cfg(Py_GIL_DISABLED)]
+    {
+        let mut guard = CriticalSectionGuard(unsafe { std::mem::zeroed() });
+        unsafe { begin(&mut guard.0, object) };
+        f()
+    }
+    #[cfg(not(Py_GIL_DISABLED))]
+    {
+        let _ = object;
+        f()
+    }
 }

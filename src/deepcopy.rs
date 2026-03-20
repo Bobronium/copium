@@ -1,7 +1,6 @@
 use std::hint::{likely, unlikely};
 use std::ptr;
 
-use crate::critical_section::with_critical_section_raw;
 use crate::dict_iter::DictIterGuard;
 use crate::memo::Memo;
 use crate::py::{self, *};
@@ -185,7 +184,7 @@ impl PyDeepCopy for *mut PyListObject {
 
                 let raw = item_copy.into_raw();
                 let mut size_changed = false;
-                with_critical_section_raw(copied, || {
+                py::critical_section::enter(copied, || {
                     if unlikely(copied.length() != sz) {
                         size_changed = true;
                     } else {
@@ -323,7 +322,7 @@ impl PyDeepCopy for *mut PySetObject {
             let snapshot = check!(py::tuple::new(sz));
 
             let mut i: Py_ssize_t = 0;
-            with_critical_section_raw(self, || {
+            py::critical_section::enter(self, || {
                 let mut pos: Py_ssize_t = 0;
                 let mut item: *mut PyObject = ptr::null_mut();
                 let mut hash: Py_hash_t = 0;

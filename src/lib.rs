@@ -11,7 +11,6 @@ mod about;
 mod cache;
 mod config;
 mod copy;
-mod critical_section;
 mod deepcopy;
 mod dict_iter;
 mod extra;

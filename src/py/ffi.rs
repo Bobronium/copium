@@ -27,9 +27,6 @@ pub use pyo3_ffi::{
 };
 use pyo3_ffi::{Py_DECREF, PyDict_SetItem, Py_SIZE, Py_TPFLAGS_LIST_SUBCLASS};
 
-#[cfg(Py_GIL_DISABLED)]
-pub use pyo3_ffi::{PyCriticalSection, PyCriticalSection2};
-
 #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
 pub use pyo3_ffi::{Py_MOD_GIL_NOT_USED, Py_mod_gil};
 
