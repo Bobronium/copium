@@ -37,7 +37,7 @@
 //! but races are possible and the state of an object may change "underneath" a suspended thread in
 //! possibly surprising ways.
 
-use crate::py::PyTypeInfo;
+use crate::py::{self, PyTypeInfo};
 
 #[cfg(Py_GIL_DISABLED)]
 use crate::py::{PyCriticalSection, PyCriticalSection2};

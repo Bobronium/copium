@@ -169,8 +169,8 @@ impl DictIterGuard {
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
         unsafe {
             Self {
-                dict,
-                it: Self::new_dict_items_iterator(dict),
+                dict: dict as *mut PyObject,
+                it: Self::new_dict_items_iterator(dict as *mut PyObject),
                 active: true,
             }
         }
