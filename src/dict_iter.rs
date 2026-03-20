@@ -68,7 +68,7 @@ unsafe fn dict_used(dict: *mut PyObject) -> Py_ssize_t {
 }
 
 pub struct DictIterGuard {
-    #[cfg(any(not(Py_3_14), Py_3_14))]
+    #[cfg(any(not(Py_3_14), all(Py_3_14, not(Py_GIL_DISABLED))))]
     dict: *mut PyObject,
 
     #[cfg(any(not(Py_3_14), all(Py_3_14, not(Py_GIL_DISABLED))))]
@@ -169,7 +169,6 @@ impl DictIterGuard {
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
         unsafe {
             Self {
-                dict: dict as *mut PyObject,
                 it: Self::new_dict_items_iterator(dict as *mut PyObject),
                 active: true,
             }
