@@ -6,26 +6,21 @@ use super::{ffi, PyFrozensetObject, PyTypeInfo};
 
 pub unsafe trait PySetPtr: Sized {
     unsafe fn size(self) -> Py_ssize_t;
+    #[inline(always)]
+    unsafe fn len(self) -> Py_ssize_t {
+        self.size()
+    }
+
     unsafe fn next_entry(
         self,
         position: &mut Py_ssize_t,
         key: &mut *mut PyObject,
         hash: &mut Py_hash_t,
     ) -> bool;
-
-    #[inline(always)]
-    unsafe fn len(self) -> Py_ssize_t {
-        self.size()
-    }
 }
 
 pub unsafe trait PyMutSetPtr: Sized {
-    unsafe fn add<T: PyTypeInfo>(self, item: *mut T) -> c_int;
-
-    #[inline(always)]
-    unsafe fn add_item<T: PyTypeInfo>(self, item: *mut T) -> c_int {
-        self.add(item)
-    }
+    unsafe fn add_item<T: PyTypeInfo>(self, item: *mut T) -> c_int;
 }
 
 unsafe impl PySetPtr for *mut PySetObject {
@@ -64,7 +59,7 @@ unsafe impl PySetPtr for *mut PyFrozensetObject {
 
 unsafe impl PyMutSetPtr for *mut PySetObject {
     #[inline(always)]
-    unsafe fn add<T: PyTypeInfo>(self, item: *mut T) -> c_int {
+    unsafe fn add_item<T: PyTypeInfo>(self, item: *mut T) -> c_int {
         pyo3_ffi::PySet_Add(self as *mut PyObject, item as *mut PyObject)
     }
 }

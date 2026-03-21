@@ -95,7 +95,7 @@ impl PyMemoObject {
     #[cold]
     pub unsafe fn sync_from_dict(&mut self, dict: *mut PyDictObject, orig_size: Py_ssize_t) -> i32 {
         unsafe {
-            let cur_size = dict.len();
+            let cur_size = dict.size();
             if cur_size <= orig_size {
                 return 0;
             }

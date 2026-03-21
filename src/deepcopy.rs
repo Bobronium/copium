@@ -153,7 +153,7 @@ impl PyDeepCopy for *mut PyListObject {
             for i in 0..sz {
                 #[cfg(not(Py_3_12))]
                 ellipsis.incref();
-                copied.set_slot_steal_unchecked(i, ellipsis);
+                copied.steal_item_unchecked(i, ellipsis);
             }
 
             if memo.memoize(self, copied, &probe) < 0 {
@@ -190,7 +190,7 @@ impl PyDeepCopy for *mut PyListObject {
                     } else {
                         #[cfg(not(Py_3_12))]
                         let old_item = copied.get_borrowed_unchecked(i);
-                        copied.set_slot_steal_unchecked(i, raw);
+                        copied.steal_item_unchecked(i, raw);
                         #[cfg(not(Py_3_12))]
                         old_item.decref();
                     }
@@ -230,7 +230,7 @@ impl PyDeepCopy for *mut PyTupleObject {
                 if raw != item {
                     all_same = false;
                 }
-                copied.set_slot_steal_unchecked(i, raw);
+                copied.steal_item_unchecked(i, raw);
             }
 
             if all_same {
@@ -298,7 +298,7 @@ impl PyDeepCopy for *mut PyDictObject {
                     return PyResult::error();
                 }
 
-                let rc = copied.set_item_steal_two(key_copy.into_raw(), val_copy.into_raw());
+                let rc = copied.steal_item(key_copy.into_raw(), val_copy.into_raw());
 
                 if unlikely(rc < 0) {
                     memo.forget(self, &probe);
@@ -328,7 +328,7 @@ impl PyDeepCopy for *mut PySetObject {
                 let mut hash: Py_hash_t = 0;
                 while self.next_entry(&mut pos, &mut item, &mut hash) {
                     item.incref();
-                    snapshot.set_slot_steal_unchecked(i, item);
+                    snapshot.steal_item_unchecked(i, item);
                     i += 1;
                 }
             });
@@ -394,7 +394,7 @@ impl PyDeepCopy for *mut PyFrozensetObject {
             let mut i: Py_ssize_t = 0;
             while self.next_entry(&mut pos, &mut item, &mut hash) {
                 item.incref();
-                snapshot.set_slot_steal_unchecked(i, item);
+                snapshot.steal_item_unchecked(i, item);
                 i += 1;
             }
 
@@ -412,7 +412,7 @@ impl PyDeepCopy for *mut PyFrozensetObject {
                     items.decref();
                     return PyResult::error();
                 }
-                items.set_slot_steal_unchecked(j, item_copy.into_raw());
+                items.steal_item_unchecked(j, item_copy.into_raw());
             }
             snapshot.decref();
 

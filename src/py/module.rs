@@ -42,29 +42,6 @@ pub unsafe fn def_init(definition: *mut PyModuleDef) -> *mut PyObject {
 }
 
 #[inline(always)]
-pub unsafe fn add_object<M: PyTypeInfo, V: PyTypeInfo>(
-    module: *mut M,
-    name: &CStr,
-    object: *mut V,
-) -> c_int {
-    module.add_module_object(name, object)
-}
-
-#[inline(always)]
-pub unsafe fn add_string_constant<M: PyTypeInfo>(
-    module: *mut M,
-    name: &CStr,
-    value: &CStr,
-) -> c_int {
-    module.add_module_string_constant(name, value)
-}
-
-#[inline(always)]
-pub unsafe fn get_name<M: PyTypeInfo>(module: *mut M) -> *mut PyUnicodeObject {
-    module.module_name()
-}
-
-#[inline(always)]
 pub unsafe fn import(name: &CStr) -> *mut PyObject {
     pyo3_ffi::PyImport_ImportModule(name.as_ptr())
 }

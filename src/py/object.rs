@@ -8,17 +8,20 @@ use std::ptr;
 
 pub unsafe trait PyObjectPtr: Sized {
     unsafe fn id(self) -> *mut PyLongObject;
-    unsafe fn as_object(self) -> *mut PyObject;
     unsafe fn class(self) -> *mut PyTypeObject;
     unsafe fn refcount(self) -> Py_ssize_t;
     unsafe fn incref(self);
     unsafe fn decref(self);
-    unsafe fn decref_if_nonnull(self);
+    unsafe fn decref_nullable(self);
     unsafe fn newref(self) -> *mut PyObject;
 
     unsafe fn getattr<N: PyTypeInfo>(self, name: *mut N) -> *mut PyObject;
     unsafe fn getattr_cstr(self, name: &CStr) -> *mut PyObject;
-    unsafe fn getattr_opt<N: PyTypeInfo>(self, name: *mut N, result: &mut *mut PyObject) -> c_int;
+    unsafe fn get_optional_attr<N: PyTypeInfo>(
+        self,
+        name: *mut N,
+        result: &mut *mut PyObject,
+    ) -> c_int;
     unsafe fn set_attr<N: PyTypeInfo, V: PyTypeInfo>(self, name: *mut N, value: *mut V) -> c_int;
     unsafe fn set_attr_cstr<V: PyTypeInfo>(self, name: &CStr, value: *mut V) -> c_int;
     unsafe fn del_attr<N: PyTypeInfo>(self, name: *mut N) -> c_int;
@@ -59,30 +62,12 @@ pub unsafe trait PyObjectPtr: Sized {
     unsafe fn is_bytes(self) -> bool;
     unsafe fn is_none(self) -> bool;
 
-    #[inline(always)]
-    unsafe fn decref_nullable(self) {
-        self.decref_if_nonnull()
-    }
-
-    #[inline(always)]
-    unsafe fn get_optional_attr<N: PyTypeInfo>(
-        self,
-        name: *mut N,
-        result: &mut *mut PyObject,
-    ) -> c_int {
-        self.getattr_opt(name, result)
-    }
 }
 
 unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     #[inline(always)]
     unsafe fn id(self) -> *mut PyLongObject {
         pyo3_ffi::PyLong_FromVoidPtr(self as *mut c_void) as *mut PyLongObject
-    }
-
-    #[inline(always)]
-    unsafe fn as_object(self) -> *mut PyObject {
-        self as *mut PyObject
     }
 
     #[inline(always)]
@@ -106,7 +91,7 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     }
 
     #[inline(always)]
-    unsafe fn decref_if_nonnull(self) {
+    unsafe fn decref_nullable(self) {
         if !self.is_null() {
             self.decref();
         }
@@ -128,7 +113,11 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     }
 
     #[inline(always)]
-    unsafe fn getattr_opt<N: PyTypeInfo>(self, name: *mut N, result: &mut *mut PyObject) -> c_int {
+    unsafe fn get_optional_attr<N: PyTypeInfo>(
+        self,
+        name: *mut N,
+        result: &mut *mut PyObject,
+    ) -> c_int {
         ffi::PyObject_GetOptionalAttr(self as *mut PyObject, name as *mut PyObject, result)
     }
 
@@ -308,81 +297,6 @@ unsafe impl<T: PyTypeInfo> PyObjectPtr for *mut T {
     }
 }
 
-#[inline(always)]
-pub unsafe fn getattr_cstr<O: PyTypeInfo>(object: *mut O, name: &CStr) -> *mut PyObject {
-    object.getattr_cstr(name)
-}
-
-#[inline(always)]
-pub unsafe fn set_attr_cstr<O: PyTypeInfo, V: PyTypeInfo>(
-    object: *mut O,
-    name: &CStr,
-    value: *mut V,
-) -> c_int {
-    object.set_attr_cstr(name, value)
-}
-
-#[inline(always)]
-pub unsafe fn del_attr_cstr<O: PyTypeInfo>(object: *mut O, name: &CStr) -> c_int {
-    object.del_attr_cstr(name)
-}
-
-#[inline(always)]
-pub unsafe fn has_attr_cstr<O: PyTypeInfo>(object: *mut O, name: &CStr) -> bool {
-    object.has_attr_cstr(name)
-}
-
-#[inline(always)]
-pub unsafe fn call_no_args<O: PyTypeInfo>(object: *mut O) -> *mut PyObject {
-    object.call()
-}
-
-#[inline(always)]
-pub unsafe fn call_one_arg<O: PyTypeInfo, A: PyTypeInfo>(
-    object: *mut O,
-    argument: *mut A,
-) -> *mut PyObject {
-    object.call_one(argument)
-}
-
-#[inline(always)]
-pub unsafe fn call_with<O: PyTypeInfo, A: PyTypeInfo>(
-    object: *mut O,
-    args: *mut A,
-) -> *mut PyObject {
-    object.call_with(args)
-}
-
-#[inline(always)]
-pub unsafe fn call_with_kwargs<O: PyTypeInfo, A: PyTypeInfo, K: PyTypeInfo>(
-    object: *mut O,
-    args: *mut A,
-    kwargs: *mut K,
-) -> *mut PyObject {
-    object.call_with_kwargs(args, kwargs)
-}
-
-#[inline(always)]
-pub unsafe fn get_iter<O: PyTypeInfo>(object: *mut O) -> *mut PyObject {
-    object.get_iter()
-}
-
-#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
-#[inline(always)]
-pub unsafe fn iter_next_item<I: PyTypeInfo>(iterator: *mut I, item: &mut *mut PyObject) -> i32 {
-    iterator.iter_next_item(item)
-}
-
-#[inline(always)]
-pub unsafe fn repr<O: PyTypeInfo>(object: *mut O) -> *mut PyUnicodeObject {
-    object.repr()
-}
-
-#[inline(always)]
-pub unsafe fn str_<O: PyTypeInfo>(object: *mut O) -> *mut PyUnicodeObject {
-    object.str_()
-}
-
 pub unsafe trait PyObjectSlotPtr {
     unsafe fn clear(self);
 }
@@ -396,6 +310,6 @@ unsafe impl<T: PyTypeInfo> PyObjectSlotPtr for *mut *mut T {
 
         let old_value = *self;
         *self = ptr::null_mut();
-        old_value.decref_if_nonnull();
+        old_value.decref_nullable();
     }
 }

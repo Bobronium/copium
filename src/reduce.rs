@@ -194,7 +194,7 @@ pub(crate) unsafe fn validate_reduce_tuple(
                 return (ReduceKind::Error, empty);
             }
             let old = argument_tuple_object;
-            reduce_tuple.set_slot_steal_unchecked(1, coerced);
+            reduce_tuple.steal_item_unchecked(1, coerced);
             old.decref();
             coerced
         };
@@ -281,7 +281,7 @@ unsafe fn reconstruct_newobj<M: Memo>(
                 arguments.decref();
                 return ptr::null_mut();
             }
-            arguments.set_slot_steal_unchecked(argument_index - 1, copied.into_raw());
+            arguments.steal_item_unchecked(argument_index - 1, copied.into_raw());
         }
 
         let instance = call_tp_new(class_pointer, arguments.cast(), ptr::null_mut());
@@ -408,7 +408,7 @@ unsafe fn reconstruct_callable<M: Memo>(
                 copied_args.decref();
                 return ptr::null_mut();
             }
-            copied_args.set_slot_steal_unchecked(argument_index, copied.into_raw());
+            copied_args.steal_item_unchecked(argument_index, copied.into_raw());
         }
 
         let instance = callable.call_with(copied_args);

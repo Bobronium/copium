@@ -70,8 +70,3 @@ unsafe impl PyTypeObjectPtr for *mut PyTypeObject {
         pyo3_ffi::PyType_Ready(self)
     }
 }
-
-#[inline(always)]
-pub unsafe fn ready(type_object: *mut PyTypeObject) -> c_int {
-    type_object.ready()
-}

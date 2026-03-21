@@ -16,6 +16,11 @@ pub type PyDictWatchCallback = Option<
 
 pub unsafe trait PyMapPtr: Sized {
     unsafe fn size(self) -> Py_ssize_t;
+    #[inline(always)]
+    unsafe fn len(self) -> Py_ssize_t {
+        self.size()
+    }
+
     unsafe fn set_item<K: PyTypeInfo, V: PyTypeInfo>(self, key: *mut K, value: *mut V) -> c_int;
     unsafe fn steal_item<K: PyTypeInfo, V: PyTypeInfo>(self, key: *mut K, value: *mut V)
         -> c_int;
@@ -32,20 +37,6 @@ pub unsafe trait PyMapPtr: Sized {
     unsafe fn set_item_cstr<V: PyTypeInfo>(self, key: &CStr, value: *mut V) -> c_int;
     unsafe fn watch(self, watcher_id: i32) -> c_int;
     unsafe fn unwatch(self, watcher_id: i32) -> c_int;
-
-    #[inline(always)]
-    unsafe fn len(self) -> Py_ssize_t {
-        self.size()
-    }
-
-    #[inline(always)]
-    unsafe fn set_item_steal_two<K: PyTypeInfo, V: PyTypeInfo>(
-        self,
-        key: *mut K,
-        value: *mut V,
-    ) -> c_int {
-        self.steal_item(key, value)
-    }
 }
 
 unsafe impl PyMapPtr for *mut PyDictObject {
@@ -156,21 +147,6 @@ pub unsafe fn new() -> *mut PyDictObject {
 #[inline(always)]
 pub unsafe fn new_presized(length: Py_ssize_t) -> *mut PyDictObject {
     ffi::_PyDict_NewPresized(length) as *mut PyDictObject
-}
-
-#[inline(always)]
-pub unsafe fn size<D: PyTypeInfo>(dictionary: *mut D) -> Py_ssize_t {
-    pyo3_ffi::PyDict_Size(dictionary as *mut PyObject)
-}
-
-#[inline(always)]
-pub unsafe fn next<D: PyTypeInfo>(
-    dictionary: *mut D,
-    position: &mut Py_ssize_t,
-    key: &mut *mut PyObject,
-    value: &mut *mut PyObject,
-) -> bool {
-    pyo3_ffi::PyDict_Next(dictionary as *mut PyObject, position, key, value) != 0
 }
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]

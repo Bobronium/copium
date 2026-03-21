@@ -26,21 +26,6 @@ pub unsafe fn from_i64(value: i64) -> *mut PyLongObject {
 }
 
 #[inline(always)]
-pub unsafe fn as_i64<T: PyTypeInfo>(value: *mut T) -> i64 {
-    value.as_i64()
-}
-
-#[inline(always)]
 pub unsafe fn from_ptr<T>(pointer: *mut T) -> *mut PyLongObject {
     pyo3_ffi::PyLong_FromVoidPtr(pointer as *mut c_void) as *mut PyLongObject
-}
-
-#[inline(always)]
-pub unsafe fn as_ptr<T: PyTypeInfo>(value: *mut T) -> *mut c_void {
-    value.as_void_ptr()
-}
-
-#[inline(always)]
-pub unsafe fn check<T: PyTypeInfo>(value: *mut T) -> bool {
-    pyo3_ffi::PyLong_Check(value as *mut PyObject) != 0
 }

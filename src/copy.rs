@@ -53,7 +53,7 @@ impl PyCopy for *mut PyListObject {
             for index in 0..size {
                 let item = self.get_borrowed_unchecked(index);
                 item.incref();
-                copied.set_slot_steal_unchecked(index, item);
+                copied.steal_item_unchecked(index, item);
             }
 
             PyResult::ok(copied)
@@ -76,10 +76,10 @@ impl PyCopy for *mut PySetObject {
 impl PyCopy for *mut PyByteArrayObject {
     unsafe fn copy(self) -> PyResult {
         unsafe {
-            let size = PyBufPtr::len(self);
+            let size = self.length();
             let copied = check!(py::bytearray::new(size));
             if size > 0 {
-                ptr::copy_nonoverlapping(self.as_ptr(), copied.as_ptr(), size as usize);
+                ptr::copy_nonoverlapping(self.as_mut_ptr(), copied.as_mut_ptr(), size as usize);
             }
             PyResult::ok(copied)
         }

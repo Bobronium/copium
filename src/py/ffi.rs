@@ -219,8 +219,3 @@ macro_rules! cstr {
         }
     }};
 }
-
-#[inline(always)]
-pub fn ptr_from_cstr(value: &CStr) -> *const c_char {
-    value.as_ptr()
-}

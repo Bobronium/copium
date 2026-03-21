@@ -64,48 +64,9 @@ pub unsafe fn from_cstr(value: &CStr) -> *mut PyUnicodeObject {
 }
 
 #[inline(always)]
-pub unsafe fn from_cstr_and_size(value: &CStr, size: Py_ssize_t) -> *mut PyUnicodeObject {
-    pyo3_ffi::PyUnicode_FromStringAndSize(value.as_ptr(), size) as *mut PyUnicodeObject
-}
-
-#[inline(always)]
 pub unsafe fn from_str_and_size(value: &str) -> *mut PyUnicodeObject {
     pyo3_ffi::PyUnicode_FromStringAndSize(value.as_ptr().cast(), value.len() as Py_ssize_t)
         as *mut PyUnicodeObject
-}
-
-#[inline(always)]
-pub unsafe fn as_utf8<'a, T: PyTypeInfo>(value: *mut T) -> &'a CStr {
-    value.as_utf8()
-}
-
-#[inline(always)]
-pub unsafe fn byte_length<T: PyTypeInfo>(value: *mut T) -> Py_ssize_t {
-    value.byte_length()
-}
-
-#[inline(always)]
-pub unsafe fn compare_ascii<T: PyTypeInfo>(value: *mut T, string: &CStr) -> i32 {
-    value.compare_ascii(string)
-}
-
-#[inline(always)]
-pub unsafe fn join<S: PyTypeInfo, Q: PyTypeInfo>(
-    separator: *mut S,
-    sequence: *mut Q,
-) -> *mut PyUnicodeObject {
-    separator.join(sequence)
-}
-
-#[inline(always)]
-pub unsafe fn tailmatch<T: PyTypeInfo, S: PyTypeInfo>(
-    value: *mut T,
-    substring: *mut S,
-    start: Py_ssize_t,
-    end: Py_ssize_t,
-    direction: i32,
-) -> bool {
-    value.tailmatch(substring, start, end, direction)
 }
 
 macro_rules! from_format {

@@ -225,7 +225,7 @@ unsafe fn build_patched_code(target: *mut PyObject) -> *mut PyObject {
         }
         template_consts.decref();
 
-        let consts_tuple = new_consts.as_tuple();
+        let consts_tuple = new_consts.to_tuple();
         new_consts.decref();
         if consts_tuple.is_null() {
             return ptr::null_mut();
