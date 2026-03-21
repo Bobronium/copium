@@ -2,7 +2,6 @@ name: CodSpeed Benchmarks
 
 on:
   workflow_call:
-  workflow_dispatch:
 
 jobs:
   codspeed:
