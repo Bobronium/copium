@@ -112,6 +112,19 @@ jobs:
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
         run: uv run --no-sync pytest tests/ -vvv
 
+      - name: Setup venv for CodSpeed
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
+        run: |
+          uv venv --python ${{ matrix.python.version }} --clear
+          uv sync --extra test --no-install-project
+
+      - name: Run CodSpeed simulation benchmarks
+        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
+
       - name: Setup venv for shuffle tests
         if: ${{ matrix.build.os != 'windows-11-arm' || !contains(fromJSON('["3.10","3.11","3.12"]'), matrix.python.label) }}
         run: |
