@@ -4,7 +4,8 @@ on:
   workflow_call:
 
 jobs:
-  codspeed:
+  simulation_python_3_13:
+    name: simulation (Python 3.13)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -12,57 +13,184 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
 
-      # CodSpeed tracing requires actions/setup-python rather than uv-managed Python installs.
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-
-      - name: Build benchmark wheel
+      - name: Build benchmark wheel for Python 3.13
         uses: PyO3/maturin-action@v1
         with:
           target: x86_64-unknown-linux-gnu
           manylinux: auto
-          args: --release --out dist -i python3.14
+          args: --release --out dist/python-3-13 -i 3.13
           rust-toolchain: nightly
           sccache: "true"
 
-      - name: Clear sccache wrapper
-        # uv still resolves project metadata for extras, so leave rustc callable directly.
+      - name: Clear sccache wrapper after Python 3.13 build
         run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
 
-      - name: Find benchmark wheel
-        id: wheel
+      - name: Find benchmark wheel for Python 3.13
+        id: python_3_13_wheel
         shell: bash
         run: |
-          wheel_path=$(find dist -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
-          if [[ -z "$wheel_path" ]]; then
-            wheel_path=$(find dist -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
+          python_3_13_wheel_path=$(find dist/python-3-13 -name "*-cp313-*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$python_3_13_wheel_path" ]]; then
+            python_3_13_wheel_path=$(find dist/python-3-13 -name "*-cp313-*-musllinux*_x86_64.whl" -type f | head -n1)
           fi
-          if [[ -z "$wheel_path" ]]; then
-            echo "No wheel found for cp314 on Linux x86_64"
+          if [[ -z "$python_3_13_wheel_path" ]]; then
+            echo "No wheel found for Python 3.13 on Linux x86_64"
             exit 1
           fi
-          echo "path=$wheel_path" >> "$GITHUB_OUTPUT"
+          echo "path=$python_3_13_wheel_path" >> "$GITHUB_OUTPUT"
 
-      - name: Install benchmark dependencies
+      - name: Setup test environment for Python 3.13
+        run: |
+          uv venv --python 3.13 --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.python_3_13_wheel.outputs.path }}"
+
+      - name: Test built wheel for Python 3.13
+        run: uv run --no-sync pytest tests/ -vvv
+
+      - name: Setup CodSpeed environment for Python 3.13
+        run: |
+          uv venv --python 3.13 --clear
+          uv sync --extra test --no-install-project
+
+      - name: Run CodSpeed simulation benchmarks for Python 3.13
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: uv run --with "${{ steps.python_3_13_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
+
+  simulation_python_3_14:
+    name: simulation (Python 3.14)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Build benchmark wheel for Python 3.14
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64-unknown-linux-gnu
+          manylinux: auto
+          args: --release --out dist/python-3-14 -i 3.14
+          rust-toolchain: nightly
+          sccache: "true"
+
+      - name: Clear sccache wrapper after Python 3.14 build
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+
+      - name: Find benchmark wheel for Python 3.14
+        id: python_3_14_wheel
+        shell: bash
+        run: |
+          python_3_14_wheel_path=$(find dist/python-3-14 -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$python_3_14_wheel_path" ]]; then
+            python_3_14_wheel_path=$(find dist/python-3-14 -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
+          fi
+          if [[ -z "$python_3_14_wheel_path" ]]; then
+            echo "No wheel found for Python 3.14 on Linux x86_64"
+            exit 1
+          fi
+          echo "path=$python_3_14_wheel_path" >> "$GITHUB_OUTPUT"
+
+      - name: Setup test environment for Python 3.14
         run: |
           uv venv --python 3.14 --clear
           uv sync --extra test --no-install-project
-          uv pip install "${{ steps.wheel.outputs.path }}"
+          uv pip install "${{ steps.python_3_14_wheel.outputs.path }}"
+
+      - name: Test built wheel for Python 3.14
+        run: uv run --no-sync pytest tests/ -vvv
+
+      - name: Setup CodSpeed environment for Python 3.14
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra test --no-install-project
+
+      - name: Run CodSpeed simulation benchmarks for Python 3.14
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: uv run --with "${{ steps.python_3_14_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
+
+  memory_python_3_14:
+    name: memory (Python 3.14)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Build benchmark wheel for Python 3.14
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64-unknown-linux-gnu
+          manylinux: auto
+          args: --release --out dist/python-3-14 -i 3.14
+          rust-toolchain: nightly
+          sccache: "true"
+
+      - name: Clear sccache wrapper after Python 3.14 build
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+
+      - name: Find benchmark wheel for Python 3.14
+        id: python_3_14_wheel
+        shell: bash
+        run: |
+          python_3_14_wheel_path=$(find dist/python-3-14 -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$python_3_14_wheel_path" ]]; then
+            python_3_14_wheel_path=$(find dist/python-3-14 -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
+          fi
+          if [[ -z "$python_3_14_wheel_path" ]]; then
+            echo "No wheel found for Python 3.14 on Linux x86_64"
+            exit 1
+          fi
+          echo "path=$python_3_14_wheel_path" >> "$GITHUB_OUTPUT"
+
+      - name: Setup test environment for Python 3.14
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.python_3_14_wheel.outputs.path }}"
+
+      - name: Test built wheel for Python 3.14
+        run: uv run --no-sync pytest tests/ -vvv
+
+      - name: Setup CodSpeed memory environment for Python 3.14
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra test --no-install-project
 
       # Wall-time mode is intentionally not enabled here because CodSpeed macro runners
       # currently require the repository to live under a GitHub organization.
-      - name: Run CodSpeed benchmarks
-        env:
-          PYTHONHASHSEED: "0"
+      - name: Run CodSpeed memory benchmarks for Python 3.14
         uses: CodSpeedHQ/action@v4
         with:
-          mode: simulation,memory
-          run: uv run --no-sync pytest -o addopts='' tests/test_performance.py --codspeed -v
+          mode: memory
+          run: uv run --with "${{ steps.python_3_14_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
