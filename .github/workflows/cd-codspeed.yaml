@@ -24,19 +24,22 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Download benchmark wheel
-        uses: actions/download-artifact@v4
+      - name: Build benchmark wheel
+        uses: PyO3/maturin-action@v1
         with:
-          name: Wheels-3.14-Linux-x86_64
-          path: wheelhouse
+          target: x86_64-unknown-linux-gnu
+          manylinux: auto
+          args: --release --out dist -i python3.14
+          rust-toolchain: nightly
+          sccache: "true"
 
       - name: Find benchmark wheel
         id: wheel
         shell: bash
         run: |
-          wheel_path=$(find wheelhouse -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
+          wheel_path=$(find dist -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
           if [[ -z "$wheel_path" ]]; then
-            wheel_path=$(find wheelhouse -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
+            wheel_path=$(find dist -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
           fi
           if [[ -z "$wheel_path" ]]; then
             echo "No wheel found for cp314 on Linux x86_64"
