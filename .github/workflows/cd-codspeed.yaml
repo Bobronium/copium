@@ -1,0 +1,62 @@
+name: CodSpeed Benchmarks
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  codspeed:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # CodSpeed tracing requires actions/setup-python rather than uv-managed Python installs.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Download benchmark wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: Wheels-3.14-Linux-x86_64
+          path: wheelhouse
+
+      - name: Find benchmark wheel
+        id: wheel
+        shell: bash
+        run: |
+          wheel_path=$(find wheelhouse -name "*-cp314-*-manylinux*_x86_64.whl" -type f | head -n1)
+          if [[ -z "$wheel_path" ]]; then
+            wheel_path=$(find wheelhouse -name "*-cp314-*-musllinux*_x86_64.whl" -type f | head -n1)
+          fi
+          if [[ -z "$wheel_path" ]]; then
+            echo "No wheel found for cp314 on Linux x86_64"
+            exit 1
+          fi
+          echo "path=$wheel_path" >> "$GITHUB_OUTPUT"
+
+      - name: Install benchmark dependencies
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.wheel.outputs.path }}"
+
+      # Wall-time mode is intentionally not enabled here because CodSpeed macro runners
+      # currently require the repository to live under a GitHub organization.
+      - name: Run CodSpeed benchmarks
+        env:
+          PYTHONHASHSEED: "0"
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation,memory
+          run: uv run --no-sync pytest -o addopts='' tests/test_performance.py --codspeed -v

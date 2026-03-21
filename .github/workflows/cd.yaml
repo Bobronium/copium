@@ -21,7 +21,13 @@ jobs:
   build:
     uses: ./.github/workflows/cd-build.yaml
 
-  # Main branch only: benchmarks
+  # PR and main branch observability benchmarks
+  codspeed:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    needs: build
+    uses: ./.github/workflows/cd-codspeed.yaml
+
+  # Main branch only: longer-running benchmarks and README assets
   pyperformance:
     if: github.ref == 'refs/heads/main'
     needs: build

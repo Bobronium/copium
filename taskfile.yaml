@@ -111,6 +111,15 @@ tasks:
         done
       PY
 
+  benchmark:codspeed:
+    desc: Run the CodSpeed benchmark suite locally with Python 3.14
+    env:
+      PYTHONHASHSEED: "0"
+    cmds:
+      - uv venv --python 3.14 --clear
+      - uv sync --inexact --quiet --extra test
+      - uv run --no-sync pytest -o addopts='' tests/test_performance.py --codspeed -v
+
   build:wheel:
     desc: Regular optimized wheel (LTO + -O3 by default)
     cmds:
