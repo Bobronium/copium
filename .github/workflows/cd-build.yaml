@@ -30,6 +30,9 @@ jobs:
           - { tag: "cp313", version: "3.13.9",  label: "3.13" }
           - { tag: "cp314", version: "3.14.0",  label: "3.14" }
           - { tag: "cp314t", version: "3.14t",  label: "3.14t", branch: "3.14" }
+        exclude:
+          - build: { os: ubuntu-24.04-arm, rust_target: aarch64-unknown-linux-gnu, manylinux: auto, wheel_arch: "manylinux*_aarch64", arch_label: "ARM64", platform_label: "Linux" }
+            python: { tag: "cp314", version: "3.14.0", label: "3.14" }
 
     runs-on: ${{ matrix.build.os }}
 
@@ -194,13 +197,9 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
         run: uv run --no-sync python -m unittest test.test_copy -v
 
-  codspeed_walltime_python_3_14:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    name: walltime (Python 3.14)
-    runs-on: codspeed-macro
-    permissions:
-      actions: read
-      contents: read
+  wheel_python_3_14_linux_arm64:
+    runs-on: ubuntu-24.04-arm
+    name: "Python 3.14 - Linux - ARM64"
 
     steps:
       - uses: actions/checkout@v5
@@ -214,45 +213,120 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Wait for the Python 3.14 ARM64 wheel artifact
-        id: wait_for_walltime_wheel_artifact
-        uses: actions/github-script@v8
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
         with:
-          script: |
-            const walltimeWheelArtifactName = "Wheels-3.14-Linux-ARM64";
-            const timeoutMilliseconds = 20 * 60 * 1000;
-            const pollIntervalMilliseconds = 10 * 1000;
-            const startedAtMilliseconds = Date.now();
+          target: aarch64-unknown-linux-gnu
+          manylinux: auto
+          args: --release --out dist -i 3.14
+          rust-toolchain: nightly
+          sccache: 'true'
 
-            while (Date.now() - startedAtMilliseconds < timeoutMilliseconds) {
-              const { data } = await github.rest.actions.listWorkflowRunArtifacts({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: context.runId,
-                per_page: 100,
-              });
+      - name: Clear sccache wrapper
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
 
-              const matchingArtifact = data.artifacts.find(
-                (artifact) => artifact.name === walltimeWheelArtifactName && !artifact.expired,
-              );
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "Wheels-3.14-Linux-ARM64"
+          path: dist/*.whl
 
-              if (matchingArtifact) {
-                core.setOutput("artifact_name", matchingArtifact.name);
-                return;
-              }
+      - name: Find built wheel
+        id: wheel
+        shell: bash
+        run: |
+          walltime_arm64_wheel_path=$(find dist -name "*-cp314-*-manylinux*_aarch64.whl" -type f | head -n1)
 
-              core.info(`Waiting for ${walltimeWheelArtifactName} to be uploaded by the ARM64 wheel build job.`);
-              await new Promise((resolve) => setTimeout(resolve, pollIntervalMilliseconds));
-            }
+          if [[ -z "$walltime_arm64_wheel_path" ]]; then
+            walltime_arm64_wheel_path=$(find dist -name "*-cp314-*-musllinux*_aarch64.whl" -type f | head -n1)
+          fi
 
-            core.setFailed("Timed out while waiting for the Python 3.14 ARM64 wheel artifact.");
+          if [[ -z "$walltime_arm64_wheel_path" ]]; then
+            echo "No compatible wheel found"
+            exit 1
+          fi
+
+          echo "Found: $walltime_arm64_wheel_path"
+          echo "path=$walltime_arm64_wheel_path" >> "$GITHUB_OUTPUT"
+
+      - name: Setup test environment
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.wheel.outputs.path }}"
+
+      - name: "Test: Built wheel"
+        run: uv run --no-sync pytest tests/ -vvv
+
+      - name: Setup venv for shuffle tests
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.wheel.outputs.path }}"
+
+      - name: "Test: Shuffle A"
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
+
+      - name: "Test: Shuffle B"
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
+
+      - name: "Test: Shuffle C"
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
+
+      - name: "Test: Shuffle D"
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
+
+      - name: "Cache CPython test suite"
+        id: cpython_cache
+        uses: actions/cache@v4
+        with:
+          path: cpython-tests
+          key: cpython-tests-3.14
+
+      - name: "Checkout CPython test suite"
+        if: steps.cpython_cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: python/cpython
+          ref: 3.14
+          sparse-checkout: Lib/test
+          sparse-checkout-cone-mode: true
+          path: cpython-tests
+
+      - name: "Test: CPython test_copy (patched)"
+        env:
+          COPIUM_PATCH_ENABLE: "1"
+          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
+        run: uv run --no-sync python -m unittest test.test_copy -v
+
+      - name: "Test: CPython test_copy (patched, dict memo)"
+        env:
+          COPIUM_PATCH_ENABLE: "1"
+          COPIUM_USE_DICT_MEMO: "1"
+          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
+        run: uv run --no-sync python -m unittest test.test_copy -v
+
+  codspeed_walltime_python_3_14:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    needs: wheel_python_3_14_linux_arm64
+    name: walltime (Python 3.14)
+    runs-on: codspeed-macro
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
 
       - name: Download the Python 3.14 ARM64 wheel artifact
         uses: actions/download-artifact@v4
         with:
-          github-token: ${{ github.token }}
-          run-id: ${{ github.run_id }}
-          name: ${{ steps.wait_for_walltime_wheel_artifact.outputs.artifact_name }}
+          name: "Wheels-3.14-Linux-ARM64"
           path: dist/walltime-python-3-14
 
       - name: Find walltime benchmark wheel for Python 3.14
