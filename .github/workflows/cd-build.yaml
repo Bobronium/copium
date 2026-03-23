@@ -198,6 +198,9 @@ jobs:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     name: walltime (Python 3.14)
     runs-on: codspeed-macro
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - uses: actions/checkout@v5
@@ -211,17 +214,46 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Build walltime benchmark wheel for Python 3.14
-        uses: PyO3/maturin-action@v1
+      - name: Wait for the Python 3.14 ARM64 wheel artifact
+        id: wait_for_walltime_wheel_artifact
+        uses: actions/github-script@v8
         with:
-          target: aarch64-unknown-linux-gnu
-          manylinux: auto
-          args: --release --out dist/walltime-python-3-14 -i 3.14
-          rust-toolchain: nightly
-          sccache: "true"
+          script: |
+            const walltimeWheelArtifactName = "Wheels-3.14-Linux-ARM64";
+            const timeoutMilliseconds = 20 * 60 * 1000;
+            const pollIntervalMilliseconds = 10 * 1000;
+            const startedAtMilliseconds = Date.now();
 
-      - name: Clear sccache wrapper after walltime wheel build
-        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+            while (Date.now() - startedAtMilliseconds < timeoutMilliseconds) {
+              const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+                per_page: 100,
+              });
+
+              const matchingArtifact = data.artifacts.find(
+                (artifact) => artifact.name === walltimeWheelArtifactName && !artifact.expired,
+              );
+
+              if (matchingArtifact) {
+                core.setOutput("artifact_name", matchingArtifact.name);
+                return;
+              }
+
+              core.info(`Waiting for ${walltimeWheelArtifactName} to be uploaded by the ARM64 wheel build job.`);
+              await new Promise((resolve) => setTimeout(resolve, pollIntervalMilliseconds));
+            }
+
+            core.setFailed("Timed out while waiting for the Python 3.14 ARM64 wheel artifact.");
+
+      - name: Download the Python 3.14 ARM64 wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+          name: ${{ steps.wait_for_walltime_wheel_artifact.outputs.artifact_name }}
+          path: dist/walltime-python-3-14
 
       - name: Find walltime benchmark wheel for Python 3.14
         id: walltime_python_3_14_wheel
