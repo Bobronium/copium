@@ -20,11 +20,16 @@ import copy as stdlib_copy
 import platform
 import re
 import sys
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Any, NamedTuple
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
+from typing import NamedTuple
 
 import pytest
+
 import copium
 import copium.patch
 
@@ -43,9 +48,7 @@ def depth_scaled(tag, factory, depths):
 
 
 def generate_params(cases):
-    return pytest.mark.parametrize(
-        "case", [pytest.param(c, id=c.name) for c in cases]
-    )
+    return pytest.mark.parametrize("case", [pytest.param(c, id=c.name) for c in cases])
 
 
 python_version = ".".join(map(str, sys.version_info[:2]))
@@ -281,7 +284,7 @@ REDUCE_CASES = (
     )
     + scaled(
         "datetime",
-        lambda n: [datetime(2024, 1, 1) + timedelta(days=i) for i in range(n)],
+        lambda n: [datetime(2024, 1, 1, tzinfo=UTC) + timedelta(days=i) for i in range(n)],
         REDUCE_SIZES,
     )
     + scaled(
@@ -358,18 +361,13 @@ def make_json_api_response():
                 },
                 "relationships": {
                     "team": {"data": {"type": "team", "id": i % 4}},
-                    "projects": {
-                        "data": [
-                            {"type": "project", "id": i * 10 + j} for j in range(3)
-                        ]
-                    },
+                    "projects": {"data": [{"type": "project", "id": i * 10 + j} for j in range(3)]},
                 },
             }
             for i in range(20)
         ],
         "included": [
-            {"type": "team", "id": t, "attributes": {"name": f"Team {t}"}}
-            for t in range(4)
+            {"type": "team", "id": t, "attributes": {"name": f"Team {t}"}} for t in range(4)
         ],
         "meta": {"request_id": "abc-123", "timing_ms": 42.5},
     }
@@ -506,7 +504,7 @@ def make_orm_graph():
             [
                 OrmSession(
                     f"t{i}{j}",
-                    datetime(2024, 1, 1 + j),
+                    datetime(2024, 1, 1 + j, tzinfo=UTC),
                     {"ip": f"10.0.{i}.{j}"},
                 )
                 for j in range(3)
