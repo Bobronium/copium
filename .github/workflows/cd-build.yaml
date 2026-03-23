@@ -113,16 +113,29 @@ jobs:
         run: uv run --no-sync pytest tests/ -vvv
 
       - name: Setup venv for CodSpeed
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
+        if: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label) }}
         run: |
           uv venv --python ${{ matrix.python.version }} --clear
           uv sync --extra test --no-install-project
 
       - name: Run CodSpeed simulation benchmarks
-        if: runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label)
+        if: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && contains(fromJSON('["3.13","3.14"]'), matrix.python.label) }}
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
+          run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
+
+      - name: Setup CodSpeed memory environment
+        if: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.label == '3.14' }}
+        run: |
+          uv venv --python ${{ matrix.python.version }} --clear
+          uv sync --extra test --no-install-project
+
+      - name: Run CodSpeed memory benchmarks
+        if: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && runner.os == 'Linux' && matrix.build.arch_label == 'x86_64' && matrix.python.label == '3.14' }}
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: memory
           run: uv run --with "${{ steps.wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
 
       - name: Setup venv for shuffle tests
@@ -180,3 +193,66 @@ jobs:
           COPIUM_USE_DICT_MEMO: "1"
           PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
         run: uv run --no-sync python -m unittest test.test_copy -v
+
+  codspeed_walltime_python_3_14:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    name: walltime (Python 3.14)
+    runs-on: codspeed-macro
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Build walltime benchmark wheel for Python 3.14
+        uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64-unknown-linux-gnu
+          manylinux: auto
+          args: --release --out dist/walltime-python-3-14 -i 3.14
+          rust-toolchain: nightly
+          sccache: "true"
+
+      - name: Clear sccache wrapper after walltime wheel build
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+
+      - name: Find walltime benchmark wheel for Python 3.14
+        id: walltime_python_3_14_wheel
+        shell: bash
+        run: |
+          walltime_python_3_14_wheel_path=$(find dist/walltime-python-3-14 -name "*-cp314-*-manylinux*_aarch64.whl" -type f | head -n1)
+          if [[ -z "$walltime_python_3_14_wheel_path" ]]; then
+            walltime_python_3_14_wheel_path=$(find dist/walltime-python-3-14 -name "*-cp314-*-musllinux*_aarch64.whl" -type f | head -n1)
+          fi
+          if [[ -z "$walltime_python_3_14_wheel_path" ]]; then
+            echo "No wheel found for Python 3.14 on Linux ARM64"
+            exit 1
+          fi
+          echo "path=$walltime_python_3_14_wheel_path" >> "$GITHUB_OUTPUT"
+
+      - name: Setup test environment for walltime Python 3.14
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.walltime_python_3_14_wheel.outputs.path }}"
+
+      - name: Test built walltime wheel for Python 3.14
+        run: uv run --no-sync pytest tests/ -vvv
+
+      - name: Setup CodSpeed walltime environment for Python 3.14
+        run: |
+          uv venv --python 3.14 --clear
+          uv sync --extra test --no-install-project
+
+      - name: Run CodSpeed walltime benchmarks for Python 3.14
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: walltime
+          run: uv run --with "${{ steps.walltime_python_3_14_wheel.outputs.path }}" --no-sync pytest tests/ --codspeed -k test_performance -v
