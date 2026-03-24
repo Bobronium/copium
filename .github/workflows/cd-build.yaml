@@ -78,12 +78,6 @@ jobs:
           name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
           path: dist/*.whl
 
-      - *checkout
-      - *setup-uv
-      - *build-wheel
-      - *clear-sccache-linux
-      - *upload-wheel-artifacts
-
   leading_tests:
     needs: leading_wheel
     strategy:
