@@ -77,7 +77,6 @@ jobs:
         with:
           name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
           path: dist/*.whl
-
   leading_tests:
     needs: leading_wheel
     strategy:
@@ -93,6 +92,8 @@ jobs:
     name: "Tests - Python ${{ matrix.python.label }} - ${{ matrix.build.platform_label }} - ${{ matrix.build.arch_label }}"
 
     steps:
+      - *checkout
+      - *setup-uv
       - &download-test-wheel
         name: Download wheel artifact
         uses: actions/download-artifact@v4
