@@ -224,6 +224,7 @@ jobs:
   tests:
     needs:
       - wheels
+    if: ${{ always() && needs.wheels.result == 'success' }}
     strategy:
       fail-fast: false
       max-parallel: 64
