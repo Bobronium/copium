@@ -104,12 +104,10 @@ jobs:
         shell: bash
         run: |
           wheel=$(find dist -name "*-${{ matrix.python.tag }}-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
-
           if [[ -z "$wheel" ]]; then
             echo "No compatible wheel found"
             exit 1
           fi
-
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - name: Setup test environment
@@ -263,33 +261,34 @@ jobs:
         run: uv run --no-sync python -m unittest test.test_copy -v
 
   codspeed:
-    name: "CodSpeed ${{ matrix.mode.label }} - Python 3.14 - ARM64 - Shard ${{ matrix.shard.name }}"
+    name: "CodSpeed ${{ matrix.mode.label }} - Python 3.14 - ARM64 - ${{ matrix.shard.name }}"
     needs: wheel_python_3_14_linux_arm64
-    runs-on: ${{ matrix.mode.runner }}
+    runs-on: ubuntu-24.04-arm
 
     strategy:
       fail-fast: false
       matrix:
         mode:
-          - { id: simulation, label: "CPU Simulation", runner: "ubuntu-24.04-arm", extra_env: "" }
-          - { id: memory,     label: "Memory",         runner: "ubuntu-24.04-arm", extra_env: "CODSPEED_MEMORY=1" }
-          - { id: walltime,   label: "WallTime",       runner: "codspeed-macro",   extra_env: "" }
+          - { id: simulation, label: "CPU Simulation" }
+          - { id: memory,     label: "Memory" }
         shard:
-          - { name: "core",  expr: "test_performance and (test_memo or test_container or test_depth)" }
-          - { name: "mid",   expr: "test_performance and (test_atomic or test_reduce or test_edge)" }
-          - { name: "real",  expr: "test_performance and (test_real or test_real_dict_memo or test_real_stdlib_patched or test_real_stdlib)" }
+          - { name: "Core", expr: "test_memo or test_container or test_depth" }
+          - { name: "Mid",  expr: "test_atomic or test_reduce or test_edge" }
+          - { name: "Real Data", expr: "test_real" }
 
     steps:
       - *checkout
       - *setup-uv
 
-      - name: Download benchmark wheel artifact
+      - &download-benchmark-wheel
+        name: Download benchmark wheel artifact
         uses: actions/download-artifact@v4
         with:
           name: "Wheels-3.14-Linux-ARM64"
           path: dist/benchmark-wheel
 
-      - name: Find benchmark wheel
+      - &find-benchmark-wheel
+        name: Find benchmark wheel
         id: wheel
         shell: bash
         run: |
@@ -303,7 +302,8 @@ jobs:
           fi
           echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
-      - name: Setup benchmark environment
+      - &setup-benchmark-env
+        name: Setup benchmark environment
         run: |
           uv venv --python 3.14 --clear
           uv sync --extra test --no-install-project
@@ -316,8 +316,32 @@ jobs:
         with:
           mode: ${{ matrix.mode.id }}
           run: >
-            uv run --no-sync pytest tests/
+            uv run --no-sync pytest tests/test_performance.py
             --codspeed
             -k "${{ matrix.shard.expr }}"
-            ${{ matrix.mode.id == 'walltime' && '--codspeed-warmup-time=0.2 --codspeed-max-time=1 --codspeed-max-rounds=20' || '' }}
+            -v
+
+  codspeed_walltime:
+    name: "CodSpeed WallTime - Python 3.14 - ARM64"
+    needs: wheel_python_3_14_linux_arm64
+    runs-on: codspeed-macro
+
+    steps:
+      - *checkout
+      - *setup-uv
+      - *download-benchmark-wheel
+      - *find-benchmark-wheel
+      - *setup-benchmark-env
+
+      - name: Run CodSpeed walltime benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: walltime
+          run: >
+            uv run --no-sync pytest tests/test_performance.py
+            --codspeed
+            -k "test_performance"
+            --codspeed-warmup-time=0.2
+            --codspeed-max-time=1
+            --codspeed-max-rounds=20
             -v
