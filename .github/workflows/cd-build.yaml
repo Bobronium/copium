@@ -15,6 +15,7 @@ jobs:
       matrix:
         build:
           - { os: ubuntu-24.04-arm, rust_target: aarch64-unknown-linux-gnu, manylinux: auto, wheel_arch: "manylinux*_aarch64", arch_label: "ARM64", platform_label: "Linux" }
+          - { os: ubuntu-latest,    rust_target: x86_64-unknown-linux-gnu,  manylinux: auto, wheel_arch: "manylinux*_x86_64",  arch_label: "x86_64", platform_label: "Linux" }
         python:
           - { tag: "cp314", version: "3.14.0", label: "3.14" }
 
@@ -209,6 +210,8 @@ jobs:
         exclude:
           - build: { os: ubuntu-24.04-arm, rust_target: aarch64-unknown-linux-gnu, manylinux: auto, wheel_arch: "manylinux*_aarch64", arch_label: "ARM64", platform_label: "Linux" }
             python: { tag: "cp314", version: "3.14.0", label: "3.14" }
+          - build: { os: ubuntu-latest, rust_target: x86_64-unknown-linux-gnu, manylinux: auto, wheel_arch: "manylinux*_x86_64", arch_label: "x86_64", platform_label: "Linux" }
+            python: { tag: "cp314", version: "3.14.0", label: "3.14" }
 
     runs-on: ${{ matrix.build.os }}
     name: "Python ${{ matrix.python.label }} - ${{ matrix.build.platform_label }} - ${{ matrix.build.arch_label }}"
@@ -274,9 +277,13 @@ jobs:
       - *test-cpython-copy-patched-dict-memo
 
   codspeed:
-    name: "CodSpeed ${{ matrix.mode.label }} - Python 3.14 - ARM64 - ${{ matrix.shard.name }}"
+    name: "CodSpeed ${{ matrix.mode.label }} - Python 3.14 - ${{ matrix.shard.name }}"
     needs: leading_wheels
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
+    env:
+      BENCH_ARTIFACT: "Wheels-3.14-Linux-x86_64"
+      BENCH_WHL_GLOB: "*-cp314-*-manylinux*_x86_64.whl"
+      BENCH_WHL_FALLBACK: "*-cp314-*-musllinux*_x86_64.whl"
 
     strategy:
       fail-fast: false
@@ -297,7 +304,7 @@ jobs:
         name: Download benchmark wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: "Wheels-3.14-Linux-ARM64"
+          name: ${{ env.BENCH_ARTIFACT }}
           path: dist/benchmark-wheel
 
       - &find-benchmark-wheel
@@ -305,15 +312,10 @@ jobs:
         id: wheel
         shell: bash
         run: |
-          wheel=$(find dist/benchmark-wheel -name "*-cp314-*-manylinux*_aarch64.whl" -type f | head -n1)
+          wheel=$(find dist/benchmark-wheel -name "${{ env.BENCH_WHL_GLOB }}" -type f | head -n1)
           if [[ -z "$wheel" ]]; then
-            wheel=$(find dist/benchmark-wheel -name "*-cp314-*-musllinux*_aarch64.whl" -type f | head -n1)
+            wheel=$(find dist/benchmark-wheel -name "${{ env.BENCH_WHL_FALLBACK }}" -type f | head -n1)
           fi
-          if [[ -z "$wheel" ]]; then
-            echo "No compatible wheel found"
-            exit 1
-          fi
-          echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - &setup-benchmark-env
         name: Setup benchmark environment
@@ -338,6 +340,10 @@ jobs:
     name: "CodSpeed WallTime - Python 3.14 - ARM64"
     needs: leading_wheels
     runs-on: codspeed-macro
+    env:
+      BENCH_ARTIFACT: "Wheels-3.14-Linux-ARM64"
+      BENCH_WHL_GLOB: "*-cp314-*-manylinux*_aarch64.whl"
+      BENCH_WHL_FALLBACK: "*-cp314-*-musllinux*_aarch64.whl"
 
     steps:
       - *checkout
