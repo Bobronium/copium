@@ -78,7 +78,7 @@ jobs:
           name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
           path: dist/*.whl
   leading_tests:
-    needs: leading_wheel
+    needs: leading_wheels
     strategy:
       fail-fast: false
       max-parallel: 1
