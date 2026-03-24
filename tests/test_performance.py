@@ -22,7 +22,6 @@ import re
 import sys
 from dataclasses import dataclass
 from dataclasses import field
-from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from typing import Any
@@ -284,7 +283,7 @@ REDUCE_CASES = (
     )
     + scaled(
         "datetime",
-        lambda n: [datetime(2024, 1, 1, tzinfo=UTC) + timedelta(days=i) for i in range(n)],
+        lambda n: [datetime(2024, 1, 1) + timedelta(days=i) for i in range(n)],  # noqa: DTZ001
         REDUCE_SIZES,
     )
     + scaled(
@@ -504,7 +503,7 @@ def make_orm_graph():
             [
                 OrmSession(
                     f"t{i}{j}",
-                    datetime(2024, 1, 1 + j, tzinfo=UTC),
+                    datetime(2024, 1, 1 + j),  # noqa: DTZ001
                     {"ip": f"10.0.{i}.{j}"},
                 )
                 for j in range(3)
