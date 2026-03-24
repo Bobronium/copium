@@ -342,5 +342,5 @@ jobs:
             --codspeed
             -k "test_performance"
             --codspeed-warmup-time=0.1
-            --codspeed-max-time=3
+            --codspeed-max-time=2
             -v
