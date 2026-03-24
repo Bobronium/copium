@@ -338,4 +338,10 @@ jobs:
         with:
           mode: walltime
           run: >
-            uv run --no-sync python tools/bisect_codspeed_walltime.py
+            uv run --no-sync pytest tests/test_performance.py
+            --codspeed
+            -k "test_performance"
+            --codspeed-warmup-time=0
+            --codspeed-max-time=0.001
+            --codspeed-max-rounds=1
+            -v
