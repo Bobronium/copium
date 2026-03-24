@@ -8,7 +8,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  leading_wheel:
+  leading_wheels:
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -274,7 +274,7 @@ jobs:
 
   codspeed:
     name: "CodSpeed ${{ matrix.mode.label }} - Python 3.14 - ARM64 - ${{ matrix.shard.name }}"
-    needs: leading_wheel
+    needs: leading_wheels
     runs-on: ubuntu-24.04-arm
 
     strategy:
@@ -335,7 +335,7 @@ jobs:
 
   codspeed_walltime:
     name: "CodSpeed WallTime - Python 3.14 - ARM64"
-    needs: leading_wheel
+    needs: leading_wheels
     runs-on: codspeed-macro
 
     steps:
