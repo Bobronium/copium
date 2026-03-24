@@ -8,7 +8,191 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  leading_wheel:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        build:
+          - { os: ubuntu-24.04-arm, rust_target: aarch64-unknown-linux-gnu, manylinux: auto, wheel_arch: "manylinux*_aarch64", arch_label: "ARM64", platform_label: "Linux" }
+        python:
+          - { tag: "cp314", version: "3.14.0", label: "3.14" }
+
+    runs-on: ${{ matrix.build.os }}
+    name: "Python ${{ matrix.python.label }} - ${{ matrix.build.platform_label }} - ${{ matrix.build.arch_label }}"
+
+    steps:
+      - &checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - &setup-uv
+        name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - &install-python-non-linux
+        name: Install Python (non-Linux)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          if [[ "${{ matrix.build.os }}" == "windows-11-arm" && "${{ matrix.python.label }}" =~ ^3\.(10|11|12)$ ]]; then
+            uv python install ${{ matrix.python.version }}
+            echo "PYTHON=python${{ matrix.python.label }}" >> "$GITHUB_ENV"
+          else
+            if [[ "${{ matrix.build.os }}" == "windows-11-arm" ]]; then
+              uv python install cpython-${{ matrix.python.version }}-windows-aarch64-none
+            else
+              uv python install ${{ matrix.python.version }}
+            fi
+            echo "PYTHON=$(uv python find ${{ matrix.python.version }})" >> "$GITHUB_ENV"
+          fi
+
+      - &build-wheel
+        name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.build.rust_target }}
+          manylinux: ${{ matrix.build.manylinux || 'auto' }}
+          args: --release --out dist -i ${{ env.PYTHON || matrix.python.label }}
+          rust-toolchain: nightly
+          sccache: "true"
+        env:
+          CL: ${{ runner.os == 'Windows' && '/experimental:c11atomics' || '' }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '10.12' || '' }}
+
+      - &clear-sccache-linux
+        name: Clear sccache wrapper
+        if: runner.os == 'Linux'
+        run: |
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+
+      - &upload-wheel-artifacts
+        name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
+          path: dist/*.whl
+
+      - *checkout
+      - *setup-uv
+      - *build-wheel
+      - *clear-sccache-linux
+      - *upload-wheel-artifacts
+
+  leading_tests:
+    needs: leading_wheel
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        build:
+          - { os: ubuntu-24.04-arm, wheel_arch: "manylinux*_aarch64", arch_label: "ARM64", platform_label: "Linux" }
+        python:
+          - { tag: "cp314", version: "3.14.0", label: "3.14", branch: "3.14" }
+
+    runs-on: ${{ matrix.build.os }}
+    name: "Tests - Python ${{ matrix.python.label }} - ${{ matrix.build.platform_label }} - ${{ matrix.build.arch_label }}"
+
+    steps:
+      - &download-test-wheel
+        name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
+          path: dist/test-wheel
+
+      - &find-test-wheel
+        name: Find built wheel
+        id: wheel
+        shell: bash
+        run: |
+          wheel=$(find dist/test-wheel -name "*-${{ matrix.python.tag }}-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
+          if [[ -z "$wheel" && "${{ matrix.build.platform_label }}" == "Linux" ]]; then
+            case "${{ matrix.build.arch_label }}" in
+              "x86_64")
+                wheel=$(find dist/test-wheel -name "*-${{ matrix.python.tag }}-*-musllinux*_x86_64.whl" -type f | head -n1)
+                ;;
+              "ARM64")
+                wheel=$(find dist/test-wheel -name "*-${{ matrix.python.tag }}-*-musllinux*_aarch64.whl" -type f | head -n1)
+                ;;
+            esac
+          fi
+          if [[ -z "$wheel" ]]; then
+            echo "No compatible wheel found"
+            exit 1
+          fi
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
+
+      - &setup-test-env
+        name: Setup test environment
+        run: |
+          uv venv --python ${{ env.PYTHON || matrix.python.label }} --clear
+          uv sync --extra test --no-install-project
+          uv pip install "${{ steps.wheel.outputs.path }}"
+
+      - &test-built-wheel
+        name: Test built wheel
+        run: uv run --no-sync pytest tests/ -vvv
+
+      - &test-shuffle-a
+        name: Test shuffle A
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
+
+      - &test-shuffle-b
+        name: Test shuffle B
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
+
+      - &test-shuffle-c
+        name: Test shuffle C
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
+
+      - &test-shuffle-d
+        name: Test shuffle D
+        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
+
+      - &cache-cpython-tests
+        name: Cache CPython test suite
+        id: cpython-cache
+        uses: actions/cache@v4
+        with:
+          path: cpython-tests
+          key: cpython-tests-${{ matrix.python.branch || matrix.python.label }}
+
+      - &checkout-cpython-tests
+        name: Checkout CPython test suite
+        if: steps.cpython-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: python/cpython
+          ref: ${{ matrix.python.branch || matrix.python.label }}
+          sparse-checkout: Lib/test
+          sparse-checkout-cone-mode: true
+          path: cpython-tests
+
+      - &test-cpython-copy-patched
+        name: Test CPython test_copy (patched)
+        env:
+          COPIUM_PATCH_ENABLE: "1"
+          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
+        run: uv run --no-sync python -m unittest test.test_copy -v
+
+      - &test-cpython-copy-patched-dict-memo
+        name: Test CPython test_copy (patched, dict memo)
+        env:
+          COPIUM_PATCH_ENABLE: "1"
+          COPIUM_USE_DICT_MEMO: "1"
+          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
+        run: uv run --no-sync python -m unittest test.test_copy -v
+
   wheels:
+    needs:
+      - leading_tests
+    if: ${{ always() }}
     strategy:
       fail-fast: false
       max-parallel: 64
@@ -35,230 +219,63 @@ jobs:
     name: "Python ${{ matrix.python.label }} - ${{ matrix.build.platform_label }} - ${{ matrix.build.arch_label }}"
 
     steps:
-      - &checkout
-        uses: actions/checkout@v5
-        with:
-          submodules: recursive
-          fetch-depth: 0
-          fetch-tags: true
+      - *checkout
+      - *setup-uv
+      - *install-python-non-linux
+      - *build-wheel
+      - *clear-sccache-linux
+      - *upload-wheel-artifacts
 
-      - name: Compute job parameters
-        id: meta
-        shell: bash
-        run: |
-          skip_tests=false
-          if [[ "${{ matrix.build.os }}" == "windows-11-arm" && "${{ matrix.python.label }}" =~ ^3\.(10|11|12)$ ]]; then
-            skip_tests=true
-          fi
-          echo "skip_tests=$skip_tests" >> "$GITHUB_OUTPUT"
+  tests:
+    needs:
+      - wheels
+    strategy:
+      fail-fast: false
+      max-parallel: 64
+      matrix:
+        build:
+          - { os: ubuntu-latest,    wheel_arch: "manylinux*_x86_64",  arch_label: "x86_64",        platform_label: "Linux" }
+          - { os: ubuntu-24.04-arm, wheel_arch: "manylinux*_aarch64", arch_label: "ARM64",         platform_label: "Linux" }
+          - { os: windows-latest,   wheel_arch: "win_amd64",          arch_label: "x64",           platform_label: "Windows" }
+          - { os: windows-11-arm,   wheel_arch: "win_arm64",          arch_label: "ARM64",         platform_label: "Windows" }
+          - { os: macos-15,         wheel_arch: "macosx*_arm64",      arch_label: "Apple Silicon", platform_label: "macOS" }
+          - { os: macos-15-intel,   wheel_arch: "macosx*_x86_64",     arch_label: "Intel",         platform_label: "macOS" }
+        python:
+          - { tag: "cp310",  version: "3.10.11", label: "3.10" }
+          - { tag: "cp311",  version: "3.11.9",  label: "3.11" }
+          - { tag: "cp312",  version: "3.12.10", label: "3.12" }
+          - { tag: "cp313",  version: "3.13.9",  label: "3.13" }
+          - { tag: "cp314",  version: "3.14.0",  label: "3.14" }
+          - { tag: "cp314t", version: "3.14t",   label: "3.14t", branch: "3.14" }
+        exclude:
+          - build: { os: ubuntu-24.04-arm, wheel_arch: "manylinux*_aarch64", arch_label: "ARM64", platform_label: "Linux" }
+            python: { tag: "cp314", version: "3.14.0", label: "3.14" }
+          - build: { os: windows-11-arm, wheel_arch: "win_arm64", arch_label: "ARM64", platform_label: "Windows" }
+            python: { tag: "cp310", version: "3.10.11", label: "3.10" }
+          - build: { os: windows-11-arm, wheel_arch: "win_arm64", arch_label: "ARM64", platform_label: "Windows" }
+            python: { tag: "cp311", version: "3.11.9", label: "3.11" }
+          - build: { os: windows-11-arm, wheel_arch: "win_arm64", arch_label: "ARM64", platform_label: "Windows" }
+            python: { tag: "cp312", version: "3.12.10", label: "3.12" }
 
-      - &setup-uv
-        name: Setup uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Install Python (non-Linux)
-        if: runner.os != 'Linux'
-        shell: bash
-        run: |
-          if [[ "${{ matrix.build.os }}" == "windows-11-arm" && "${{ matrix.python.label }}" =~ ^3\.(10|11|12)$ ]]; then
-            uv python install ${{ matrix.python.version }}
-            echo "PYTHON=python${{ matrix.python.label }}" >> "$GITHUB_ENV"
-          else
-            if [[ "${{ matrix.build.os }}" == "windows-11-arm" ]]; then
-              uv python install cpython-${{ matrix.python.version }}-windows-aarch64-none
-            else
-              uv python install ${{ matrix.python.version }}
-            fi
-            echo "PYTHON=$(uv python find ${{ matrix.python.version }})" >> "$GITHUB_ENV"
-          fi
-
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.build.rust_target }}
-          manylinux: ${{ matrix.build.manylinux || 'auto' }}
-          args: --release --out dist -i ${{ env.PYTHON || matrix.python.label }}
-          rust-toolchain: nightly
-          sccache: "true"
-        env:
-          CL: ${{ runner.os == 'Windows' && '/experimental:c11atomics' || '' }}
-          MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '10.12' || '' }}
-
-      - &clear-sccache-linux
-        name: Clear sccache wrapper
-        if: runner.os == 'Linux'
-        run: |
-          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
-
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: "Wheels-${{ matrix.python.label }}-${{ matrix.build.platform_label }}-${{ matrix.build.arch_label }}"
-          path: dist/*.whl
-
-      - name: Find built wheel
-        if: steps.meta.outputs.skip_tests != 'true'
-        id: wheel
-        shell: bash
-        run: |
-          wheel=$(find dist -name "*-${{ matrix.python.tag }}-${{ matrix.build.wheel_arch }}.whl" -type f | head -n1)
-          if [[ -z "$wheel" ]]; then
-            echo "No compatible wheel found"
-            exit 1
-          fi
-          echo "path=$wheel" >> "$GITHUB_OUTPUT"
-
-      - name: Setup test environment
-        if: steps.meta.outputs.skip_tests != 'true'
-        run: |
-          uv venv --python ${{ matrix.python.label }} --clear
-          uv sync --extra test --no-install-project
-          uv pip install "${{ steps.wheel.outputs.path }}"
-
-      - name: Test built wheel
-        if: steps.meta.outputs.skip_tests != 'true'
-        run: uv run --no-sync pytest tests/ -vvv
-
-      - name: Test shuffle A
-        if: steps.meta.outputs.skip_tests != 'true'
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
-
-      - name: Test shuffle B
-        if: steps.meta.outputs.skip_tests != 'true'
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
-
-      - name: Test shuffle C
-        if: steps.meta.outputs.skip_tests != 'true'
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
-
-      - name: Test shuffle D
-        if: steps.meta.outputs.skip_tests != 'true'
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
-
-      - name: Cache CPython test suite
-        if: steps.meta.outputs.skip_tests != 'true'
-        id: cpython-cache
-        uses: actions/cache@v4
-        with:
-          path: cpython-tests
-          key: cpython-tests-${{ matrix.python.branch || matrix.python.label }}
-
-      - name: Checkout CPython test suite
-        if: steps.meta.outputs.skip_tests != 'true' && steps.cpython-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@v5
-        with:
-          repository: python/cpython
-          ref: ${{ matrix.python.branch || matrix.python.label }}
-          sparse-checkout: Lib/test
-          sparse-checkout-cone-mode: true
-          path: cpython-tests
-
-      - name: Test CPython test_copy (patched)
-        if: steps.meta.outputs.skip_tests != 'true'
-        env:
-          COPIUM_PATCH_ENABLE: "1"
-          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
-        run: uv run --no-sync python -m unittest test.test_copy -v
-
-      - name: Test CPython test_copy (patched, dict memo)
-        if: steps.meta.outputs.skip_tests != 'true'
-        env:
-          COPIUM_PATCH_ENABLE: "1"
-          COPIUM_USE_DICT_MEMO: "1"
-          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
-        run: uv run --no-sync python -m unittest test.test_copy -v
-
-  wheel_python_3_14_linux_arm64:
-    runs-on: ubuntu-24.04-arm
-    name: "Python 3.14 - Linux - ARM64"
+    runs-on: ${{ matrix.build.os }}
+    name: "Tests - Python ${{ matrix.python.label }} - ${{ matrix.build.platform_label }} - ${{ matrix.build.arch_label }}"
 
     steps:
       - *checkout
       - *setup-uv
-
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          target: aarch64-unknown-linux-gnu
-          manylinux: auto
-          args: --release --out dist -i 3.14
-          rust-toolchain: nightly
-          sccache: "true"
-
-      - *clear-sccache-linux
-
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: "Wheels-3.14-Linux-ARM64"
-          path: dist/*.whl
-
-      - name: Find built wheel
-        id: wheel
-        shell: bash
-        run: |
-          wheel=$(find dist -name "*-cp314-*-manylinux*_aarch64.whl" -type f | head -n1)
-          if [[ -z "$wheel" ]]; then
-            wheel=$(find dist -name "*-cp314-*-musllinux*_aarch64.whl" -type f | head -n1)
-          fi
-          if [[ -z "$wheel" ]]; then
-            echo "No compatible wheel found"
-            exit 1
-          fi
-          echo "path=$wheel" >> "$GITHUB_OUTPUT"
-
-      - name: Setup test environment
-        run: |
-          uv venv --python 3.14 --clear
-          uv sync --extra test --no-install-project
-          uv pip install "${{ steps.wheel.outputs.path }}"
-
-      - name: Test built wheel
-        run: uv run --no-sync pytest tests/ -vvv
-
-      - name: Test shuffle A
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=A
-
-      - name: Test shuffle B
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=B
-
-      - name: Test shuffle C
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=C
-
-      - name: Test shuffle D
-        run: uv run --no-sync pytest tests/ -v --random-order --random-order-seed=D
-
-      - name: Cache CPython test suite
-        id: cpython-cache
-        uses: actions/cache@v4
-        with:
-          path: cpython-tests
-          key: cpython-tests-3.14
-
-      - name: Checkout CPython test suite
-        if: steps.cpython-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@v5
-        with:
-          repository: python/cpython
-          ref: 3.14
-          sparse-checkout: Lib/test
-          sparse-checkout-cone-mode: true
-          path: cpython-tests
-
-      - name: Test CPython test_copy (patched)
-        env:
-          COPIUM_PATCH_ENABLE: "1"
-          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
-        run: uv run --no-sync python -m unittest test.test_copy -v
-
-      - name: Test CPython test_copy (patched, dict memo)
-        env:
-          COPIUM_PATCH_ENABLE: "1"
-          COPIUM_USE_DICT_MEMO: "1"
-          PYTHONPATH: ${{ github.workspace }}/cpython-tests/Lib
-        run: uv run --no-sync python -m unittest test.test_copy -v
+      - *install-python-non-linux
+      - *download-test-wheel
+      - *find-test-wheel
+      - *setup-test-env
+      - *test-built-wheel
+      - *test-shuffle-a
+      - *test-shuffle-b
+      - *test-shuffle-c
+      - *test-shuffle-d
+      - *cache-cpython-tests
+      - *checkout-cpython-tests
+      - *test-cpython-copy-patched
+      - *test-cpython-copy-patched-dict-memo
 
   codspeed:
     name: "CodSpeed ${{ matrix.mode.label }} - Python 3.14 - ARM64 - ${{ matrix.shard.name }}"
@@ -273,7 +290,7 @@ jobs:
           - { id: memory,     label: "Memory" }
         shard:
           - { name: "Core", expr: "test_memo or test_container or test_depth" }
-          - { name: "Mid",  expr: "test_atomic or test_reduce or test_edge" }
+          - { name: "Mid", expr: "test_atomic or test_reduce or test_edge" }
           - { name: "Real Data", expr: "test_real" }
 
     steps:
@@ -323,7 +340,7 @@ jobs:
 
   codspeed_walltime:
     name: "CodSpeed WallTime - Python 3.14 - ARM64"
-    needs: wheel_python_3_14_linux_arm64
+    needs: leading_wheel
     runs-on: codspeed-macro
 
     steps:
