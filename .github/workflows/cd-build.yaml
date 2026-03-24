@@ -316,6 +316,11 @@ jobs:
           if [[ -z "$wheel" ]]; then
             wheel=$(find dist/benchmark-wheel -name "${{ env.BENCH_WHL_FALLBACK }}" -type f | head -n1)
           fi
+          if [[ -z "$wheel" ]]; then
+            echo "No compatible wheel found"
+            exit 1
+          fi
+          echo "path=$wheel" >> "$GITHUB_OUTPUT"
 
       - &setup-benchmark-env
         name: Setup benchmark environment
