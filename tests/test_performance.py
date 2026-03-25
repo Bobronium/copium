@@ -17,6 +17,7 @@ Deepcopy pipeline (from deepcopium.rs):
 """
 
 import copy as stdlib_copy
+import os
 import platform
 import re
 import sys
@@ -24,6 +25,7 @@ from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 from datetime import timedelta
+from itertools import chain
 from typing import Any
 from typing import NamedTuple
 
@@ -36,18 +38,25 @@ import copium.patch
 class Case(NamedTuple):
     name: str
     obj: Any
+    memory: bool = True
 
 
 def scaled(tag, factory, sizes):
-    return [Case(f"{tag}-n-{n}", factory(n)) for n in sizes]
+    return (Case(f"{tag}-n-{n}", factory(n), memory=n >= 1000) for n in sizes)
 
 
 def depth_scaled(tag, factory, depths):
-    return [Case(f"{tag}-d-{d}", factory(d)) for d in depths]
+    return (Case(f"{tag}-d-{d}", factory(d), memory=d >= 100) for d in depths)
+
+
+CODSPEED_MEMORY = bool(os.getenv("CODSPEED_MEMORY"))
 
 
 def generate_params(cases):
-    return pytest.mark.parametrize("case", [pytest.param(c, id=c.name) for c in cases])
+    return pytest.mark.parametrize(
+        "case",
+        (pytest.param(c, id=c.name) for c in cases if not CODSPEED_MEMORY or c.memory),
+    )
 
 
 python_version = ".".join(map(str, sys.version_info[:2]))
@@ -113,16 +122,15 @@ def memo_unique_mut(n):
     return {"a": ([], [], []), "b": [[] for _ in range(n)]}
 
 
-MEMO_CASES = (
-    scaled("shared_mut", memo_shared_mut, SIZES)
-    + scaled("shared_deep", memo_shared_deep, SIZES)
-    + scaled("shared_tuple_atom", memo_shared_tuple_atom, SIZES)
-    + scaled("shared_tuple_mut", memo_shared_tuple_mut, SIZES)
-    + scaled("shared_atom", memo_shared_atom, SIZES)
-    + scaled("unique_atom", memo_unique_atom, SIZES)
-    + scaled("unique_mut", memo_unique_mut, SIZES)
+MEMO_CASES = chain(
+    scaled("shared_mut", memo_shared_mut, SIZES),
+    scaled("shared_deep", memo_shared_deep, SIZES),
+    scaled("shared_tuple_atom", memo_shared_tuple_atom, SIZES),
+    scaled("shared_tuple_mut", memo_shared_tuple_mut, SIZES),
+    scaled("shared_atom", memo_shared_atom, SIZES),
+    scaled("unique_atom", memo_unique_atom, SIZES),
+    scaled("unique_mut", memo_unique_mut, SIZES),
 )
-
 
 # ═══════════════════════════════════════════════════════════
 #  CONTAINER TRAVERSAL
@@ -131,13 +139,13 @@ MEMO_CASES = (
 #  Isolates per-container creation + traversal cost.
 # ═══════════════════════════════════════════════════════════
 
-CONTAINER_CASES = (
-    scaled("list", lambda n: list(range(n)), SIZES)
-    + scaled("tuple", lambda n: tuple(range(n)), SIZES)
-    + scaled("dict", lambda n: {i: i for i in range(n)}, SIZES)
-    + scaled("set", lambda n: set(range(n)), SIZES)
-    + scaled("frozenset", lambda n: frozenset(range(n)), SIZES)
-    + scaled("bytearray", lambda n: bytearray(n), (100, 10_000, 1_000_000))
+CONTAINER_CASES = chain(
+    scaled("list", lambda n: list(range(n)), SIZES),
+    scaled("tuple", lambda n: tuple(range(n)), SIZES),
+    scaled("dict", lambda n: {i: i for i in range(n)}, SIZES),
+    scaled("set", lambda n: set(range(n)), SIZES),
+    scaled("frozenset", lambda n: frozenset(range(n)), SIZES),
+    scaled("bytearray", lambda n: bytearray(n), (100, 10_000, 1_000_000)),
 )
 
 
@@ -178,13 +186,12 @@ def nested_tuple_atom(d):
     return obj
 
 
-DEPTH_CASES = (
-    depth_scaled("list", nested_list, DEPTHS)
-    + depth_scaled("dict", nested_dict, DEPTHS)
-    + depth_scaled("tuple_mut", nested_tuple_mut, DEPTHS)
-    + depth_scaled("tuple_atom", nested_tuple_atom, DEPTHS)
+DEPTH_CASES = chain(
+    depth_scaled("list", nested_list, DEPTHS),
+    depth_scaled("dict", nested_dict, DEPTHS),
+    depth_scaled("tuple_mut", nested_tuple_mut, DEPTHS),
+    depth_scaled("tuple_atom", nested_tuple_atom, DEPTHS),
 )
-
 
 # ═══════════════════════════════════════════════════════════
 #  ATOMIC FAST PATH
@@ -206,13 +213,13 @@ def mixed_prememo_atoms(n):
     return [pool[i % 6] for i in range(n)]
 
 
-ATOMIC_CASES = (
-    scaled("none", lambda n: [None] * n, ATOM_SIZES)
-    + scaled("int", lambda n: list(range(n)), ATOM_SIZES)
-    + scaled("str", lambda n: [f"s{i}" for i in range(n)], ATOM_SIZES)
-    + scaled("mixed_builtin_atomics", mixed_prememo_atoms, ATOM_SIZES)
-    + scaled("re.Pattern", lambda n: [CACHED_RE] * n, ATOM_SIZES)
-    + scaled("type", lambda n: [int] * n, ATOM_SIZES)
+ATOMIC_CASES = chain(
+    scaled("none", lambda n: [None] * n, ATOM_SIZES),
+    scaled("int", lambda n: list(range(n)), ATOM_SIZES),
+    scaled("str", lambda n: [f"s{i}" for i in range(n)], ATOM_SIZES),
+    scaled("mixed_builtin_atomics", mixed_prememo_atoms, ATOM_SIZES),
+    scaled("re.Pattern", lambda n: [CACHED_RE] * n, ATOM_SIZES),
+    scaled("type", lambda n: [int] * n, ATOM_SIZES),
 )
 
 
@@ -260,37 +267,37 @@ class CustomDeepcopyObject:
         return CustomDeepcopyObject(stdlib_copy.deepcopy(self.v, memo))
 
 
-REDUCE_CASES = (
+REDUCE_CASES = chain(
     scaled(
         "dataclass_simple",
         lambda n: [SimpleDataclass(i, f"v{i}") for i in range(n)],
         REDUCE_SIZES,
-    )
-    + scaled(
+    ),
+    scaled(
         "dataclass_mutable",
         lambda n: [MutableDataclass(i, [i], {"k": i}) for i in range(n)],
         REDUCE_SIZES,
-    )
-    + scaled(
+    ),
+    scaled(
         "dataclass_nested",
         lambda n: [NestedDataclass(SimpleDataclass(i, f"v{i}"), [i]) for i in range(n)],
         REDUCE_SIZES,
-    )
-    + scaled(
+    ),
+    scaled(
         "slots",
         lambda n: [SlotsObject(i, f"v{i}", float(i)) for i in range(n)],
         REDUCE_SIZES,
-    )
-    + scaled(
+    ),
+    scaled(
         "datetime",
         lambda n: [datetime(2024, 1, 1) + timedelta(days=i) for i in range(n)],  # noqa: DTZ001
         REDUCE_SIZES,
-    )
-    + scaled(
+    ),
+    scaled(
         "custom_deepcopy",
         lambda n: [CustomDeepcopyObject([i]) for i in range(n)],
         REDUCE_SIZES,
-    )
+    ),
 )
 
 
