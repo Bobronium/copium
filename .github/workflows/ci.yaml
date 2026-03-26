@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   test:
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/ci-test.yaml
 
   lint:

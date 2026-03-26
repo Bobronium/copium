@@ -86,7 +86,7 @@ test = [
     "indifference>=0.2.0",
     "typing-extensions; python_version < '3.12'",
     "datamodelzoo",
-    "pytest-codspeed>=4.2.0",
+    "pytest-codspeed>=4.3.0",
     "pytest-test-groups>=1.2.1",
     "psutil>=5.9.0",
     "pytest-random-order>=1.2.0",
