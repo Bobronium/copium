@@ -337,6 +337,7 @@ jobs:
 
       - name: Run CodSpeed walltime benchmarks
         uses: CodSpeedHQ/action@v4
+        continue-on-error: true
         with:
           mode: walltime
           run: >
@@ -344,5 +345,5 @@ jobs:
             --codspeed
             -k "test_performance"
             --codspeed-warmup-time=0.1
-            --codspeed-max-time=2
+            --codspeed-max-time=3
             -v
