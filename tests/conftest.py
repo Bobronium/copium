@@ -12,8 +12,10 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import FunctionType
 from types import MappingProxyType
 from typing import TYPE_CHECKING
+from typing import Any
 from typing import Final
 
 import pytest
@@ -25,7 +27,9 @@ from datamodelzoo import CASES
 from datamodelzoo import EVIL_CASES
 
 if TYPE_CHECKING:
-    from types import FunctionType
+    from _pytest.nodes import Collector
+
+TEST_PERFORMANCE_FILENAME = "test_performance.py"
 
 COPIUM_ENV: Final = MappingProxyType(
     dict.fromkeys(
@@ -297,3 +301,19 @@ exec(_code, _globals)
 
     # We handled execution ourselves; pytest must not call the test function again.
     return True
+
+
+def pytest_pycollect_makeitem(collector: Collector, name: str, obj: Any):
+    if collector.path.name != TEST_PERFORMANCE_FILENAME or not isinstance(obj, FunctionType):
+        return None
+
+    if obj.__name__.startswith("test_"):
+        raise NameError(
+            f"{TEST_PERFORMANCE_FILENAME} must contain only benchmark functions: "
+            f"remove 'test_' prefix from {name!r}."
+        )
+
+    if "benchmark" in obj.__code__.co_varnames:
+        return list(collector._genfunctions(name, obj))
+
+    return None
