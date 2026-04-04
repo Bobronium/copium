@@ -267,7 +267,7 @@ class CustomDeepcopyObject:
         return CustomDeepcopyObject(stdlib_copy.deepcopy(self.v, memo))
 
 
-REDUCE_CASES = chain(
+GENERIC_CASES = chain(
     scaled(
         "dataclass_simple",
         lambda n: [SimpleDataclass(i, f"v{i}") for i in range(n)],
@@ -342,7 +342,7 @@ EDGE_CASES = [
 
 
 # ═══════════════════════════════════════════════════════════
-#  REAL-WORLD
+#  Sample data
 #
 #  Representative production deepcopy patterns.
 #  Data is self-contained and deterministic.
@@ -520,7 +520,7 @@ def make_orm_graph():
     ]
 
 
-REAL_WORLD_CASES = [
+SAMPLE_CASES = [
     Case("json_api_response", make_json_api_response()),
     Case("config_shared_defaults", make_config_with_shared_defaults()),
     Case("openapi_schema", make_openapi_fragment()),
@@ -532,65 +532,66 @@ REAL_WORLD_CASES = [
 
 
 # ═══════════════════════════════════════════════════════════
-#  TESTS
+#  BENCHMARKS
 # ═══════════════════════════════════════════════════════════
 
 
+@PYTHON_VERSION
 @generate_params(MEMO_CASES)
-@PYTHON_VERSION
-def test_memo(case: Case, _python, benchmark):
+def memo(case: Case, _python, benchmark):
     benchmark(copium.deepcopy, case.obj)
 
 
+@PYTHON_VERSION
 @generate_params(CONTAINER_CASES)
-@PYTHON_VERSION
-def test_container(case: Case, _python, benchmark):
+def container(case: Case, _python, benchmark):
     benchmark(copium.deepcopy, case.obj)
 
 
+@PYTHON_VERSION
 @generate_params(DEPTH_CASES)
-@PYTHON_VERSION
-def test_depth(case: Case, _python, benchmark):
+def depth(case: Case, _python, benchmark):
     benchmark(copium.deepcopy, case.obj)
 
 
+@PYTHON_VERSION
 @generate_params(ATOMIC_CASES)
-@PYTHON_VERSION
-def test_atomic(case: Case, _python, benchmark):
+def atomic(case: Case, _python, benchmark):
     benchmark(copium.deepcopy, case.obj)
 
 
-@generate_params(REDUCE_CASES)
 @PYTHON_VERSION
-def test_reduce(case: Case, _python, benchmark):
+@generate_params(GENERIC_CASES)
+def generic(case: Case, _python, benchmark):
     benchmark(copium.deepcopy, case.obj)
 
 
+@PYTHON_VERSION
 @generate_params(EDGE_CASES)
-@PYTHON_VERSION
-def test_edge(case: Case, _python, benchmark):
+def edge_cases(case: Case, _python, benchmark):
     benchmark(copium.deepcopy, case.obj)
 
 
-@generate_params(REAL_WORLD_CASES)
 @PYTHON_VERSION
-def test_real(case: Case, _python, benchmark):
+@generate_params(SAMPLE_CASES)
+def sample_data(case: Case, _python, benchmark):
     benchmark(copium.deepcopy, case.obj)
 
 
-@generate_params(REAL_WORLD_CASES)
 @PYTHON_VERSION
-def test_real_dict_memo(case: Case, _python, benchmark):
-    benchmark(copium.deepcopy, case.obj, {})
+@generate_params(SAMPLE_CASES)
+def dict_memo_sample_data(case: Case, _python, benchmark):
+    copium.config.apply(memo="dict")
+    benchmark(copium.deepcopy, case.obj)
 
 
-@generate_params(REAL_WORLD_CASES)
 @PYTHON_VERSION
-def test_real_stdlib_patched(case: Case, _python, benchmark, copium_patch_enabled):
+@generate_params(SAMPLE_CASES)
+def stdlib_sample_data(case: Case, _python, benchmark):
     benchmark(stdlib_copy.deepcopy, case.obj)
 
 
-@generate_params(REAL_WORLD_CASES)
 @PYTHON_VERSION
-def test_real_stdlib(case: Case, _python, benchmark):
+@generate_params(SAMPLE_CASES)
+def patched_stdlib_sample_data(case: Case, _python, benchmark, copium_patch_enabled):
     benchmark(stdlib_copy.deepcopy, case.obj)
