@@ -4,6 +4,9 @@ on:
   workflow_call:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   verify-charts:
     runs-on: ubuntu-latest
@@ -17,8 +20,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          REPO_SLUG="${{ github.repository }}"
+
           # Extract the chart commit SHA from README
-          CHART_SHA=$(grep -oP 'https://raw\.githubusercontent\.com/Bobronium/copium/\K[a-f0-9]{40}(?=/assets/chart_)' README.md | head -n1 || true)
+          CHART_SHA=$(grep -oP "https://raw\\.githubusercontent\\.com/${REPO_SLUG}/\\K[a-f0-9]{40}(?=/assets/chart_)" README.md | head -n1 || true)
 
           if [[ -z "$CHART_SHA" ]]; then
             echo "ERROR: No chart URLs found in README.md"
