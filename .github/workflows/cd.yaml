@@ -30,6 +30,8 @@ jobs:
   update-charts:
     if: github.ref == 'refs/heads/main'
     needs: build
+    permissions:
+      contents: write
     uses: ./.github/workflows/cd-update-charts.yaml
 
   # Build sdist (main branch or tag)
