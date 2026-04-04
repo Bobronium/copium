@@ -270,9 +270,9 @@ jobs:
           - { id: simulation, label: "CPU Simulation" }
           - { id: memory,     label: "Memory" }
         shard:
-          - { name: "Core", expr: "test_memo or test_container or test_depth" }
-          - { name: "Mid", expr: "test_atomic or test_reduce or test_edge" }
-          - { name: "Real Data", expr: "test_real" }
+          - { name: "Core", expr: "(memo or container or depth) and not dict_memo" }
+          - { name: "Mid", expr: "atomic or generic or edge_cases" }
+          - { name: "Sample Data", expr: "sample" }
 
     steps:
       - *checkout
