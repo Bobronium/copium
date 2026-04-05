@@ -9,10 +9,10 @@ copium
 <a href="https://pypi.python.org/pypi/copium">
   <img src="https://img.shields.io/pypi/pyversions/copium.svg" alt="PyPI Python Versions Badge">
 </a>
-<a href="https://github.com/Bobronium/copium/actions">
-  <img src="https://github.com/Bobronium/copium/actions/workflows/cd.yaml/badge.svg" alt="CD Status Badge">
+<a href="https://github.com/percolab/copium/actions">
+  <img src="https://github.com/percolab/copium/actions/workflows/cd.yaml/badge.svg" alt="CD Status Badge">
 </a>
-<a href="https://codspeed.io/Bobronium/copium">
+<a href="https://codspeed.io/percolab/copium">
 <img src="https://img.shields.io/badge/Codspeed-copium-8A2BE2?style=flat&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCIgcHJlc2VydmVBc3BlY3RSYXRpbz0ieE1pZFlNaWQgbWVldCI%2BCiAgICA8ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMTAwLDEwKSB0cmFuc2xhdGUoMTIwLDEyKSBzY2FsZSgxLjMpIHRyYW5zbGF0ZSgtMTIwLC0xMikiPiI%2BCiAgICAgICAgPHBhdGggZmlsbD0iI0VENkUzRCIgZmlsbC1ydWxlPSJldmVub2RkIgogICAgICAgICAgICAgIGQ9Ik0xMTAuMTIxIDE3LjExN2MuNzY2LjE3IDEuMzA4LjA1IDEuMzkyLjA2NGwuMDA0LjAwMWMxLjI3NS42OTEgMi4yMDIgMS4yNzkgMy4wOTcgMS42NTVsLS4xMDcuMDFxLTEuMDkyLjE3Mi0xLjU3Mi4yNWMtMy4yNzYuNTMzLTQuODg0LS4zOTgtNC41MzItMS44My4xNDItLjU3OC45MzgtLjMyNCAxLjcxOC0uMTVtMTEuMDA0LTEzLjkxYzIuMDc0IDEuNTM0IDIuNjcgMi4zMzEgMy43NzQgMy41NTUgMi43MDggMCA0LjIyIDIuMDI2IDMuNzM1IDUuMDQ2LS4zMDggMS45MjEtNC4xNSAxLjI0Ni01LjA2IDBxLS45MTIuODI2LTQuNDgzIDMuNjYzbC0uMDk3LjA3NmMtLjY5NS41NTMtMy4zNzcuMzc2LTMuNjM0LjE4N3EuODA2LTEuMzI1IDEuMTYxLTIuMDcyYy4zNTYtLjc0NS42MDUtMS40OTMuNjA1LTIuNzMyIDAtMS4yMzgtLjY5NS0yLjI5LTIuMTY2LTIuMjYzYS4yOC4yOCAwIDAgMC0uMjc0LjI5NWMwIC4xOTUuMTQ1LjI5Ni4yNzQuMjk2Ljc3OSAwIDEuMzI1Ljk2OCAxLjMyNSAxLjY3My4wMDEuNzA0LS4xMTEgMS4yNzUtLjQ0NCAyLjEzNC0uMjg3Ljc0MS0xLjQ0NCAyLjU4My0xLjc0NSAyLjc2N2EuMjc4LjI3OCAwIDAgMCAuMDQyLjQ4NnEuMDMxLjAxNS4wNzkuMDMuMS4wMzIuMjUzLjA3MWMuMjYyLjA2NC41ODEuMTIxLjk0LjE2My45ODcuMTEzIDIuMDk0LjA5IDMuMjc0LS4xMmwuMDQ1LS4wMDljLjM1Mi0uMDY0Ljg2NS0uMDY5IDEuMzcyLS4wMDMuNTkzLjA3OCAxLjEzMy4yNDQgMS41NDMuNDkzLjM2LjIxOC42MDguNDkuNzM1LjgybC4wMTIuMDM2cS4wOC4yNjMuMDguNTY2YzAgMS4wODMtMi4zMDguNDM0LTQuOTc2LjMxOGE5IDkgMCAwIDAtLjYxLS4wMDJjLTEuMDg5LS4wNTUtMS45ODUtLjM3NC0zLjE4Ni0uOTc0bC4wMjEtLjAwNHMtLjA5Mi0uMDM4LS4yMzgtLjEwNmMtLjM1Ni0uMTgyLS43NC0uMzg3LTEuMTYyLS42MTZoLS4wMDNjLS4zOTgtLjI0OC0uNzQ5LS41MjctLjgzOC0uNzc2LS4yMzMtLjY1MS0uMTE4LS42NTEuNzE1LTEuNjEzLTEuNDIyLjE3NS0xLjQ1Ny4yNzYtMy4wNzguMjc2cy00LjI5Mi0uMDgzLTQuMjkyLTEuNjdxMC0xLjU5IDIuMTYxLTEuMjM2LS41MjctMi44OSAxLjgwNy01LjJjNC4wNzYtNC4wMzUgOS41NzggMS41MjUgMTMuMzUgMS41MjUgMS43MTYgMC0zLjAyNS0yLjY5My00Ljk5NS0zLjQ1NnMxLjEzMS0zLjcyOSAzLjk3OC0xLjYyNG00Ljc0OCA1LjU1MmMtLjMxIDAtLjU2MS4yNy0uNTYxLjYwNXMuMjUxLjYwNC41NjEuNjA0LjU2MS0uMjcuNTYxLS42MDQtLjI1MS0uNjA1LS41NjEtLjYwNSIKICAgICAgICAgICAgICBjbGlwLXJ1bGU9ImV2ZW5vZGQiLz4KICAgIDwvZz4KPC9zdmc%2B&logoSize=auto&labelColor=1B2330&color=ED6E3D&link=https%3A%2F%2Fcodspeed.io%2FBobronium%2Fcopium" alt="Codspeed Badge">
 </a>
 </h1>
@@ -21,15 +21,15 @@ copium
 
 <div align="left">
   <picture>
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/Bobronium/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_light_512.png" alt="Copium Logo" width="200" align="left">
+    <source srcset="https://raw.githubusercontent.com/percolab/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_512.png" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/percolab/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_light_512.png" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/percolab/copium/b177d428dbb172fa9e22831d32db04c88b04ece1/assets/copium_logo_light_512.png" alt="Copium Logo" width="200" align="left">
   </picture>
-  <a href="https://github.com/Bobronium/copium/blob/d56f7cf51986de1c666d40b99b34f0f6d9b8ceab/showcase.ipynb">
+  <a href="https://github.com/percolab/copium/blob/d56f7cf51986de1c666d40b99b34f0f6d9b8ceab/showcase.ipynb">
     <picture>
-      <source srcset="https://raw.githubusercontent.com/Bobronium/copium/d56f7cf51986de1c666d40b99b34f0f6d9b8ceab/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="https://raw.githubusercontent.com/Bobronium/copium/d56f7cf51986de1c666d40b99b34f0f6d9b8ceab/assets/chart_light.svg" media="(prefers-color-scheme: light)">
-      <img src="https://raw.githubusercontent.com/Bobronium/copium/d56f7cf51986de1c666d40b99b34f0f6d9b8ceab/assets/chart_light.svg" alt="Self-contained IPython showcase" width="500">
+      <source srcset="https://raw.githubusercontent.com/percolab/copium/d56f7cf51986de1c666d40b99b34f0f6d9b8ceab/assets/chart_dark.svg" media="(prefers-color-scheme: dark)">
+      <source srcset="https://raw.githubusercontent.com/percolab/copium/d56f7cf51986de1c666d40b99b34f0f6d9b8ceab/assets/chart_light.svg" media="(prefers-color-scheme: light)">
+      <img src="https://raw.githubusercontent.com/percolab/copium/d56f7cf51986de1c666d40b99b34f0f6d9b8ceab/assets/chart_light.svg" alt="Self-contained IPython showcase" width="500">
     </picture>
   </a>
 
@@ -41,7 +41,7 @@ copium
 - ⚡ **4-28x faster** on built-in types
 - 🧠 **~30% less memory** per copy
 - ✨ requires **zero code changes**
-- 🧪 [passes](https://github.com/Bobronium/copium/blob/3cef83a230fb8c3bf2b7b11e3f2cba01fe0cce23/.github/workflows/cd-build.yaml#L129-L152) Python's [test_copy.py](https://github.com/python/cpython/blob/41b9ad5b38e913194a5cc88f0e7cfc096787b664/Lib/test/test_copy.py)
+- 🧪 [passes](https://github.com/percolab/copium/blob/3cef83a230fb8c3bf2b7b11e3f2cba01fe0cce23/.github/workflows/cd-build.yaml#L129-L152) Python's [test_copy.py](https://github.com/python/cpython/blob/41b9ad5b38e913194a5cc88f0e7cfc096787b664/Lib/test/test_copy.py)
 - 📦 pre-built wheels for Python 3.10–3.14
      on Linux/macOS/Windows (x64/ARM64)
 - 🔓 passes all tests on **free-threaded** Python builds
@@ -148,7 +148,7 @@ copium will attempt to recover by calling `__deepcopy__` again with `dict` memo.
 succeeds, a warning with clear suggestions will be emitted, otherwise the error will be raised as
 is.
 
-[Tracking issue](https://github.com/Bobronium/copium/issues/31)
+[Tracking issue](https://github.com/percolab/copium/issues/31)
 
 <details>
 <summary>Example</summary>
