@@ -1,8 +1,7 @@
-use pyo3_ffi::*;
 use std::ptr;
 
 use crate::deepcopy;
-use crate::types::{PyObjectPtr, PyTypeObjectPtr};
+use crate::py::{self, *};
 
 unsafe extern "C" fn py_replicate(
     _self: *mut PyObject,
@@ -11,12 +10,17 @@ unsafe extern "C" fn py_replicate(
     kwnames: *mut PyObject,
 ) -> *mut PyObject {
     unsafe {
+        let keyword_names = if kwnames.is_null() {
+            ptr::null_mut()
+        } else {
+            PyTupleObject::cast_unchecked(kwnames)
+        };
         if nargs != 2 {
-            PyErr_SetString(PyExc_TypeError, crate::cstr!("replicate(obj, n, /)"));
+            py::err::set_string(PyExc_TypeError, crate::cstr!("replicate(obj, n, /)"));
             return ptr::null_mut();
         }
-        if !kwnames.is_null() && PyTuple_Size(kwnames) > 0 {
-            PyErr_SetString(
+        if !keyword_names.is_null() && keyword_names.length() > 0 {
+            py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("replicate() does not accept keyword arguments"),
             );
@@ -24,32 +28,32 @@ unsafe extern "C" fn py_replicate(
         }
 
         let obj = *args;
-        let n = PyLong_AsLong(*args.add(1));
-        if n == -1 && !PyErr_Occurred().is_null() {
+        let n = (*args.add(1)).as_i64();
+        if n == -1 && !py::err::occurred().is_null() {
             return ptr::null_mut();
         }
         if n < 0 {
-            PyErr_SetString(PyExc_ValueError, crate::cstr!("n must be >= 0"));
+            py::err::set_string(PyExc_ValueError, crate::cstr!("n must be >= 0"));
             return ptr::null_mut();
         }
 
         if n == 0 {
-            return PyList_New(0);
+            return py::list::new(0).cast();
         }
 
         let type_pointer = obj.class();
         if type_pointer.is_atomic_immutable() {
-            let out = PyList_New(n as Py_ssize_t);
+            let out = py::list::new(n as Py_ssize_t);
             if out.is_null() {
                 return ptr::null_mut();
             }
             for i in 0..n as Py_ssize_t {
-                PyList_SET_ITEM(out, i, obj.newref());
+                out.steal_item_unchecked(i, obj.newref());
             }
-            return out;
+            return out.cast();
         }
 
-        let out = PyList_New(n as Py_ssize_t);
+        let out = py::list::new(n as Py_ssize_t);
         if out.is_null() {
             return ptr::null_mut();
         }
@@ -62,9 +66,9 @@ unsafe extern "C" fn py_replicate(
                 out.decref();
                 return ptr::null_mut();
             }
-            PyList_SetItem(out, i, copy.into_raw());
+            out.steal_item_unchecked(i, copy.into_raw());
         }
-        out
+        out.cast()
     }
 }
 
@@ -75,15 +79,20 @@ unsafe extern "C" fn py_repeatcall(
     kwnames: *mut PyObject,
 ) -> *mut PyObject {
     unsafe {
+        let keyword_names = if kwnames.is_null() {
+            ptr::null_mut()
+        } else {
+            PyTupleObject::cast_unchecked(kwnames)
+        };
         if nargs != 2 {
-            PyErr_SetString(
+            py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("repeatcall(function, size, /)"),
             );
             return ptr::null_mut();
         }
-        if !kwnames.is_null() && PyTuple_Size(kwnames) > 0 {
-            PyErr_SetString(
+        if !keyword_names.is_null() && keyword_names.length() > 0 {
+            py::err::set_string(
                 PyExc_TypeError,
                 crate::cstr!("repeatcall() takes no keyword arguments"),
             );
@@ -91,34 +100,34 @@ unsafe extern "C" fn py_repeatcall(
         }
 
         let func = *args;
-        if PyCallable_Check(func) == 0 {
-            PyErr_SetString(PyExc_TypeError, crate::cstr!("function must be callable"));
+        if !func.is_callable() {
+            py::err::set_string(PyExc_TypeError, crate::cstr!("function must be callable"));
             return ptr::null_mut();
         }
 
-        let n = PyLong_AsLong(*args.add(1));
-        if n == -1 && !PyErr_Occurred().is_null() {
+        let n = (*args.add(1)).as_i64();
+        if n == -1 && !py::err::occurred().is_null() {
             return ptr::null_mut();
         }
         if n < 0 {
-            PyErr_SetString(PyExc_ValueError, crate::cstr!("size must be >= 0"));
+            py::err::set_string(PyExc_ValueError, crate::cstr!("size must be >= 0"));
             return ptr::null_mut();
         }
 
-        let out = PyList_New(n as Py_ssize_t);
+        let out = py::list::new(n as Py_ssize_t);
         if out.is_null() {
             return ptr::null_mut();
         }
 
         for i in 0..n as Py_ssize_t {
-            let item = PyObject_CallNoArgs(func);
+            let item = func.call();
             if item.is_null() {
                 out.decref();
                 return ptr::null_mut();
             }
-            PyList_SetItem(out, i, item);
+            out.steal_item_unchecked(i, item);
         }
-        out
+        out.cast()
     }
 }
 
@@ -139,30 +148,32 @@ static mut EXTRA_MODULE_DEF: PyModuleDef = PyModuleDef {
 pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
     unsafe {
         EXTRA_METHODS[0] = PyMethodDef {
-            ml_name: crate::cstr!("replicate"),
+            ml_name: crate::cstr!("replicate").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunctionFastWithKeywords: py_replicate,
             },
             ml_flags: METH_FASTCALL | METH_KEYWORDS,
             ml_doc: crate::cstr!(
                 "replicate(obj, n, /)\n--\n\nReturns n deep copies of the object in a list."
-            ),
+            )
+            .as_ptr(),
         };
         EXTRA_METHODS[1] = PyMethodDef {
-            ml_name: crate::cstr!("repeatcall"),
+            ml_name: crate::cstr!("repeatcall").as_ptr(),
             ml_meth: PyMethodDefPointer {
                 PyCFunctionFastWithKeywords: py_repeatcall,
             },
             ml_flags: METH_FASTCALL | METH_KEYWORDS,
             ml_doc: crate::cstr!(
                 "repeatcall(function, size, /)\n--\n\nCall function repeatedly size times."
-            ),
+            )
+            .as_ptr(),
         };
         EXTRA_METHODS[2] = PyMethodDef::zeroed();
 
         EXTRA_MODULE_DEF.m_methods = ptr::addr_of_mut!(EXTRA_METHODS).cast::<PyMethodDef>();
 
-        let module = PyModule_Create(std::ptr::addr_of_mut!(EXTRA_MODULE_DEF));
+        let module = py::module::create(std::ptr::addr_of_mut!(EXTRA_MODULE_DEF));
         if module.is_null() {
             return -1;
         }

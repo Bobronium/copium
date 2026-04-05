@@ -1,32 +1,8 @@
-use pyo3_ffi::*;
-use std::hint::{likely, unlikely};
-use std::ptr;
+use crate::py::{self, *};
 #[cfg(Py_GIL_DISABLED)]
 use crate::{py_cache_typed, py_obj};
-use crate::types::PyObjectPtr;
-
-#[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
-extern "C" {
-    fn PyDict_AddWatcher(
-        callback: Option<
-            unsafe extern "C" fn(
-                event: i32,
-                dict: *mut PyObject,
-                key: *mut PyObject,
-                new_value: *mut PyObject,
-            ) -> i32,
-        >,
-    ) -> i32;
-    fn PyDict_ClearWatcher(watcher_id: i32) -> i32;
-    fn PyDict_Watch(watcher_id: i32, dict: *mut PyObject) -> i32;
-    fn PyDict_Unwatch(watcher_id: i32, dict: *mut PyObject) -> i32;
-}
-
-#[cfg(all(Py_3_14, Py_GIL_DISABLED))]
-extern "C" {
-    fn PyIter_NextItem(iter: *mut PyObject, item: *mut *mut PyObject) -> i32;
-}
-
+use std::hint::{likely, unlikely};
+use std::ptr;
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 static mut G_DICT_WATCHER_ID: i32 = -1;
 
@@ -37,7 +13,7 @@ static mut G_DICT_WATCHER_REGISTERED: bool = false;
 static mut G_GUARD_LIST_HEAD: *mut DictIterGuard = ptr::null_mut();
 
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
-unsafe fn dict_watch_count(dict: *mut PyObject) -> i32 {
+unsafe fn dict_watch_count(dict: *mut PyDictObject) -> i32 {
     let mut count = 0;
     let mut cur = unsafe { G_GUARD_LIST_HEAD };
     while !cur.is_null() {
@@ -56,11 +32,12 @@ unsafe extern "C" fn copium_dict_watcher_cb(
     _key: *mut PyObject,
     _new_value: *mut PyObject,
 ) -> i32 {
+    let dict = unsafe { PyDictObject::cast_unchecked(dict) };
     let mut cur_guard = unsafe { G_GUARD_LIST_HEAD };
     while !cur_guard.is_null() {
         let guard = unsafe { &mut *cur_guard };
         if likely(guard.dict == dict) {
-            let cur = unsafe { PyDict_Size(dict) };
+            let cur = unsafe { dict.size() };
             if unlikely(cur >= 0 && cur != guard.size0) {
                 guard.size_changed = true;
             }
@@ -81,19 +58,19 @@ struct PyDictObjectCompat {
 
 #[cfg(not(Py_3_14))]
 #[inline(always)]
-unsafe fn dict_version_tag(dict: *mut PyObject) -> u64 {
-    unsafe { (*(dict as *mut PyDictObjectCompat)).ma_version_tag }
+unsafe fn dict_version_tag(dict: *mut PyDictObject) -> u64 {
+    unsafe { (*(dict.cast::<PyDictObjectCompat>())).ma_version_tag }
 }
 
 #[cfg(not(Py_3_14))]
 #[inline(always)]
-unsafe fn dict_used(dict: *mut PyObject) -> Py_ssize_t {
-    unsafe { (*(dict as *mut PyDictObjectCompat)).ma_used }
+unsafe fn dict_used(dict: *mut PyDictObject) -> Py_ssize_t {
+    unsafe { (*(dict.cast::<PyDictObjectCompat>())).ma_used }
 }
 
 pub struct DictIterGuard {
-    #[cfg(any(not(Py_3_14), Py_3_14))]
-    dict: *mut PyObject,
+    #[cfg(any(not(Py_3_14), all(Py_3_14, not(Py_GIL_DISABLED))))]
+    dict: *mut PyDictObject,
 
     #[cfg(any(not(Py_3_14), all(Py_3_14, not(Py_GIL_DISABLED))))]
     pos: Py_ssize_t,
@@ -129,13 +106,13 @@ pub struct DictIterGuard {
 impl DictIterGuard {
     #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
     #[inline(always)]
-    fn cached_dict_items_vc() -> pyo3_ffi::vectorcallfunc {
-        py_cache_typed!(pyo3_ffi::vectorcallfunc, {
-            match crate::ffi_ext::PyVectorcall_Function(py_obj!("dict.items")) {
+    fn cached_dict_items_vc() -> vectorcallfunc {
+        py_cache_typed!(vectorcallfunc, {
+            match py_obj!("dict.items").vectorcall_function() {
                 Some(f) => Some(f),
                 None => {
-                    pyo3_ffi::PyErr_SetString(
-                        pyo3_ffi::PyExc_TypeError,
+                    py::err::set_string(
+                        PyExc_TypeError,
                         crate::cstr!("copium: dict.items has no vectorcall"),
                     );
                     None
@@ -145,9 +122,9 @@ impl DictIterGuard {
     }
 
     #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
-    unsafe fn new_dict_items_iterator(dict: *mut PyObject) -> *mut PyObject {
+    unsafe fn new_dict_items_iterator(dict: *mut PyDictObject) -> *mut PyObject {
         unsafe {
-            let arguments = [dict];
+            let arguments = [dict.cast()];
             let dict_items_view = (Self::cached_dict_items_vc())(
                 py_obj!("dict.items"),
                 arguments.as_ptr(),
@@ -158,14 +135,14 @@ impl DictIterGuard {
                 return ptr::null_mut();
             }
 
-            let iterator = PyObject_GetIter(dict_items_view);
+            let iterator = dict_items_view.get_iter();
             dict_items_view.decref();
             iterator
         }
     }
 
     #[inline(always)]
-    pub unsafe fn new(dict: *mut PyObject) -> Self {
+    pub unsafe fn new(dict: *mut PyDictObject) -> Self {
         #[cfg(not(Py_3_14))]
         unsafe {
             Self {
@@ -179,9 +156,9 @@ impl DictIterGuard {
         #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
         unsafe {
             Self {
-                dict,
+                dict: dict as _,
                 pos: 0,
-                size0: PyDict_Size(dict),
+                size0: dict.size(),
                 mutated: false,
                 size_changed: false,
                 prev: ptr::null_mut(),
@@ -193,7 +170,6 @@ impl DictIterGuard {
         #[cfg(all(Py_3_14, Py_GIL_DISABLED))]
         unsafe {
             Self {
-                dict,
                 it: Self::new_dict_items_iterator(dict),
                 active: true,
             }
@@ -238,7 +214,7 @@ impl DictIterGuard {
         }
 
         if unlikely(need_watch && unsafe { G_DICT_WATCHER_REGISTERED }) {
-            let _ = unsafe { PyDict_Watch(G_DICT_WATCHER_ID, self.dict) };
+            let _ = unsafe { self.dict.watch(G_DICT_WATCHER_ID) };
         }
     }
 
@@ -269,7 +245,7 @@ impl DictIterGuard {
 
             let need_unwatch = dict_watch_count(dict) == 0;
             if unlikely(need_unwatch && G_DICT_WATCHER_REGISTERED) {
-                let _ = PyDict_Unwatch(G_DICT_WATCHER_ID, dict);
+                let _ = dict.unwatch(G_DICT_WATCHER_ID);
             }
 
             self.prev = ptr::null_mut();
@@ -300,17 +276,17 @@ impl DictIterGuard {
             let mut k: *mut PyObject = ptr::null_mut();
             let mut v: *mut PyObject = ptr::null_mut();
 
-            if likely(PyDict_Next(self.dict, &mut self.pos, &mut k, &mut v) != 0) {
+            if likely(self.dict.dict_next(&mut self.pos, &mut k, &mut v)) {
                 let ver_now = dict_version_tag(self.dict);
                 if unlikely(ver_now != self.ver0) {
                     let used_now = dict_used(self.dict);
                     if unlikely(used_now != self.used0) {
-                        PyErr_SetString(
+                        py::err::set_string(
                             PyExc_RuntimeError,
                             crate::cstr!("dictionary changed size during iteration"),
                         );
                     } else {
-                        PyErr_SetString(
+                        py::err::set_string(
                             PyExc_RuntimeError,
                             crate::cstr!("dictionary keys changed during iteration"),
                         );
@@ -333,16 +309,16 @@ impl DictIterGuard {
             let mut k: *mut PyObject = ptr::null_mut();
             let mut v: *mut PyObject = ptr::null_mut();
 
-            if likely(PyDict_Next(self.dict, &mut self.pos, &mut k, &mut v) != 0) {
+            if likely(self.dict.dict_next(&mut self.pos, &mut k, &mut v)) {
                 if unlikely(self.mutated) {
-                    let cur = PyDict_Size(self.dict);
+                    let cur = self.dict.size();
                     let size_changed_now = if likely(cur >= 0) {
                         cur != self.size0
                     } else {
                         self.size_changed
                     };
 
-                    PyErr_SetString(
+                    py::err::set_string(
                         PyExc_RuntimeError,
                         if unlikely(size_changed_now) {
                             crate::cstr!("dictionary changed size during iteration")
@@ -362,14 +338,14 @@ impl DictIterGuard {
             }
 
             if unlikely(self.mutated) {
-                let cur = PyDict_Size(self.dict);
+                let cur = self.dict.size();
                 let size_changed_now = if likely(cur >= 0) {
                     cur != self.size0
                 } else {
                     self.size_changed
                 };
 
-                PyErr_SetString(
+                py::err::set_string(
                     PyExc_RuntimeError,
                     if unlikely(size_changed_now) {
                         crate::cstr!("dictionary changed size during iteration")
@@ -392,16 +368,28 @@ impl DictIterGuard {
             }
 
             let mut item: *mut PyObject = ptr::null_mut();
-            let result = PyIter_NextItem(self.it, &mut item);
+            let result = self.it.iter_next_item(&mut item);
 
             if unlikely(result != 1) {
                 self.cleanup();
                 return result;
             }
 
-            if unlikely(item.is_null() || PyTuple_Check(item) == 0 || PyTuple_GET_SIZE(item) != 2) {
+            if unlikely(
+                item.is_null() || !item.is_tuple(),
+            ) {
                 item.decref_nullable();
-                PyErr_SetString(
+                py::err::set_string(
+                    PyExc_RuntimeError,
+                    crate::cstr!("dict.items() iterator returned non-pair item"),
+                );
+                self.cleanup();
+                return -1;
+            }
+            let item_tuple = PyTupleObject::cast_unchecked(item);
+            if unlikely(item_tuple.length() != 2) {
+                item.decref();
+                py::err::set_string(
                     PyExc_RuntimeError,
                     crate::cstr!("dict.items() iterator returned non-pair item"),
                 );
@@ -409,8 +397,8 @@ impl DictIterGuard {
                 return -1;
             }
 
-            *key = PyTuple_GET_ITEM(item, 0).newref();
-            *value = PyTuple_GET_ITEM(item, 1).newref();
+            *key = item_tuple.get_borrowed_unchecked(0).newref();
+            *value = item_tuple.get_borrowed_unchecked(1).newref();
             item.decref();
             1
         }
@@ -448,7 +436,7 @@ pub unsafe fn dict_iter_module_cleanup() {}
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 pub unsafe fn dict_iter_module_init() -> i32 {
     if likely(unsafe { !G_DICT_WATCHER_REGISTERED }) {
-        let watcher_id = unsafe { PyDict_AddWatcher(Some(copium_dict_watcher_cb)) };
+        let watcher_id = unsafe { py::dict::add_watcher(Some(copium_dict_watcher_cb)) };
         if unlikely(watcher_id < 0) {
             return -1;
         }
@@ -465,7 +453,7 @@ pub unsafe fn dict_iter_module_init() -> i32 {
 #[cfg(all(Py_3_14, not(Py_GIL_DISABLED)))]
 pub unsafe fn dict_iter_module_cleanup() {
     if likely(unsafe { G_DICT_WATCHER_REGISTERED }) {
-        let _ = unsafe { PyDict_ClearWatcher(G_DICT_WATCHER_ID) };
+        unsafe { py::dict::clear_watcher(G_DICT_WATCHER_ID) };
         unsafe {
             G_DICT_WATCHER_REGISTERED = false;
             G_DICT_WATCHER_ID = -1;

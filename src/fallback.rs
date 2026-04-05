@@ -1,11 +1,9 @@
-use pyo3_ffi::*;
-use std::ffi::{c_char, CStr};
+use std::ffi::CStr;
 use std::ptr;
 
-use crate::ffi_ext::PyUnicode_FromFormat;
 use crate::memo::{MemoCheckpoint, PyMemoObject};
+use crate::py::{self, *};
 use crate::state::{OnIncompatible, STATE};
-use crate::types::PyObjectPtr;
 
 macro_rules! cleanup_traceback_build {
     ($parts:expr, $traceback_module:expr, $format_exception:expr, $traceback_lines:expr, $empty_string:expr, $caller_string:expr) => {{
@@ -44,51 +42,73 @@ macro_rules! finish_fallback_retry {
     }};
 }
 
-unsafe fn unicode_to_string(object: *mut PyObject) -> Option<String> {
+unsafe fn unicode_to_string<T: PyTypeInfo>(object: *mut T) -> Option<String> {
     unsafe {
-        let utf8 = PyUnicode_AsUTF8(object);
-        if utf8.is_null() {
+        if object.is_null() || !object.is_unicode() {
             return None;
         }
-        Some(CStr::from_ptr(utf8).to_string_lossy().into_owned())
+        Some(object.as_utf8().to_string_lossy().into_owned())
     }
 }
 
-unsafe fn new_unicode_from_string(value: &str) -> *mut PyObject {
-    unsafe { PyUnicode_FromStringAndSize(value.as_ptr() as *const c_char, value.len() as isize) }
+unsafe fn take_unicode_or_null(object: *mut PyObject) -> *mut PyUnicodeObject {
+    unsafe {
+        if object.is_null() {
+            return ptr::null_mut();
+        }
+
+        if object.is_unicode() {
+            return PyUnicodeObject::cast_unchecked(object);
+        }
+
+        object.decref();
+        py::err::clear();
+        ptr::null_mut()
+    }
+}
+
+unsafe fn getattr_unicode_or_null<T: PyTypeInfo>(
+    object: *mut T,
+    attribute_name: &CStr,
+) -> *mut PyUnicodeObject {
+    unsafe { take_unicode_or_null(object.getattr_cstr(attribute_name)) }
+}
+
+unsafe fn new_unicode_from_string(value: &str) -> *mut PyUnicodeObject {
+    unsafe { py::unicode::from_str_and_size(value) }
 }
 
 unsafe fn build_error_identifier(
     exception_type: *mut PyObject,
     exception_value: *mut PyObject,
-) -> *mut PyObject {
+) -> *mut PyUnicodeObject {
     unsafe {
-        let mut type_name: *mut PyObject = ptr::null_mut();
-        let mut message: *mut PyObject = ptr::null_mut();
+        let mut type_name: *mut PyUnicodeObject = ptr::null_mut();
+        let mut message: *mut PyUnicodeObject = ptr::null_mut();
 
-        if !exception_type.is_null() && PyType_Check(exception_type) != 0 {
-            type_name = PyObject_GetAttrString(exception_type, crate::cstr!("__name__"));
+        if !exception_type.is_null() && exception_type.is_type() {
+            type_name = getattr_unicode_or_null(exception_type, crate::cstr!("__name__"));
         }
 
         if type_name.is_null() {
-            PyErr_Clear();
-            type_name = PyUnicode_FromString(crate::cstr!("Exception"));
+            py::err::clear();
+            type_name = py::unicode::from_cstr(crate::cstr!("Exception"));
             if type_name.is_null() {
                 return ptr::null_mut();
             }
         }
 
         if !exception_value.is_null() {
-            message = PyObject_Str(exception_value);
+            message = exception_value.str_();
             if message.is_null() {
-                PyErr_Clear();
+                py::err::clear();
             }
         }
 
-        let result = if !message.is_null() && PyUnicode_GET_LENGTH(message) > 0 {
-            PyUnicode_FromFormat(crate::cstr!("%U: %U"), type_name, message)
+        let result = if !message.is_null() && message.byte_length() > 0 {
+            py::unicode::from_format!(crate::cstr!("%U: %U"), type_name, message)
         } else {
-            PyUnicode_FromFormat(crate::cstr!("%U: "), type_name)
+            py::unicode::from_format!(crate::cstr!("%U: "), type_name)
         };
 
         type_name.decref_nullable();
@@ -97,21 +117,21 @@ unsafe fn build_error_identifier(
     }
 }
 
-unsafe fn error_is_ignored(error_identifier: *mut PyObject) -> bool {
+unsafe fn error_is_ignored(error_identifier: *mut PyUnicodeObject) -> bool {
     unsafe {
         if error_identifier.is_null() || STATE.ignored_errors.is_null() {
             return false;
         }
 
-        let ignored_error_count = PyTuple_GET_SIZE(STATE.ignored_errors);
+        let ignored_errors = STATE.ignored_errors;
+        let ignored_error_count = ignored_errors.length();
         for index in 0..ignored_error_count {
-            let suffix = PyTuple_GET_ITEM(STATE.ignored_errors, index);
-            let matched = PyUnicode_Tailmatch(error_identifier, suffix, 0, PY_SSIZE_T_MAX, 1);
-            if matched == 1 {
+            let suffix = ignored_errors.get_borrowed_unchecked(index);
+            if error_identifier.tailmatch(suffix, 0, PY_SSIZE_T_MAX, 1) {
                 return true;
             }
-            if matched == -1 {
-                PyErr_Clear();
+            if !py::err::occurred().is_null() {
+                py::err::clear();
             }
         }
 
@@ -119,9 +139,9 @@ unsafe fn error_is_ignored(error_identifier: *mut PyObject) -> bool {
     }
 }
 
-unsafe fn extract_deepcopy_expression(line: *mut PyObject) -> *mut PyObject {
+unsafe fn extract_deepcopy_expression(line: *mut PyObject) -> *mut PyUnicodeObject {
     unsafe {
-        if line.is_null() || PyUnicode_Check(line) == 0 {
+        if line.is_null() || !line.is_unicode() {
             return ptr::null_mut();
         }
 
@@ -194,9 +214,9 @@ unsafe fn extract_deepcopy_expression(line: *mut PyObject) -> *mut PyObject {
     }
 }
 
-unsafe fn make_expression_with_memo(expression: *mut PyObject) -> *mut PyObject {
+unsafe fn make_expression_with_memo(expression: *mut PyUnicodeObject) -> *mut PyUnicodeObject {
     unsafe {
-        if expression.is_null() || PyUnicode_Check(expression) == 0 {
+        if expression.is_null() || !expression.is_unicode() {
             return ptr::null_mut();
         }
 
@@ -206,134 +226,132 @@ unsafe fn make_expression_with_memo(expression: *mut PyObject) -> *mut PyObject 
         };
 
         if let Some(prefix) = expression_text.strip_suffix(",)") {
-            return new_unicode_from_string(&format!("{prefix}, memo={{}})"));
+            return new_unicode_from_string(&std::format!("{prefix}, memo={{}})"));
         }
 
         if let Some(prefix) = expression_text.strip_suffix(')') {
-            return new_unicode_from_string(&format!("{prefix}, memo={{}})"));
+            return new_unicode_from_string(&std::format!("{prefix}, memo={{}})"));
         }
 
         ptr::null_mut()
     }
 }
 
-unsafe fn get_caller_frame_info() -> *mut PyObject {
+unsafe fn get_caller_frame_info() -> *mut PyTupleObject {
     unsafe {
-        let mut result: *mut PyObject = ptr::null_mut();
+        let mut result: *mut PyTupleObject = ptr::null_mut();
         let mut linecache_module: *mut PyObject = ptr::null_mut();
         let mut getline: *mut PyObject = ptr::null_mut();
-        let mut line_number_object: *mut PyObject = ptr::null_mut();
-        let mut line: *mut PyObject = ptr::null_mut();
-        let mut stripped: *mut PyObject = ptr::null_mut();
-        let mut frame = PyEval_GetFrame();
+        let mut line_number_object: *mut PyLongObject = ptr::null_mut();
+        let mut line: *mut PyUnicodeObject = ptr::null_mut();
+        let mut stripped: *mut PyUnicodeObject = ptr::null_mut();
+        let mut frame = py::eval::current_frame();
         let mut code: *mut PyCodeObject = ptr::null_mut();
-        let mut filename: *mut PyObject = ptr::null_mut();
-        let mut name: *mut PyObject = ptr::null_mut();
+        let mut filename: *mut PyUnicodeObject = ptr::null_mut();
+        let mut function_name: *mut PyUnicodeObject = ptr::null_mut();
 
         if frame.is_null() {
             return ptr::null_mut();
         }
 
-        (frame as *mut PyObject).incref();
+        frame.incref();
 
         while !frame.is_null() {
-            code = PyFrame_GetCode(frame);
+            code = frame.code();
             if code.is_null() {
-                let back = PyFrame_GetBack(frame);
-                (frame as *mut PyObject).decref();
+                let back = frame.back();
+                frame.decref();
                 frame = back;
                 continue;
             }
 
-            filename = PyObject_GetAttrString(code as *mut PyObject, crate::cstr!("co_filename"));
+            filename = getattr_unicode_or_null(code, c"co_filename");
             if filename.is_null() {
-                PyErr_Clear();
+                py::err::clear();
+            }
+            function_name = getattr_unicode_or_null(code, crate::cstr!("co_name"));
+            if function_name.is_null() {
+                py::err::clear();
             }
 
-            name = PyObject_GetAttrString(code as *mut PyObject, crate::cstr!("co_name"));
-            if name.is_null() {
-                PyErr_Clear();
-            }
+            if !filename.is_null() && !function_name.is_null() {
+                let line_number = frame.line_number();
 
-            if !filename.is_null() && !name.is_null() {
-                let line_number = PyFrame_GetLineNumber(frame);
-
-                linecache_module = PyImport_ImportModule(crate::cstr!("linecache"));
+                linecache_module = py::module::import(crate::cstr!("linecache"));
                 if linecache_module.is_null() {
-                    PyErr_Clear();
+                    py::err::clear();
                     break;
                 }
 
-                getline = PyObject_GetAttrString(linecache_module, crate::cstr!("getline"));
+                getline = linecache_module.getattr_cstr(crate::cstr!("getline"));
                 if getline.is_null() {
-                    PyErr_Clear();
+                    py::err::clear();
                     break;
                 }
 
-                line_number_object = PyLong_FromLong(line_number as _);
+                line_number_object = py::long::from_i64(line_number as i64);
                 if line_number_object.is_null() {
                     break;
                 }
 
-                line = PyObject_CallFunctionObjArgs(
+                line = take_unicode_or_null(py::call::function_obj_args!(
                     getline,
                     filename,
-                    line_number_object,
-                    ptr::null_mut::<PyObject>(),
-                );
+                    line_number_object
+                ));
                 if line.is_null() {
-                    PyErr_Clear();
-                    line = PyUnicode_FromString(crate::cstr!(""));
+                    py::err::clear();
+                    line = py::unicode::from_cstr(crate::cstr!(""));
                     if line.is_null() {
                         break;
                     }
                 }
 
-                let strip_method = PyObject_GetAttrString(line, crate::cstr!("strip"));
+                let strip_method = line.getattr_cstr(crate::cstr!("strip"));
                 if strip_method.is_null() {
-                    PyErr_Clear();
-                    stripped = PyUnicode_FromString(crate::cstr!(""));
+                    py::err::clear();
+                    stripped = py::unicode::from_cstr(crate::cstr!(""));
                 } else {
-                    stripped = PyObject_CallNoArgs(strip_method);
+                    stripped = take_unicode_or_null(strip_method.call());
                     strip_method.decref();
                     if stripped.is_null() {
-                        PyErr_Clear();
-                        stripped = PyUnicode_FromString(crate::cstr!(""));
+                        py::err::clear();
+                        stripped = py::unicode::from_cstr(crate::cstr!(""));
                     }
                 }
                 if stripped.is_null() {
                     break;
                 }
 
-                result = PyTuple_New(4);
+                result = py::tuple::new(4);
                 if result.is_null() {
                     break;
                 }
 
                 filename.incref();
-                if PyTuple_SetItem(result, 0, filename) < 0 {
+                if result.steal_item(0, filename) < 0 {
                     result.decref();
                     result = ptr::null_mut();
                     break;
                 }
                 filename = ptr::null_mut();
 
-                if PyTuple_SetItem(result, 1, line_number_object) < 0 {
+                if result.steal_item(1, line_number_object) < 0 {
                     result.decref();
                     result = ptr::null_mut();
                     break;
                 }
                 line_number_object = ptr::null_mut();
 
-                name.incref();
-                if PyTuple_SetItem(result, 2, name) < 0 {
+                function_name.incref();
+                if result.steal_item(2, function_name) < 0 {
                     result.decref();
                     result = ptr::null_mut();
                     break;
                 }
-                name = ptr::null_mut();
+                function_name = ptr::null_mut();
 
-                if PyTuple_SetItem(result, 3, stripped) < 0 {
+                if result.steal_item(3, stripped) < 0 {
                     result.decref();
                     result = ptr::null_mut();
                     break;
@@ -344,14 +362,14 @@ unsafe fn get_caller_frame_info() -> *mut PyObject {
 
             filename.decref_nullable();
             filename = ptr::null_mut();
-            name.decref_nullable();
-            name = ptr::null_mut();
+            function_name.decref_nullable();
+            function_name = ptr::null_mut();
 
-            (code as *mut PyObject).decref();
+            code.decref();
             code = ptr::null_mut();
 
-            let back = PyFrame_GetBack(frame);
-            (frame as *mut PyObject).decref();
+            let back = frame.back();
+            frame.decref();
             frame = back;
         }
 
@@ -360,25 +378,25 @@ unsafe fn get_caller_frame_info() -> *mut PyObject {
         line_number_object.decref_nullable();
         line.decref_nullable();
         stripped.decref_nullable();
-        (code as *mut PyObject).decref_nullable();
+        code.decref_nullable();
         filename.decref_nullable();
-        name.decref_nullable();
-        (frame as *mut PyObject).decref_nullable();
+        function_name.decref_nullable();
+        frame.decref_nullable();
         result
     }
 }
 
 unsafe fn format_combined_traceback(
-    caller_info: *mut PyObject,
+    caller_info: *mut PyTupleObject,
     exception_value: *mut PyObject,
-) -> *mut PyObject {
+) -> *mut PyUnicodeObject {
     unsafe {
-        let mut parts: *mut PyObject = ptr::null_mut();
-        let traceback_module = PyImport_ImportModule(crate::cstr!("traceback"));
+        let mut parts: *mut PyListObject = ptr::null_mut();
+        let traceback_module = py::module::import(crate::cstr!("traceback"));
         let mut format_exception: *mut PyObject = ptr::null_mut();
-        let mut traceback_lines: *mut PyObject = ptr::null_mut();
-        let mut empty_string: *mut PyObject = ptr::null_mut();
-        let mut caller_string: *mut PyObject = ptr::null_mut();
+        let mut traceback_lines: *mut PyListObject = ptr::null_mut();
+        let mut empty_string: *mut PyUnicodeObject = ptr::null_mut();
+        let mut caller_string: *mut PyUnicodeObject = ptr::null_mut();
 
         if traceback_module.is_null() {
             cleanup_traceback_build!(
@@ -391,8 +409,7 @@ unsafe fn format_combined_traceback(
             );
         }
 
-        format_exception =
-            PyObject_GetAttrString(traceback_module, crate::cstr!("format_exception"));
+        format_exception = traceback_module.getattr_cstr(crate::cstr!("format_exception"));
         if format_exception.is_null() {
             cleanup_traceback_build!(
                 parts,
@@ -404,19 +421,20 @@ unsafe fn format_combined_traceback(
             );
         }
 
-        traceback_lines = PyObject_CallOneArg(format_exception, exception_value);
-        if traceback_lines.is_null() || PyList_Check(traceback_lines) == 0 {
+        let traceback_line_objects = format_exception.call_one(exception_value);
+        if traceback_line_objects.is_null() || !traceback_line_objects.is_list() {
             cleanup_traceback_build!(
                 parts,
                 traceback_module,
                 format_exception,
-                traceback_lines,
+                traceback_line_objects,
                 empty_string,
                 caller_string
             );
         }
+        traceback_lines = PyListObject::cast_unchecked(traceback_line_objects);
 
-        empty_string = PyUnicode_FromString(crate::cstr!(""));
+        empty_string = py::unicode::from_cstr(crate::cstr!(""));
         if empty_string.is_null() {
             cleanup_traceback_build!(
                 parts,
@@ -428,7 +446,7 @@ unsafe fn format_combined_traceback(
             );
         }
 
-        parts = PyList_New(0);
+        parts = py::list::new(0);
         if parts.is_null() {
             cleanup_traceback_build!(
                 parts,
@@ -440,16 +458,13 @@ unsafe fn format_combined_traceback(
             );
         }
 
-        if !caller_info.is_null()
-            && PyTuple_Check(caller_info) != 0
-            && PyTuple_GET_SIZE(caller_info) == 4
-        {
-            let filename = PyTuple_GET_ITEM(caller_info, 0);
-            let line_number = PyTuple_GET_ITEM(caller_info, 1);
-            let function_name = PyTuple_GET_ITEM(caller_info, 2);
-            let line = PyTuple_GET_ITEM(caller_info, 3);
+        if !caller_info.is_null() && caller_info.length() == 4 {
+            let filename = caller_info.get_borrowed_unchecked(0);
+            let line_number = caller_info.get_borrowed_unchecked(1);
+            let function_name = caller_info.get_borrowed_unchecked(2);
+            let line = caller_info.get_borrowed_unchecked(3);
 
-            caller_string = PyUnicode_FromFormat(
+            caller_string = py::unicode::from_format!(
                 crate::cstr!("  File \"%U\", line %S, in %U\n    %U\n"),
                 filename,
                 line_number,
@@ -457,22 +472,22 @@ unsafe fn format_combined_traceback(
                 line,
             );
             if caller_string.is_null() {
-                PyErr_Clear();
+                py::err::clear();
             }
         }
 
-        let traceback_line_count = PyList_GET_SIZE(traceback_lines);
+        let traceback_line_count = traceback_lines.length();
         let mut found_traceback_header = false;
         let mut caller_inserted = false;
 
         for index in 0..traceback_line_count {
-            let line = PyList_GET_ITEM(traceback_lines, index);
+            let line = traceback_lines.get_borrowed_unchecked(index);
 
-            if !found_traceback_header && PyUnicode_Check(line) != 0 {
+            if !found_traceback_header && line.is_unicode() {
                 if let Some(line_text) = unicode_to_string(line) {
                     if line_text.starts_with("Traceback") {
                         found_traceback_header = true;
-                        if PyList_Append(parts, line) < 0 {
+                        if parts.append(line) < 0 {
                             cleanup_traceback_build!(
                                 parts,
                                 traceback_module,
@@ -483,7 +498,7 @@ unsafe fn format_combined_traceback(
                             );
                         }
                         if !caller_string.is_null() {
-                            if PyList_Append(parts, caller_string) < 0 {
+                            if parts.append(caller_string) < 0 {
                                 cleanup_traceback_build!(
                                     parts,
                                     traceback_module,
@@ -500,7 +515,7 @@ unsafe fn format_combined_traceback(
                 }
             }
 
-            if PyList_Append(parts, line) < 0 {
+            if parts.append(line) < 0 {
                 cleanup_traceback_build!(
                     parts,
                     traceback_module,
@@ -513,16 +528,16 @@ unsafe fn format_combined_traceback(
         }
 
         if !found_traceback_header && !caller_string.is_null() && !caller_inserted {
-            let header = PyUnicode_FromString(crate::cstr!("Traceback (most recent call last):\n"));
+            let header = py::unicode::from_cstr(crate::cstr!("Traceback (most recent call last):\n"));
             if !header.is_null() {
-                if PyList_Insert(parts, 0, header) == 0 {
-                    let _ = PyList_Insert(parts, 1, caller_string);
+                if parts.insert(0, header) == 0 {
+                    let _ = parts.insert(1, caller_string);
                 }
                 header.decref();
             }
         }
 
-        let result = PyUnicode_Join(empty_string, parts);
+        let result = empty_string.join(parts);
 
         parts.decref_nullable();
         traceback_module.decref_nullable();
@@ -537,23 +552,23 @@ unsafe fn format_combined_traceback(
 unsafe fn emit_fallback_warning(
     exception_value: *mut PyObject,
     object: *mut PyObject,
-    error_identifier: *mut PyObject,
+    error_identifier: *mut PyUnicodeObject,
 ) -> i32 {
     unsafe {
         let mut status = 0;
         let caller_info = get_caller_frame_info();
         let mut traceback_string = format_combined_traceback(caller_info, exception_value);
-        let mut full_message: *mut PyObject = ptr::null_mut();
-        let type_object = object.class() as *mut PyObject;
-        let mut module_name = PyObject_GetAttrString(type_object, crate::cstr!("__module__"));
-        let mut type_name = PyObject_GetAttrString(type_object, crate::cstr!("__name__"));
-        let mut deepcopy_qualified_name: *mut PyObject = ptr::null_mut();
-        let mut deepcopy_expression: *mut PyObject = ptr::null_mut();
-        let mut deepcopy_expression_with_memo: *mut PyObject = ptr::null_mut();
+        let mut full_message: *mut PyUnicodeObject = ptr::null_mut();
+        let type_object = object.class();
+        let mut module_name = getattr_unicode_or_null(type_object, crate::cstr!("__module__"));
+        let mut type_name = getattr_unicode_or_null(type_object, crate::cstr!("__name__"));
+        let mut deepcopy_qualified_name: *mut PyUnicodeObject = ptr::null_mut();
+        let mut deepcopy_expression: *mut PyUnicodeObject = ptr::null_mut();
+        let mut deepcopy_expression_with_memo: *mut PyUnicodeObject = ptr::null_mut();
 
         if traceback_string.is_null() {
-            PyErr_Clear();
-            traceback_string = PyUnicode_FromString(crate::cstr!("[traceback unavailable]\n"));
+            py::err::clear();
+            traceback_string = py::unicode::from_cstr(crate::cstr!("[traceback unavailable]\n"));
             if traceback_string.is_null() {
                 status = -1;
                 finish_warning_emit!(
@@ -571,8 +586,8 @@ unsafe fn emit_fallback_warning(
         }
 
         if module_name.is_null() {
-            PyErr_Clear();
-            module_name = PyUnicode_FromString(crate::cstr!("__main__"));
+            py::err::clear();
+            module_name = py::unicode::from_cstr(crate::cstr!("__main__"));
             if module_name.is_null() {
                 status = -1;
                 finish_warning_emit!(
@@ -590,8 +605,8 @@ unsafe fn emit_fallback_warning(
         }
 
         if type_name.is_null() {
-            PyErr_Clear();
-            type_name = PyUnicode_FromString(crate::cstr!("?"));
+            py::err::clear();
+            type_name = py::unicode::from_cstr(crate::cstr!("?"));
             if type_name.is_null() {
                 status = -1;
                 finish_warning_emit!(
@@ -609,7 +624,7 @@ unsafe fn emit_fallback_warning(
         }
 
         deepcopy_qualified_name =
-            PyUnicode_FromFormat(crate::cstr!("%U.%U.__deepcopy__"), module_name, type_name);
+            py::unicode::from_format!(crate::cstr!("%U.%U.__deepcopy__"), module_name, type_name);
         if deepcopy_qualified_name.is_null() {
             status = -1;
             finish_warning_emit!(
@@ -625,23 +640,20 @@ unsafe fn emit_fallback_warning(
             );
         }
 
-        if !caller_info.is_null()
-            && PyTuple_Check(caller_info) != 0
-            && PyTuple_GET_SIZE(caller_info) == 4
-        {
-            let line = PyTuple_GET_ITEM(caller_info, 3);
+        if !caller_info.is_null() && caller_info.length() == 4 {
+            let line = caller_info.get_borrowed_unchecked(3);
             deepcopy_expression = extract_deepcopy_expression(line);
         }
 
         if !deepcopy_expression.is_null() {
             deepcopy_expression_with_memo = make_expression_with_memo(deepcopy_expression);
             if deepcopy_expression_with_memo.is_null() {
-                PyErr_Clear();
+                py::err::clear();
             }
         }
 
         if deepcopy_expression.is_null() {
-            deepcopy_expression = PyUnicode_FromFormat(crate::cstr!("deepcopy(%U())"), type_name);
+            deepcopy_expression = py::unicode::from_format!(crate::cstr!("deepcopy(%U())"), type_name);
             if deepcopy_expression.is_null() {
                 status = -1;
                 finish_warning_emit!(
@@ -661,9 +673,9 @@ unsafe fn emit_fallback_warning(
         if deepcopy_expression_with_memo.is_null() {
             deepcopy_expression_with_memo = make_expression_with_memo(deepcopy_expression);
             if deepcopy_expression_with_memo.is_null() {
-                PyErr_Clear();
+                py::err::clear();
                 deepcopy_expression_with_memo =
-                    PyUnicode_FromFormat(crate::cstr!("deepcopy(%U(), memo={})"), type_name);
+                    py::unicode::from_format!(crate::cstr!("deepcopy(%U(), memo={})"), type_name);
                 if deepcopy_expression_with_memo.is_null() {
                     status = -1;
                     finish_warning_emit!(
@@ -681,7 +693,7 @@ unsafe fn emit_fallback_warning(
             }
         }
 
-        full_message = PyUnicode_FromFormat(
+        full_message = py::unicode::from_format!(
             crate::cstr!(
                 "\n\nSeems like 'copium.memo' was rejected inside '%U':\n\n%U\ncopium was able to recover from this error, but this is slow.\n\nFix:\n\n  Per Python docs, '%U' should treat memo as an opaque object.\n  See: https://docs.python.org/3/library/copy.html#object.__deepcopy__\n\nWorkarounds:\n\n     local  change %U to %U\n            -> copium uses dict memo in this call (recommended)\n\n    global  `copium.config.apply(memo=\"dict\")` or export COPIUM_USE_DICT_MEMO=1\n            -> copium uses dict memo everywhere (~1.3-2x slowdown, still faster than stdlib)\n\n explosive  `copium.config.apply(on_incompatible=\"raise\")` or export COPIUM_NO_MEMO_FALLBACK=1\n            -> '%U' raises the error above. Useful if you want to handle it yourself.\n\n    silent  `copium.config.apply(suppress_warnings=[%R])` or export COPIUM_NO_MEMO_FALLBACK_WARNING='%U'\n            -> disables this warning for '%U', it stays slow to deepcopy\n"
             ),
@@ -710,10 +722,10 @@ unsafe fn emit_fallback_warning(
             );
         }
 
-        if PyErr_WarnEx(PyExc_UserWarning, PyUnicode_AsUTF8(full_message), 1) < 0 {
+        if py::err::warn(PyExc_UserWarning, full_message.as_utf8(), 1) < 0 {
             status = -1;
         } else {
-            PyErr_Clear();
+            py::err::clear();
         }
 
         finish_warning_emit!(
@@ -738,13 +750,10 @@ pub unsafe fn maybe_retry_with_dict_memo(
 ) -> *mut PyObject {
     unsafe {
         let mut result: *mut PyObject = ptr::null_mut();
-        let mut exception_type: *mut PyObject = ptr::null_mut();
-        let mut exception_value: *mut PyObject = ptr::null_mut();
-        let mut exception_traceback: *mut PyObject = ptr::null_mut();
-        let mut error_identifier: *mut PyObject = ptr::null_mut();
+        let mut error_identifier: *mut PyUnicodeObject = ptr::null_mut();
 
-        if PyErr_ExceptionMatches(PyExc_TypeError) == 0
-            && PyErr_ExceptionMatches(PyExc_AssertionError) == 0
+        if !py::err::matches_current(PyExc_TypeError)
+            && !py::err::matches_current(PyExc_AssertionError)
         {
             return ptr::null_mut();
         }
@@ -753,14 +762,8 @@ pub unsafe fn maybe_retry_with_dict_memo(
             return ptr::null_mut();
         }
 
-        #[allow(deprecated)]
-        PyErr_Fetch(
-            &mut exception_type,
-            &mut exception_value,
-            &mut exception_traceback,
-        );
-        #[allow(deprecated)]
-        PyErr_NormalizeException(
+        let (mut exception_type, mut exception_value, mut exception_traceback) = py::err::fetch();
+        py::err::normalize(
             &mut exception_type,
             &mut exception_value,
             &mut exception_traceback,
@@ -780,8 +783,8 @@ pub unsafe fn maybe_retry_with_dict_memo(
             );
         }
 
-        let dict_size_before = PyDict_Size(dict_memo);
-        result = PyObject_CallOneArg(dunder_deepcopy, dict_memo);
+        let dict_size_before = dict_memo.size();
+        result = dunder_deepcopy.call_one(dict_memo);
         if result.is_null() {
             finish_fallback_retry!(
                 result,
@@ -812,7 +815,7 @@ pub unsafe fn maybe_retry_with_dict_memo(
             && !error_is_ignored(error_identifier)
         {
             if !exception_traceback.is_null() && !exception_value.is_null() {
-                let _ = PyException_SetTraceback(exception_value, exception_traceback);
+                let _ = py::err::set_traceback(exception_value, exception_traceback);
             }
 
             if emit_fallback_warning(exception_value, object, error_identifier) < 0 {

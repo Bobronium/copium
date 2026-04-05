@@ -1,7 +1,7 @@
-use pyo3_ffi::*;
+use std::ffi::CString;
 use std::ptr;
 
-use crate::types::PyObjectPtr;
+use crate::py::{self, *};
 
 static mut ABOUT_METHODS: [PyMethodDef; 1] = [PyMethodDef::zeroed()];
 
@@ -21,33 +21,28 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
     unsafe {
         ABOUT_MODULE_DEF.m_methods = ptr::addr_of_mut!(ABOUT_METHODS).cast::<PyMethodDef>();
 
-        let module = PyModule_Create(std::ptr::addr_of_mut!(ABOUT_MODULE_DEF));
+        let module = py::module::create(std::ptr::addr_of_mut!(ABOUT_MODULE_DEF));
         if module.is_null() {
             return -1;
         }
 
         let version = env!("CARGO_PKG_VERSION");
-        let version_cstr = format!("{version}\0");
-        PyModule_AddStringConstant(
-            module,
-            crate::cstr!("__version__"),
-            version_cstr.as_ptr() as _,
-        );
+        let version_cstring = CString::new(version).unwrap();
+        module.add_module_string_constant(crate::cstr!("__version__"), version_cstring.as_c_str());
 
-        // VersionInfo namedtuple
-        let collections = PyImport_ImportModule(crate::cstr!("collections"));
+        let collections = py::module::import(crate::cstr!("collections"));
         if collections.is_null() {
             module.decref();
             return -1;
         }
-        let namedtuple = PyObject_GetAttrString(collections, crate::cstr!("namedtuple"));
+        let namedtuple = collections.getattr_cstr(crate::cstr!("namedtuple"));
         collections.decref();
         if namedtuple.is_null() {
             module.decref();
             return -1;
         }
 
-        let vi_cls = PyObject_CallFunction(
+        let vi_cls = py::call::call_function!(
             namedtuple,
             crate::cstr!("s[ssssss]"),
             crate::cstr!("VersionInfo"),
@@ -82,36 +77,29 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             .unwrap_or(0);
 
         let build_hash = env!("COPIUM_BUILD_HASH");
-        let local_str = format!("{build_hash}\0");
+        let local_cstring = CString::new(build_hash).unwrap();
 
-        let vi = PyObject_CallFunction(
+        let vi = py::call::call_function!(
             vi_cls,
             crate::cstr!("lllOOs"),
             major,
             minor,
             patch,
-            Py_None(),
-            Py_None(),
-            local_str.as_ptr() as *const core::ffi::c_char,
+            py::NoneObject,
+            py::NoneObject,
+            local_cstring.as_c_str(),
         );
 
-        PyModule_AddObject(module, crate::cstr!("VersionInfo"), vi_cls);
+        module.add_module_object(crate::cstr!("VersionInfo"), vi_cls);
         if !vi.is_null() {
-            PyModule_AddObject(module, crate::cstr!("__version_tuple__"), vi);
+            module.add_module_object(crate::cstr!("__version_tuple__"), vi);
         }
 
-        // __commit_id__
-        PyModule_AddObject(module, crate::cstr!("__commit_id__"), Py_None().newref());
+        module.add_module_object(crate::cstr!("__commit_id__"), py::NoneObject.newref());
 
-        // __build_hash__
-        PyModule_AddStringConstant(
-            module,
-            crate::cstr!("__build_hash__"),
-            local_str.as_ptr() as _,
-        );
+        module.add_module_string_constant(crate::cstr!("__build_hash__"), local_cstring.as_c_str());
 
-        // Author namedtuple
-        let author_cls = PyObject_CallFunction(
+        let author_cls = py::call::call_function!(
             namedtuple,
             crate::cstr!("s[ss]"),
             crate::cstr!("Author"),
@@ -124,18 +112,22 @@ pub unsafe fn create_module(parent: *mut PyObject) -> i32 {
             return -1;
         }
 
-        let author = PyObject_CallFunction(
+        let author = py::call::call_function!(
             author_cls,
             crate::cstr!("ss"),
             crate::cstr!("Arseny Boykov (Bobronium)"),
             crate::cstr!("hi@bobronium.me"),
         );
-        PyModule_AddObject(module, crate::cstr!("Author"), author_cls);
+        module.add_module_object(crate::cstr!("Author"), author_cls);
 
         if !author.is_null() {
-            let authors = PyTuple_New(1);
-            PyTuple_SetItem(authors, 0, author);
-            PyModule_AddObject(module, crate::cstr!("__authors__"), authors);
+            let authors = py::tuple::new(1);
+            if authors.is_null() {
+                module.decref();
+                return -1;
+            }
+            authors.steal_item_unchecked(0, author);
+            module.add_module_object(crate::cstr!("__authors__"), authors);
         }
 
         crate::add_submodule(parent, crate::cstr!("__about__"), module)

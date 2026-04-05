@@ -1,10 +1,9 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
-use pyo3_ffi::PyObject;
 
+use crate::py::{self, PyObject, PyObjectPtr, PySeqPtr};
 use crate::state::{MemoMode, OnIncompatible, STATE};
-use crate::types::PyObjectPtr;
 
 // ══════════════════════════════════════════════════════════════
 //  copium.config.apply(**kwargs)
@@ -112,19 +111,19 @@ fn apply(
     if let Some(suppress_warnings_object) = suppress_warnings {
         unsafe {
             let new_tuple = if suppress_warnings_object.is_none() {
-                pyo3_ffi::PyTuple_New(0)
+                py::tuple::new(0)
             } else {
-                pyo3_ffi::PySequence_Tuple(suppress_warnings_object.as_ptr())
+                suppress_warnings_object.as_ptr().sequence_to_tuple()
             };
             if new_tuple.is_null() {
                 return Err(PyErr::take(py)
                     .unwrap_or_else(|| PyRuntimeError::new_err("PySequence_Tuple failed")));
             }
 
-            let suppress_warning_count = pyo3_ffi::PyTuple_Size(new_tuple);
+            let suppress_warning_count = new_tuple.length();
             for index in 0..suppress_warning_count {
-                let item = pyo3_ffi::PyTuple_GetItem(new_tuple, index);
-                if pyo3_ffi::PyUnicode_Check(item) == 0 {
+                let item = new_tuple.get_borrowed_unchecked(index);
+                if !item.is_unicode() {
                     let item_type_name = Bound::<PyAny>::from_borrowed_ptr(py, item)
                         .get_type()
                         .name()
@@ -174,14 +173,15 @@ fn get(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
         },
     )?;
 
-    let sw = unsafe {
+    let suppress_warnings_tuple = unsafe {
         if !ignored_errors.is_null() {
-            ignored_errors.newref()
+            ignored_errors.newref().cast()
         } else {
-            pyo3_ffi::PyTuple_New(0)
+            py::tuple::new(0)
         }
     };
-    let sw_obj = unsafe { Bound::from_owned_ptr(py, sw) }.cast_into::<pyo3::types::PyTuple>()?;
+    let sw_obj = unsafe { Bound::from_owned_ptr(py, suppress_warnings_tuple.cast()) }
+        .cast_into::<pyo3::types::PyTuple>()?;
     dict.set_item("suppress_warnings", sw_obj)?;
 
     Ok(dict)

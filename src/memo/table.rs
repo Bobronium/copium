@@ -1,8 +1,7 @@
-use pyo3_ffi::*;
 use std::hint::likely;
 use std::ptr;
 
-use crate::types::PyObjectPtr;
+use crate::py::{PyObject, PyObjectPtr, PyTypeInfo};
 
 pub(crate) const TOMBSTONE: usize = usize::MAX;
 
@@ -254,9 +253,9 @@ impl KeepaliveVec {
         Self { items: Vec::new() }
     }
 
-    pub fn append(&mut self, obj: *mut PyObject) {
+    pub fn append<T: PyTypeInfo>(&mut self, obj: *mut T) {
         unsafe { obj.incref() };
-        self.items.push(obj);
+        self.items.push(obj as _);
     }
 
     pub fn clear(&mut self) {

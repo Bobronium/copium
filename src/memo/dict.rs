@@ -1,9 +1,7 @@
-use pyo3_ffi::*;
-use std::ffi::c_void;
 use std::ptr;
 
 use super::Memo;
-use crate::types::{py_list_new, PyMapPtr, PyObjectPtr};
+use crate::py::{self, *};
 
 pub struct DictMemo {
     pub dict: *mut PyDictObject,
@@ -25,36 +23,45 @@ impl DictMemo {
                 return 0;
             }
 
-            let pykey = PyLong_FromVoidPtr(self.dict as *mut c_void);
+            let pykey = self.dict.id();
             if pykey.is_null() {
                 return -1;
             }
 
             let existing = self.dict.get_item(pykey);
             if !existing.is_null() {
+                if !existing.is_list() {
+                    pykey.decref();
+                    py::err::set_string(
+                        PyExc_TypeError,
+                        crate::cstr!("memo keepalive slot must contain a list"),
+                    );
+                    return -1;
+                }
+
                 existing.incref();
-                self.keepalive = existing as *mut PyListObject;
+                self.keepalive = PyListObject::cast_unchecked(existing);
                 pykey.decref();
                 return 0;
             }
-            if !PyErr_Occurred().is_null() {
+            if !py::err::occurred().is_null() {
                 pykey.decref();
                 return -1;
             }
 
-            let list = py_list_new(0);
+            let list = py::list::new(0);
             if list.is_null() {
                 pykey.decref();
                 return -1;
             }
 
-            if self.dict.set_item(pykey, list as *mut PyObject) < 0 {
+            if self.dict.set_item(pykey, list) < 0 {
                 list.decref();
                 pykey.decref();
                 return -1;
             }
 
-            self.keepalive = list as *mut PyListObject;
+            self.keepalive = list;
             pykey.decref();
             0
         }
@@ -66,9 +73,9 @@ impl Memo for DictMemo {
     const RECALL_CAN_ERROR: bool = true;
 
     #[inline(always)]
-    unsafe fn recall(&mut self, object: *mut PyObject) -> ((), *mut PyObject) {
+    unsafe fn recall<T: PyTypeInfo>(&mut self, object: *mut T) -> ((), *mut T) {
         unsafe {
-            let pykey = PyLong_FromVoidPtr(object as *mut c_void);
+            let pykey = object.id();
             if pykey.is_null() {
                 return ((), ptr::null_mut());
             }
@@ -78,14 +85,19 @@ impl Memo for DictMemo {
                 found.incref();
             }
             pykey.decref();
-            ((), found)
+            ((), T::cast_unchecked(found))
         }
     }
 
     #[inline(always)]
-    unsafe fn memoize(&mut self, original: *mut PyObject, copy: *mut PyObject, _probe: &()) -> i32 {
+    unsafe fn memoize<T: PyTypeInfo>(
+        &mut self,
+        original: *mut T,
+        copy: *mut T,
+        _probe: &(),
+    ) -> i32 {
         unsafe {
-            let pykey = PyLong_FromVoidPtr(original as *mut c_void);
+            let pykey = original.id();
             if pykey.is_null() {
                 return -1;
             }
@@ -100,16 +112,16 @@ impl Memo for DictMemo {
                 return -1;
             }
 
-            PyList_Append(self.keepalive as *mut PyObject, original)
+            self.keepalive.append(original)
         }
     }
 
     #[inline(always)]
-    unsafe fn forget(&mut self, _original: *mut PyObject, _probe: &()) {}
+    unsafe fn forget<T: PyTypeInfo>(&mut self, _original: *mut T, _probe: &()) {}
 
     #[inline(always)]
     unsafe fn as_call_arg(&mut self) -> *mut PyObject {
-        self.dict as *mut PyObject
+        self.dict.cast()
     }
 
     unsafe fn ensure_memo_is_valid(&mut self) -> i32 {
